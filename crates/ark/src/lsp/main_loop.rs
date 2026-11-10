@@ -277,8 +277,6 @@ pub(crate) struct LspState {
     pub(crate) source_scheduler: SourceScheduler,
 
     /// Sidecar scheduling and response handling stay on the main loop.
-    /// No job runs unless [`Self::with_sidecar_scheduler()`] installs a
-    /// scheduler with a handler.
     pub(crate) sidecar_scheduler: SidecarScheduler,
 
     /// Threads running diagnostics and index warmup. The only executor a db
@@ -315,17 +313,17 @@ pub(crate) struct LspState {
 }
 
 impl LspState {
-    pub(crate) fn new(
-        console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
-        source_scheduler: SourceScheduler,
-    ) -> Self {
+    /// Neither scheduler has a handler, so no source fetch or sidecar job
+    /// runs until [`Self::with_source_scheduler()`] or
+    /// [`Self::with_sidecar_scheduler()`] installs one.
+    pub(crate) fn new(console_notification_tx: TokioUnboundedSender<ConsoleNotification>) -> Self {
         let service_context = Arc::new(LspServiceContext::new());
 
         Self {
             capabilities: Capabilities::default(),
             console_notification_tx,
             oak_scheduler: ScanScheduler::new(),
-            source_scheduler,
+            source_scheduler: SourceScheduler::new(None),
             sidecar_scheduler: SidecarScheduler::new(None),
             analysis_pool: AnalysisPool::new(Arc::clone(&service_context)),
             diagnostics: DiagnosticsState::default(),
@@ -356,6 +354,11 @@ impl LspState {
             watchdog: Watchdog::new(),
             service_context,
         }
+    }
+
+    pub(crate) fn with_source_scheduler(mut self, source_scheduler: SourceScheduler) -> Self {
+        self.source_scheduler = source_scheduler;
+        self
     }
 
     pub(crate) fn with_sidecar_scheduler(mut self, sidecar_scheduler: SidecarScheduler) -> Self {
@@ -425,11 +428,9 @@ impl GlobalState {
         Self::from_parts(
             client,
             WorldState::new(db),
-            LspState::new(
-                console_notification_tx,
-                SourceScheduler::new(source_handler(&r_home)),
-            )
-            .with_sidecar_scheduler(SidecarScheduler::new(sidecar_handler(&r_home))),
+            LspState::new(console_notification_tx)
+                .with_source_scheduler(SourceScheduler::new(source_handler(&r_home)))
+                .with_sidecar_scheduler(SidecarScheduler::new(sidecar_handler(&r_home))),
         )
     }
 
@@ -1675,7 +1676,6 @@ mod tests {
     use crate::lsp::harness::editor::client::TestClient;
     use crate::lsp::harness::editor::notifications::did_change;
     use crate::lsp::harness::editor::notifications::did_open;
-    use crate::lsp::sources::SourceScheduler;
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
 
@@ -1869,7 +1869,7 @@ mod tests {
         GlobalState::from_parts(
             test_client(),
             WorldState::default(),
-            LspState::new(tokio_unbounded_channel().0, SourceScheduler::new(None)),
+            LspState::new(tokio_unbounded_channel().0),
         )
     }
 

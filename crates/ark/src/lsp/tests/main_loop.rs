@@ -36,7 +36,6 @@ use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
-use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 
 /// Drive `didChangeWorkspaceFolders` through the real `handle_event`, including
@@ -48,10 +47,7 @@ async fn test_workspace_folder_scan_drives_through_main_loop() {
     let mut state = GlobalState::from_parts(
         test_client(),
         WorldState::new(OakDatabase::new()),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(None),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0),
     );
 
     let tmp = tempfile::tempdir().unwrap();

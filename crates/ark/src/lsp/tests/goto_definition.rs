@@ -31,7 +31,6 @@ use crate::lsp::goto_definition::goto_definition;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
-use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::url::UrlExt;
 use crate::lsp::util::test_path;
@@ -287,10 +286,8 @@ async fn test_goto_definition_resolves_unqualified_import_into_package() {
     let mut state = GlobalState::from_parts(
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            source_scheduler_for_test(handler),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(source_scheduler_for_test(handler)),
     );
 
     // The workspace folder is itself the package that imports `foo`.
@@ -357,10 +354,8 @@ async fn test_goto_definition_resolves_unqualified_import_from_into_package() {
     let mut state = GlobalState::from_parts(
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            source_scheduler_for_test(handler),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(source_scheduler_for_test(handler)),
     );
 
     // The workspace folder is itself the package that imports `bar`.
@@ -431,10 +426,8 @@ async fn test_goto_definition_resolves_namespace_accesses() {
     let mut state = GlobalState::from_parts(
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            source_scheduler_for_test(handler),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(source_scheduler_for_test(handler)),
     );
 
     // Workspace usage pkg functions
@@ -564,10 +557,7 @@ fn state_without_source_fetching(library: &Path) -> GlobalState {
     GlobalState::from_parts(
         test_client(),
         WorldState::new(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(None),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0),
     )
 }
 
@@ -715,10 +705,8 @@ async fn test_goto_definition_through_source_from_environment_dir() {
     let mut state = GlobalState::from_parts(
         test_client(),
         world_with_source_fetching(OakDatabase::new()),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            source_scheduler_for_test(handler),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(source_scheduler_for_test(handler)),
     );
 
     let workspace = tempfile::tempdir().unwrap();

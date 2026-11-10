@@ -28,7 +28,6 @@ use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::goto_definition::goto_definition;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::LspState;
-use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers::did_change_notebook;
 use crate::lsp::state_handlers::did_close_notebook;
@@ -226,10 +225,7 @@ fn test_notebook_did_open_registers_cells_as_open_files() {
 }
 
 fn test_lsp_state() -> LspState {
-    LspState::new(
-        tokio::sync::mpsc::unbounded_channel().0,
-        SourceScheduler::new(None),
-    )
+    LspState::new(tokio::sync::mpsc::unbounded_channel().0)
 }
 
 fn change(state: &mut WorldState, cells: NotebookDocumentCellChange) -> anyhow::Result<()> {

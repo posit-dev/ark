@@ -108,10 +108,8 @@ impl LspHarness {
             GlobalState::from_parts(
                 client.client(),
                 self.state,
-                LspState::new(
-                    tokio::sync::mpsc::unbounded_channel().0,
-                    SourceScheduler::new(source_handler),
-                ),
+                LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+                    .with_source_scheduler(SourceScheduler::new(source_handler)),
             )
         };
 

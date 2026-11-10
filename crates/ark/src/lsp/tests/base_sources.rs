@@ -171,11 +171,9 @@ async fn test_primitive_stubs_land_with_fetching_off() {
     let mut state = GlobalState::from_parts(
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler.clone())),
-        )
-        .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar.clone()))),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
+            .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar.clone()))),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -203,11 +201,9 @@ async fn test_primitive_stubs_land_when_base_fetch_fails() {
     let mut state = GlobalState::from_parts(
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            source_scheduler_for_test(handler.clone()),
-        )
-        .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar_with_stubs()))),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(source_scheduler_for_test(handler.clone()))
+            .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar_with_stubs()))),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -243,11 +239,9 @@ async fn test_base_archive_and_stubs_both_land() {
     let mut state = GlobalState::from_parts(
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            source_scheduler_for_test(handler),
-        )
-        .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar_with_stubs()))),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(source_scheduler_for_test(handler))
+            .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar_with_stubs()))),
     );
 
     let workspace = tempfile::tempdir().unwrap();

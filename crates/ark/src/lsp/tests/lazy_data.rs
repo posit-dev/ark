@@ -112,7 +112,8 @@ async fn test_packages_without_rdata_are_not_passed() {
     let mut state = GlobalState::from_parts(
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0, scheduler)
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(scheduler)
             .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar.clone()))),
     );
 

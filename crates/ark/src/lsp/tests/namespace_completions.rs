@@ -84,7 +84,7 @@ fn state_with_scheduler(db: OakDatabase, scheduler: SourceScheduler) -> GlobalSt
     GlobalState::from_parts(
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0, scheduler),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0).with_source_scheduler(scheduler),
     )
 }
 
@@ -257,10 +257,8 @@ async fn test_namespace_answer_is_complete_with_fetching_off() {
     let mut state = GlobalState::from_parts(
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler.clone())),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -321,7 +319,8 @@ fn state_with_held_sidecar(
     let state = GlobalState::from_parts(
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0, scheduler)
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(scheduler)
             .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar))),
     );
     (state, release, entered_rx)

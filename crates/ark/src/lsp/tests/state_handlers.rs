@@ -34,7 +34,6 @@ use crate::lsp::main_loop::AuxiliaryEvent;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedSender;
-use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers::did_change_console_inputs;
 use crate::lsp::state_handlers::did_close;
@@ -130,10 +129,7 @@ where
 }
 
 fn test_lsp_state() -> LspState {
-    LspState::new(
-        tokio::sync::mpsc::unbounded_channel().0,
-        SourceScheduler::new(None),
-    )
+    LspState::new(tokio::sync::mpsc::unbounded_channel().0)
 }
 
 /// Inline drain loop: oak_scan keeps its equivalent crate-private so

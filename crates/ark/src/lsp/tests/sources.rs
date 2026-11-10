@@ -109,10 +109,8 @@ async fn test_source_pipeline_ingests_package_sources() {
     let mut state = GlobalState::from_parts(
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            source_scheduler_for_test(handler.clone()),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(source_scheduler_for_test(handler.clone())),
     );
 
     // A workspace package that uses `donor` via `::`.
@@ -172,10 +170,8 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
     let mut state = GlobalState::from_parts(
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler.clone())),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -228,10 +224,8 @@ async fn test_configuration_not_pulled_without_capability() {
     let mut state = GlobalState::from_parts(
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler.clone())),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -291,10 +285,8 @@ async fn check_initialization_options(options: Option<Value>) -> Arc<TestSourceH
     let mut state = GlobalState::from_parts(
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler.clone())),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -336,10 +328,8 @@ async fn test_initialization_options_survive_a_silent_pull() {
     let mut state = GlobalState::from_parts(
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler.clone())),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -470,10 +460,8 @@ async fn test_reenabling_fetches_packages_seen_while_off() {
     let mut state = GlobalState::from_parts(
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler.clone())),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -547,10 +535,8 @@ async fn test_disabling_stops_fetching_new_packages() {
     let mut state = GlobalState::from_parts(
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler.clone())),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
     );
 
     // Two workspace folders, each depending on a different library package, so
@@ -717,10 +703,8 @@ async fn queued_fetch_session() -> QueuedFetchSession {
     let mut state = GlobalState::from_parts(
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler.clone())),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -799,10 +783,8 @@ async fn check_fetching_waits_for_initialized(
     let mut state = GlobalState::from_parts(
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            SourceScheduler::new(Some(handler.clone())),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -909,10 +891,8 @@ async fn test_failed_source_is_not_retried() {
     let mut state = GlobalState::from_parts(
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            source_scheduler_for_test(handler.clone()),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(source_scheduler_for_test(handler.clone())),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -988,10 +968,8 @@ async fn test_source_pipeline_ingests_real_srcref_sources() {
     let mut state = GlobalState::from_parts(
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(
-            tokio::sync::mpsc::unbounded_channel().0,
-            source_scheduler_for_test(handler),
-        ),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(source_scheduler_for_test(handler)),
     );
 
     // A workspace package that uses {generics} via `::`
