@@ -9,14 +9,12 @@ use std::sync::LazyLock;
 
 #[cfg(test)]
 use oak_db::OakDatabase;
-use oak_db::RootKind;
 use regex::Regex;
 use tower_lsp_server::ls_types::CompletionItem;
 use tower_lsp_server::ls_types::Documentation;
 use tower_lsp_server::ls_types::InsertTextFormat;
 use tower_lsp_server::ls_types::MarkupContent;
 use tower_lsp_server::ls_types::MarkupKind;
-use yaml_rust2::YamlLoader;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item;
@@ -75,47 +73,16 @@ fn completions_from_comment(
         return Ok(Some(completions));
     };
 
-    let Some(root) = db.root_by_package(roxygen2) else {
-        return Ok(Some(completions));
-    };
-
-    let Some(dir) = roxygen2
-        .description_path(db)
-        .as_path()
-        .and_then(|path| path.parent())
-    else {
-        return Ok(Some(completions));
-    };
-
-    // When you're actively working on roxygen2 itself, pull the tags from `inst/`
-    let tags = match root.kind(db) {
-        RootKind::Workspace => dir.join("inst").join("roxygen2-tags.yml"),
-        RootKind::Library => dir.join("roxygen2-tags.yml"),
-    };
-
-    if !tags.exists() {
-        return Ok(Some(completions));
-    }
-
-    // TODO: Cache these?
-    let contents = std::fs::read_to_string(tags).unwrap();
-    let docs = YamlLoader::load_from_str(contents.as_str()).unwrap();
-    let doc = &docs[0];
-
-    let items = doc.as_vec().unwrap();
-    for entry in items.iter() {
-        let Some(name) = entry["name"].as_str() else {
-            continue;
-        };
-
-        let template = entry["template"].as_str();
-        let template = template.map(inject_roxygen_comment_after_newline);
-        let template = template.as_deref();
-
-        let description = entry["description"].as_str();
-
-        let item = completion_item_from_roxygen(name, template, description)?;
-
+    for tag in roxygen2.roxygen_tags(db) {
+        let template = tag
+            .template
+            .as_deref()
+            .map(inject_roxygen_comment_after_newline);
+        let item = completion_item_from_roxygen(
+            &tag.name,
+            template.as_deref(),
+            tag.description.as_deref(),
+        )?;
         completions.push(item);
     }
 

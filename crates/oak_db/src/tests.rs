@@ -18,6 +18,7 @@ mod identifier;
 mod inputs;
 mod notebook;
 mod package_resolve;
+mod package_roxygen;
 mod recovery;
 mod resolver;
 mod source_firewall;

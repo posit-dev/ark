@@ -505,7 +505,6 @@ dependencies = [
  "walkdir",
  "winsafe",
  "xdg",
- "yaml-rust2",
 ]
 
 [[package]]
@@ -2738,6 +2737,7 @@ dependencies = [
  "stdext",
  "tempfile",
  "url",
+ "yaml-rust2",
 ]
 
 [[package]]

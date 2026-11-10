@@ -104,6 +104,7 @@ package.rs: fn Package::namespace(self, db: &dyn SourceDb) -> Namespace [returns
 package.rs: fn Package::priority(self, db: &dyn SourceDb) -> Option<Priority> [returns(ref)]
 package.rs: fn Package::version(self, db: &dyn SourceDb) -> Option<String> [returns(ref)]
 package_resolve.rs: fn Package::resolve(self, db: &'db dyn Db, name: Name<'db>, visibility: NamespaceVisibility) -> Vec<Definition<'db>> [returns(clone), cycle_result = resolve_cycle_result]
+package_roxygen.rs: fn Package::roxygen_tags(self, db: &dyn SourceDb) -> Vec<RoxygenTag> [returns(deref)]
 workspace.rs: fn all_package_dependencies(db: &dyn Db) -> Vec<Package> [returns(ref)]
 workspace.rs: fn all_workspace_file_dependencies(db: &dyn Db) -> Vec<Package> [returns(ref)]
 workspace.rs: fn all_workspace_loader_dependencies(db: &dyn Db) -> Vec<Package> [returns(ref)]
