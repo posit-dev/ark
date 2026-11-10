@@ -196,6 +196,34 @@ fn test_function_body_sees_file_scope_attaches_even_if_after_function_in_source(
 }
 
 #[test]
+fn test_cursor_at_end_of_unbraced_function_body_sees_lazy_view() {
+    // The cursor continues the body `x`, so it takes the function's lazy view
+    // even though the function's range ends before it.
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["dplyr"]);
+
+    let source = "f <- function() x\nlibrary(dplyr)\n";
+    let file = make_file(&mut db, "/a.R", source);
+
+    let offset = TextSize::from(source.find("x\n").unwrap() as u32 + 1);
+    let layers = file.imports_at(&db, offset);
+    assert_eq!(library_attaches(&db, &layers), vec!["dplyr".to_string()]);
+}
+
+#[test]
+fn test_cursor_after_closing_brace_sees_top_level_view() {
+    let mut db = TestDb::new();
+    install_packages(&mut db, &["dplyr"]);
+
+    let source = "f <- function() { x }\nlibrary(dplyr)\n";
+    let file = make_file(&mut db, "/a.R", source);
+
+    let offset = TextSize::from(source.find("}\n").unwrap() as u32 + 1);
+    let layers = file.imports_at(&db, offset);
+    assert_eq!(library_attaches(&db, &layers), Vec::<String>::new());
+}
+
+#[test]
 fn test_package_top_level_sees_predecessor_files_only() {
     let mut db = TestDb::new();
     let _ = install_packages(&mut db, &["base"]);

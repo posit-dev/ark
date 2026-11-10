@@ -286,9 +286,10 @@ impl<'a> ImportView<'a> {
 
     /// Eager scopes see preceding collation files and attaches that have run.
     /// Lazy scopes see the complete collation and attaches visible from their
-    /// containing scope.
-    fn at(index: &SemanticIndex, offset: &'a TextSize) -> Self {
-        let (cursor_scope, _) = index.scope_at(*offset);
+    /// containing scope. The scope comes from [`File::cursor_scope()`].
+    fn at(db: &dyn Db, file: File, offset: &'a TextSize) -> Self {
+        let index = file.semantic_index(db);
+        let cursor_scope = file.cursor_scope(db, *offset);
 
         match index.scope_is_eager(cursor_scope) {
             true => Self {
@@ -347,13 +348,16 @@ impl File {
     ///   of this file. Most recently sourced predecessor comes
     ///   first. The package imports and base namespace come last.
     ///
+    /// The cursor's scope, and so whether it sees the lazy or the top-level
+    /// view, comes from [`File::cursor_scope()`].
+    ///
     /// Plain method rather than `#[salsa::tracked]`. Tracking would key the
     /// cache on `(self, offset)`, creating one entry per cursor position.
     /// Skipping the cache is fine because the body just reads already-cached
-    /// subqueries (`cross_file_layers`, `semantic_index`) and applies an O(n)
-    /// filter.
+    /// subqueries (`cross_file_layers`, `semantic_index`, `parse`) and applies
+    /// an O(n) filter.
     pub fn imports_at(self, db: &dyn Db, offset: TextSize) -> Vec<ImportLayer> {
-        self.imports_in(db, ImportView::at(self.semantic_index(db), &offset))
+        self.imports_in(db, ImportView::at(db, self, &offset))
     }
 
     fn imports_in(self, db: &dyn Db, view: ImportView<'_>) -> Vec<ImportLayer> {
@@ -399,7 +403,7 @@ impl File {
 
     /// Position-specific loader fallback, without a per-offset tracked cache.
     pub(crate) fn loader_fallback_at(self, db: &dyn Db, offset: TextSize) -> Vec<ImportLayer> {
-        self.loader_fallback_in(db, ImportView::at(self.semantic_index(db), &offset))
+        self.loader_fallback_in(db, ImportView::at(db, self, &offset))
     }
 
     fn loader_fallback_in(self, db: &dyn Db, view: ImportView<'_>) -> Vec<ImportLayer> {
@@ -431,7 +435,7 @@ impl File {
         db: &dyn Db,
         offset: TextSize,
     ) -> Vec<Vec<ImportLayer>> {
-        self.imports_by_sourcing_file_in(db, ImportView::at(self.semantic_index(db), &offset))
+        self.imports_by_sourcing_file_in(db, ImportView::at(db, self, &offset))
     }
 
     fn imports_by_sourcing_file_in(

@@ -4,6 +4,7 @@ mod db;
 mod diagnostic_render;
 mod file;
 mod file_bindings;
+mod file_cursor_scope;
 mod file_diagnostics;
 mod file_exports;
 mod file_imports;
