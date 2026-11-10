@@ -9,9 +9,8 @@ mod srcref;
 use std::path::Path;
 use std::path::PathBuf;
 
+use oak_cache::short_hash;
 use oak_cache::Cache;
-use sha2::Digest;
-use sha2::Sha256;
 
 /// Cache version
 const CACHE_VERSION: &str = "v1";
@@ -74,15 +73,8 @@ impl SrcrefCache {
 /// The `Built:` hash disambiguates reinstalls! A build timestamp changes on every
 /// rebuild, so a rebuilt package gets a fresh key.
 fn key(name: &str, version: &str, built: &str) -> String {
-    let built_hash = hash(built);
+    let built_hash = short_hash(built);
     format!("{name}_{version}_{built_hash}")
-}
-
-/// First 8 hex characters of the SHA-256 of `contents`
-fn hash(contents: &str) -> String {
-    let mut hash = hex::encode(Sha256::digest(contents));
-    hash.truncate(8);
-    hash
 }
 
 #[cfg(test)]

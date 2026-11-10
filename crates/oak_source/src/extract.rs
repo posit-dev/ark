@@ -5,6 +5,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use flate2::read::GzDecoder;
+use oak_cache::set_readonly;
 
 /// Unpack a gzipped tarball into `dir`, dropping its top-level directory and marking
 /// every file read only
@@ -73,11 +74,4 @@ fn strip_top_level(path: &Path) -> Option<&Path> {
     }
 
     Some(rest)
-}
-
-/// Mark a file as read only
-fn set_readonly(path: &Path) -> std::io::Result<()> {
-    let mut permissions = std::fs::metadata(path)?.permissions();
-    permissions.set_readonly(true);
-    std::fs::set_permissions(path, permissions)
 }

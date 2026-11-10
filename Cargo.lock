@@ -2686,8 +2686,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "etcetera",
+ "hex",
  "libc",
  "log",
+ "sha2",
  "tempfile",
  "windows-sys 0.61.2",
 ]
@@ -2845,11 +2847,9 @@ name = "oak_sidecar"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "hex",
  "log",
  "oak_cache",
  "oak_r_process",
- "sha2",
  "tempfile",
 ]
 
@@ -2872,11 +2872,9 @@ name = "oak_srcref"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "hex",
  "log",
  "oak_cache",
  "oak_r_process",
- "sha2",
  "tempfile",
 ]
 

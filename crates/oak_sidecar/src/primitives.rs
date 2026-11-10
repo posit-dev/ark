@@ -8,10 +8,9 @@
 use std::path::Path;
 use std::path::PathBuf;
 
+use oak_cache::set_readonly;
+use oak_cache::short_hash;
 use oak_cache::Cache;
-
-use crate::hash;
-use crate::set_readonly;
 
 const SCRIPT: &str = include_str!("../scripts/primitives.R");
 
@@ -69,7 +68,7 @@ impl PrimitivesCache {
 /// field, so two builds get separate entries unless the 8-character hashes of their
 /// `Built:` fields collide.
 fn key(version: &str, built: &str) -> String {
-    let built_hash = hash(built);
+    let built_hash = short_hash(built);
     format!("{version}_{built_hash}")
 }
 

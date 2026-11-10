@@ -24,6 +24,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use oak_cache::set_readonly;
 use oak_cache::Cache;
 
 /// Release of `posit-dev/oak-r-sources` that hosts the archive
@@ -213,13 +214,6 @@ fn detect_version_prefix<'path>(path: &'path Path, version: &Path) -> Option<&'p
     }
 
     Some(path)
-}
-
-/// Mark a file as read only
-fn set_readonly(path: &Path) -> std::io::Result<()> {
-    let mut permissions = std::fs::metadata(path)?.permissions();
-    permissions.set_readonly(true);
-    std::fs::set_permissions(path, permissions)
 }
 
 /// Clamp requested R `version` to the newest version present in the archive

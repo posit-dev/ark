@@ -8,11 +8,9 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-hex.workspace = true
 log.workspace = true
 oak_cache.workspace = true
 oak_r_process.workspace = true
-sha2.workspace = true
 tempfile.workspace = true
 
 [lints]

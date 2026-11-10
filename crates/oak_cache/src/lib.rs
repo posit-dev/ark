@@ -18,6 +18,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::SystemTime;
 
+use sha2::Digest;
+use sha2::Sha256;
+
 use crate::file_lock::FileLock;
 use crate::file_lock::Filesystem;
 
@@ -311,6 +314,23 @@ fn cache_dir() -> anyhow::Result<PathBuf> {
     use etcetera::BaseStrategy;
     // Can fail if the home directory can't be found
     Ok(etcetera::choose_base_strategy()?.cache_dir().join("oak"))
+}
+
+/// First 8 hex characters of the SHA-256 of `contents`, for building entry
+/// keys from inputs too long or irregular to use verbatim.
+pub fn short_hash(contents: &str) -> String {
+    let mut hash = hex::encode(Sha256::digest(contents));
+    hash.truncate(8);
+    hash
+}
+
+/// Mark a file written into an entry as read only. Go-to-definition can open
+/// cached files, and read-only permissions discourage edits that would
+/// silently diverge from what the entry describes.
+pub fn set_readonly(path: &Path) -> std::io::Result<()> {
+    let mut permissions = std::fs::metadata(path)?.permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(path, permissions)
 }
 
 #[cfg(test)]

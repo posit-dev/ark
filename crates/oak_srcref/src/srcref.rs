@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use oak_cache::set_readonly;
+
 const SCRIPT: &str = include_str!("../scripts/srcrefs.R");
 
 /// Recover an installed package's sources from `srcref` metadata into `dir`
@@ -106,13 +108,6 @@ fn parse_line_directive(line: &str) -> Option<String> {
     let path = path.strip_suffix('"')?;
     let file_name = Path::new(path).file_name()?;
     Some(file_name.to_string_lossy().into_owned())
-}
-
-/// Mark a file as read only
-fn set_readonly(path: &Path) -> std::io::Result<()> {
-    let mut permissions = std::fs::metadata(path)?.permissions();
-    permissions.set_readonly(true);
-    std::fs::set_permissions(path, permissions)
 }
 
 #[cfg(test)]
