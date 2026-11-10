@@ -130,6 +130,7 @@ fn layer_key(db: &TestDb, layer: &ImportLayer) -> String {
             names.sort();
             format!("SourcingFile({}, {names:?})", file.path(db))
         },
+        ImportLayer::Import(package) => format!("Import({})", package.name(db)),
         ImportLayer::Package(package) => format!("Package({})", package.name(db)),
         ImportLayer::From(package) => format!("From({})", package.name(db)),
     }

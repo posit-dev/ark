@@ -8,6 +8,7 @@ use oak_semantic::semantic_index::SemanticIndex;
 
 use crate::definition::value_node;
 use crate::Db;
+use crate::Definition;
 use crate::ExportEntry;
 use crate::File;
 use crate::Package;
@@ -113,6 +114,19 @@ impl Package {
             }
         }
         bindings
+    }
+}
+
+impl<'db> Definition<'db> {
+    /// Classify this definition using the same syntax rules as
+    /// [`File::bindings()`]. A `source()` import, parameter or loop variable
+    /// has [`BindingKind::Unknown`].
+    ///
+    /// Reads the definition's syntax tree. For top-level names, prefer
+    /// [`File::bindings()`], which caches the kind merged across definitions.
+    pub fn binding_kind(self, db: &'db dyn Db) -> BindingKind {
+        let root = self.file(db).parse(db).syntax();
+        definition_kind(self.kind(db), &root)
     }
 }
 

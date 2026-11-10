@@ -14,10 +14,12 @@
 //!
 //! # Coverage
 //!
-//! `Query` covers 19 of the 50 tracked queries in the Salsa inventory, the ones
-//! that are useful as starting poings. It includes production roots such as
-//! `diagnostics()`, `imports()`, `imports_at()`, `resolve_at()`, `resolve()`,
-//! `used_packages()`, and `sourced_by()`, all five workspace aggregates, and
+//! `Query` has 21 entry points, selected from tracked queries in the Salsa
+//! inventory and untracked position-specific methods.
+//! It includes production roots such as `diagnostics()`, `imports()`,
+//! `imports_at()`, `resolve_at()`, `resolve()`, `used_packages()`,
+//! `sourced_by()`, and the completion sources `visible_names_at()` and
+//! `Package::names()`, all five workspace aggregates, and
 //! cold entry into the seven queries with `cycle_result` handlers, including
 //! `Package::resolve()`.
 //!

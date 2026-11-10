@@ -639,6 +639,25 @@ fn test_super_assignment_recorded_in_current_scope() {
 }
 
 #[test]
+fn test_scope_bindings_leave_out_super_assignment_markers() {
+    // `f` (scope 1) binds `x` and `y` locally and receives another `y` from
+    // `g`'s `<<-`. `f`'s own `x <<- 2` leaves a marker in `f` and binds in the
+    // file scope. `g` (scope 2) holds only its marker for `y`.
+    let index = index("f <- function() { x <- 1; x <<- 2; y <- 0; g <- function() y <<- 3 }");
+    let names = |scope: u32| -> Vec<&str> {
+        let scope = ScopeId::from(scope);
+        index
+            .scope_bindings(scope)
+            .map(|(_, def)| index.symbols(scope).symbol(def.symbol()).name())
+            .collect()
+    };
+
+    assert_eq!(names(0), vec!["x", "f"]);
+    assert_eq!(names(1), vec!["x", "y", "y", "g"]);
+    assert_eq!(names(2), Vec::<&str>::new());
+}
+
+#[test]
 fn test_super_assignment_right_recorded_in_current_scope() {
     let index = index("f <- function() { 1 ->> x }");
     let file = ScopeId::from(0);

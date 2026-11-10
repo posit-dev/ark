@@ -12,6 +12,7 @@ mod file_reader;
 mod file_resolve;
 mod file_revision;
 mod file_source_site;
+mod file_visible_names;
 // Non-test fuzz builds use only `Runner::open()`, `execute_json()`, and
 // `mutate_json()`, while unit tests exercise the rest of the model. Test builds
 // omit this allowance, so they still report items unused by either path.
@@ -60,6 +61,9 @@ pub use file_exports::FileExports;
 pub use file_imports::ImportLayer;
 pub use file_revision::FileRevision;
 pub use file_source_site::SourceSite;
+pub use file_visible_names::VisibleBinding;
+pub use file_visible_names::VisibleName;
+pub use file_visible_names::VisibleNames;
 pub use identifier::Identifier;
 pub use identifier::MemberKind;
 pub use identifier::NameSpelling;

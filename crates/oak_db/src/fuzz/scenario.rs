@@ -56,6 +56,8 @@ pub(crate) enum Query {
     Resolve(FileId, String),
     UsedPackages(FileId),
     SourcedBy(FileId),
+    VisibleNamesAt(FileId, Site),
+    PackageNames(PackageId, NamespaceVisibility),
     AllPackageDependencies,
     AllWorkspaceFileDependencies,
     AllWorkspaceLoaderDependencies,
@@ -156,6 +158,7 @@ impl Query {
             Query::Resolve(file, _) |
             Query::UsedPackages(file) |
             Query::SourcedBy(file) |
+            Query::VisibleNamesAt(file, _) |
             Query::SemanticIndex(file) |
             Query::Exports(file) |
             Query::AttachedPackages(file) |
@@ -167,6 +170,7 @@ impl Query {
             Query::AllWorkspaceLoaderDependencies |
             Query::AllWorkspacePackageDependencies |
             Query::DefaultSearchPathPackages |
+            Query::PackageNames(..) |
             Query::PackageResolve(..) => None,
         }
     }
@@ -180,6 +184,7 @@ impl Query {
             Query::Resolve(file, _) |
             Query::UsedPackages(file) |
             Query::SourcedBy(file) |
+            Query::VisibleNamesAt(file, _) |
             Query::SemanticIndex(file) |
             Query::Exports(file) |
             Query::AttachedPackages(file) |
@@ -191,20 +196,23 @@ impl Query {
             Query::AllWorkspaceLoaderDependencies |
             Query::AllWorkspacePackageDependencies |
             Query::DefaultSearchPathPackages |
+            Query::PackageNames(..) |
             Query::PackageResolve(..) => None,
         }
     }
 
     pub(super) fn package(&self) -> Option<PackageId> {
         match self {
-            Query::PackageResolve(package, _, _) => Some(*package),
+            Query::PackageNames(package, _) | Query::PackageResolve(package, _, _) => {
+                Some(*package)
+            },
             _ => None,
         }
     }
 
     pub(super) fn package_mut(&mut self) -> Option<&mut PackageId> {
         match self {
-            Query::PackageResolve(package, _, _) => Some(package),
+            Query::PackageNames(package, _) | Query::PackageResolve(package, _, _) => Some(package),
             _ => None,
         }
     }
@@ -218,6 +226,10 @@ impl Query {
             Query::Resolve(file, name) => format!("resolve[{}] {name}", file.0),
             Query::UsedPackages(file) => format!("used_packages[{}]", file.0),
             Query::SourcedBy(file) => format!("sourced_by[{}]", file.0),
+            Query::VisibleNamesAt(file, site) => format!("visible_names_at[{}] {site:?}", file.0),
+            Query::PackageNames(package, visibility) => {
+                format!("package_names[p{}] {visibility:?}", package.0)
+            },
             Query::AllPackageDependencies => "all_package_dependencies".to_string(),
             Query::AllWorkspaceFileDependencies => "all_workspace_file_dependencies".to_string(),
             Query::AllWorkspaceLoaderDependencies => {

@@ -262,6 +262,12 @@ impl World {
             Query::SourcedBy(id) => {
                 let _ = self.file(*id).sourced_by(db);
             },
+            Query::VisibleNamesAt(id, site) => {
+                let _ = self.file(*id).visible_names_at(db, self.offset(*id, *site));
+            },
+            Query::PackageNames(id, visibility) => {
+                let _ = self.package(*id).names(db, *visibility);
+            },
             Query::AllPackageDependencies => {
                 let _ = crate::workspace::all_package_dependencies(db);
             },
@@ -323,9 +329,9 @@ impl World {
         TextSize::from(position as u32)
     }
 
-    /// The lookup layers a file's loader supplies, in priority order, rendered
-    /// as `File(basename)` or `Package(name)`. This shows which loader claimed
-    /// the file even when a source cycle degrades what it resolves.
+    /// Render import layers in lookup order, highest priority first. The
+    /// layers reveal the file's load context even when source-cycle recovery
+    /// leaves resolution incomplete.
     #[cfg(test)]
     pub(crate) fn import_layers(&self, id: FileId) -> Vec<String> {
         use crate::ImportLayer;
@@ -335,6 +341,7 @@ impl World {
             .iter()
             .map(|layer| match layer {
                 ImportLayer::From(package) => format!("From({})", package.name(&self.db)),
+                ImportLayer::Import(package) => format!("Import({})", package.name(&self.db)),
                 ImportLayer::Package(package) => format!("Package({})", package.name(&self.db)),
                 ImportLayer::File(file) | ImportLayer::SourcingFile { file, .. } => {
                     format!("File({})", path_name(file.path(&self.db)))

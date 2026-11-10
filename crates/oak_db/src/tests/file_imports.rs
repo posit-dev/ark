@@ -187,6 +187,9 @@ fn test_package_file_emits_namespace_and_collation_layers() {
                 entries.sort();
                 shape.push(format!("From({entries:?})"));
             },
+            ImportLayer::Import(p) => {
+                shape.push(format!("Import({})", p.name(&db)));
+            },
             ImportLayer::Package(p) => {
                 shape.push(format!("Package({})", p.name(&db)));
             },
@@ -208,7 +211,7 @@ fn test_package_file_emits_namespace_and_collation_layers() {
         // not `imports`.
         "File(_a.R)".to_string(),
         "From([(\"abort\", \"rlang\")])".to_string(),
-        "Package(rlang)".to_string(),
+        "Import(rlang)".to_string(),
         "Package(base)".to_string(),
     ]);
 }
@@ -323,6 +326,7 @@ pub(super) fn shape(db: &TestDb, layers: &[ImportLayer]) -> Vec<String> {
                 entries.sort();
                 format!("From({entries:?})")
             },
+            ImportLayer::Import(p) => format!("Import({})", p.name(db)),
             ImportLayer::Package(p) => format!("Package({})", p.name(db)),
             ImportLayer::File(file) | ImportLayer::SourcingFile { file, .. } => {
                 let url = file.path(db).to_url();

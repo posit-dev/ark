@@ -389,7 +389,7 @@ fn layer_binding<'db>(
             exports_so_far,
         } => (exports_so_far.contains(name) && db.exports(*file).get(name).is_some())
             .then_some(LayerBinding::File),
-        ImportLayer::Package(package) => {
+        ImportLayer::Import(package) | ImportLayer::Package(package) => {
             let handlers = package_handlers(source_db, *package, name);
             if handlers.is_none() && !package_exports(source_db, *package, name) {
                 return None;

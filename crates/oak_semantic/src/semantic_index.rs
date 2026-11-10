@@ -279,6 +279,36 @@ impl SemanticIndex {
         &self.definitions[scope]
     }
 
+    /// The definitions that bind a name in `scope_id`, in definition order.
+    ///
+    /// Leaves out the site marker that `<<-` records in the scope where it is
+    /// written, since the assignment binds in an ancestor. The file scope has
+    /// no ancestor, so there the marker is the binding, unless a locked package
+    /// binding prevents the assignment.
+    pub fn scope_bindings(
+        &self,
+        scope_id: ScopeId,
+    ) -> impl Iterator<Item = (DefinitionId, &Definition)> + '_ {
+        let symbols = &self.symbol_tables[scope_id];
+        let nested = self.scopes[scope_id].parent.is_some();
+
+        self.definitions[scope_id].iter().filter(move |(_, def)| {
+            if !symbols
+                .symbol(def.symbol)
+                .flags()
+                .contains(SymbolFlags::IS_BOUND)
+            {
+                return false;
+            }
+            // A marker sits in the scope's own code, while a binding received
+            // from a nested `<<-` sits in a nested scope.
+            let is_marker = nested &&
+                matches!(def.kind, DefinitionKind::SuperAssignment(_)) &&
+                self.scope_at(def.range.start()).0 == scope_id;
+            !is_marker
+        })
+    }
+
     pub fn uses(&self, scope: ScopeId) -> &IndexVec<UseId, Use> {
         &self.uses[scope]
     }

@@ -44,9 +44,12 @@ pub enum ImportLayer {
     /// The package whose NAMESPACE declares `importFrom(pkg, name)` entries.
     /// [`Package::import_index`] says which entry, if any, binds a given name.
     From(Package),
-    /// A whole package made available, either via NAMESPACE `import(pkg)`,
-    /// `library()` / `require()` calls, or the default R search path.
-    /// Missing packages are filtered out by `imports`.
+    /// A NAMESPACE `import(pkg)` layer. Exposes the package's exports but
+    /// not its lazy data, which R excludes from the imports environment.
+    Import(Package),
+    /// A search-path package, attached by `library()`, `require()`, or by
+    /// default. Exposes exports and lazy data names. [`File::imports()`]
+    /// omits packages absent from the database.
     Package(Package),
 }
 
@@ -348,16 +351,37 @@ impl File {
     ///   of this file. Most recently sourced predecessor comes
     ///   first. The package imports and base namespace come last.
     ///
-    /// The cursor's scope, and so whether it sees the lazy or the top-level
-    /// view, comes from [`File::cursor_scope()`].
+    /// [`File::cursor_scope()`] determines whether the cursor gets the eager
+    /// or lazy view, including between tokens and in unfinished functions.
     ///
     /// Plain method rather than `#[salsa::tracked]`. Tracking would key the
     /// cache on `(self, offset)`, creating one entry per cursor position.
     /// Skipping the cache is fine because the body just reads already-cached
-    /// subqueries (`cross_file_layers`, `semantic_index`, `parse`) and applies
-    /// an O(n) filter.
+    /// subqueries (`cross_file_layers()`, `semantic_index()`, `parse()`) and
+    /// applies an O(n) filter.
     pub fn imports_at(self, db: &dyn Db, offset: TextSize) -> Vec<ImportLayer> {
         self.imports_in(db, ImportView::at(db, self, &offset))
+    }
+
+    /// Return [`File::imports_at()`] and the insertion index for this file's
+    /// top-level definitions. Loader environment files loaded after this file
+    /// outrank its definitions in lookup order. Earlier files and the remaining
+    /// layers rank below them.
+    pub(crate) fn imports_and_own_position_at(
+        self,
+        db: &dyn Db,
+        offset: TextSize,
+    ) -> (Vec<ImportLayer>, usize) {
+        let view = ImportView::at(db, self, &offset);
+        // `imports_in()` starts with the environment files minus this one, in
+        // lookup order, whether or not other files source this one.
+        let own_position = self
+            .cross_file_layers(db, view.collation)
+            .environments
+            .lookup_files()
+            .take_while(|file| *file != self)
+            .count();
+        (self.imports_in(db, view), own_position)
     }
 
     fn imports_in(self, db: &dyn Db, view: ImportView<'_>) -> Vec<ImportLayer> {
@@ -842,8 +866,7 @@ fn extend_with_namespace_imports(
     layers.push(ImportLayer::From(package));
 }
 
-/// Push one `Package` layer per `import(pkg)` directive in the namespace
-/// (bulk package imports). Missing packages are silently dropped.
+/// Missing packages do not contribute a NAMESPACE `import(pkg)` layer.
 fn extend_with_namespace_package_imports(
     db: &dyn SourceDb,
     namespace: &Namespace,
@@ -851,7 +874,7 @@ fn extend_with_namespace_package_imports(
 ) {
     for pkg_name in &namespace.package_imports {
         if let Some(pkg) = db.package_by_name(pkg_name) {
-            layers.push(ImportLayer::Package(pkg));
+            layers.push(ImportLayer::Import(pkg));
         }
     }
 }

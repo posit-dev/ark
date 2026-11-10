@@ -29,9 +29,9 @@ use crate::Db;
 use crate::File;
 
 impl File {
-    /// The scope a cursor at `offset` is in. Position-specific queries such as
-    /// [`File::imports_at()`] read the scope through this one rule so they
-    /// agree at every offset. See [`cursor_scope()`] for the rule.
+    /// Map a cursor position to a scope using [`cursor_scope()`]. Sharing
+    /// this rule keeps [`File::imports_at()`] and [`File::visible_names_at()`]
+    /// consistent between tokens and at the ends of unfinished functions.
     pub(crate) fn cursor_scope(self, db: &dyn Db, offset: TextSize) -> ScopeId {
         cursor_scope(self.semantic_index(db), &self.parse(db).syntax(), offset)
     }
@@ -42,21 +42,22 @@ impl File {
 /// [`SemanticIndex::scope_at()`] hit-tests half-open scope ranges, which are
 /// trimmed syntax ranges ending at a scope's last token. That suits an offset
 /// on a token, but a cursor between tokens can sit at or past a range's
-/// excluded end and still continue the scope: in `f <- function(x) x|` and
-/// `f <- function(x) |` the cursor is in the function body, and so is a cursor
+/// excluded end while continuing the scope. In `f <- function(x) x|` and
+/// `f <- function(x) |`, the cursor is in the function body, as is a cursor
 /// on the trailing lines of an unclosed `function(x) {` at the end of the file.
 ///
-/// So when the last token before the cursor ends a scope, the cursor stays in
-/// the innermost such scope that it continues:
+/// When the last token before the cursor ends a scope, these rules determine
+/// which enclosing scope the cursor continues.
 ///
 /// - After a closing `}`, the cursor has left the braces and the scope they
-///   end, unless it is still inside an unclosed delimiter of that scope.
+///   end, unless it is still inside a delimiter belonging to that scope whose
+///   closing token is missing or has not been reached.
 /// - On the same line as any other token, the cursor continues the token's
 ///   expression.
-/// - After a newline, the statement has ended unless it is unfinished: an
-///   operand or body is missing (`x +`, `function(x)`), the cursor is inside
-///   an unclosed delimiter of the scope, or inside parentheses or brackets
-///   around it, where R does not end an expression at a newline.
+/// - After a newline, the statement continues only if an operand or body is
+///   missing (`x +`, `function(x)`), or the cursor remains inside a delimiter
+///   belonging to the scope or parentheses or brackets around it. R permits
+///   newlines within these delimiters.
 ///
 /// `scope_at()` itself keeps half-open ranges because `definition_at()` and
 /// `use_at()` hit-test tokens, and the rule above needs the syntax tree, which
@@ -122,8 +123,6 @@ fn last_token_before(root: &RSyntaxNode, offset: TextSize) -> Option<RSyntaxToke
         TokenAtOffset::Single(token) => token,
         TokenAtOffset::Between(left, _) => left,
     };
-    // Skip tokens the cursor sits before or in the leading trivia of, and
-    // empty tokens such as EOF.
     while token.text_trimmed_range().start() >= offset || token.text_trimmed().is_empty() {
         token = token.prev_token()?;
     }

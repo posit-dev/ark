@@ -116,6 +116,7 @@ pub(super) fn observed_file(query: &Query) -> Option<FileId> {
         Query::ResolveAt(file, _) |
         Query::Resolve(file, _) |
         Query::UsedPackages(file) |
+        Query::VisibleNamesAt(file, _) |
         Query::SemanticIndex(file) |
         Query::Exports(file) |
         Query::AttachedPackages(file) |
@@ -128,13 +129,14 @@ pub(super) fn observed_file(query: &Query) -> Option<FileId> {
         Query::AllWorkspaceLoaderDependencies |
         Query::AllWorkspacePackageDependencies |
         Query::DefaultSearchPathPackages |
+        Query::PackageNames(..) |
         Query::PackageResolve(..) => None,
     }
 }
 
 /// Selects a direct observer of `file`, as recognized by [`observed_file()`].
 pub(super) fn observing_query(rng: &mut impl Choose, shape: &Shape, file: FileId) -> Query {
-    match rng.index(8) {
+    match rng.index(9) {
         0 => Query::Diagnostics(file),
         1 => Query::Imports(file),
         2 => Query::ImportsAt(file, random_site(rng)),
@@ -142,6 +144,7 @@ pub(super) fn observing_query(rng: &mut impl Choose, shape: &Shape, file: FileId
         4 => Query::Resolve(file, random_name(rng, shape)),
         5 => Query::UsedPackages(file),
         6 => Query::SemanticIndex(file),
+        7 => Query::VisibleNamesAt(file, random_site(rng)),
         _ => Query::Exports(file),
     }
 }
@@ -174,12 +177,15 @@ fn cycle_entry(rng: &mut impl Choose, shape: &Shape) -> Query {
 fn random_package_resolve(rng: &mut impl Choose, shape: &Shape) -> Query {
     let id = PackageId(rng.index(shape.packages));
     let name = shape.export(rng);
-    let visibility = if rng.odds(50) {
+    Query::PackageResolve(id, name, random_visibility(rng))
+}
+
+fn random_visibility(rng: &mut impl Choose) -> NamespaceVisibility {
+    if rng.odds(50) {
         NamespaceVisibility::Exported
     } else {
         NamespaceVisibility::Internal
-    };
-    Query::PackageResolve(id, name, visibility)
+    }
 }
 
 /// Run aggregates first to exercise their cold-entry cycle behavior.
@@ -195,14 +201,17 @@ fn aggregate_entry(rng: &mut impl Choose) -> Query {
 
 fn production_entry(rng: &mut impl Choose, shape: &Shape) -> Query {
     let file = random_file(rng, shape.files);
-    match rng.index(7) {
+    let options = if shape.packages > 0 { 9 } else { 8 };
+    match rng.index(options) {
         0 => Query::Diagnostics(file),
         1 => Query::Imports(file),
         2 => Query::ImportsAt(file, random_site(rng)),
         3 => Query::ResolveAt(file, random_site(rng)),
         4 => Query::Resolve(file, random_name(rng, shape)),
         5 => Query::UsedPackages(file),
-        _ => Query::SourcedBy(file),
+        6 => Query::SourcedBy(file),
+        7 => Query::VisibleNamesAt(file, random_site(rng)),
+        _ => Query::PackageNames(PackageId(rng.index(shape.packages)), random_visibility(rng)),
     }
 }
 

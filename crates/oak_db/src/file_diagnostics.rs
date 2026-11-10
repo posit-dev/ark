@@ -209,7 +209,9 @@ fn describe_source(db: &dyn Db, layer: &ImportLayer) -> String {
         ImportLayer::File(file) | ImportLayer::SourcingFile { file, .. } => {
             format!("a binding in `{}`", file_name(db, *file))
         },
-        ImportLayer::Package(package) => format!("package `{}`", package.name(db)),
+        ImportLayer::Import(package) | ImportLayer::Package(package) => {
+            format!("package `{}`", package.name(db))
+        },
         ImportLayer::From(importer) => format!("an import of `{}`", importer.name(db)),
     }
 }

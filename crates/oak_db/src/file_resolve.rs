@@ -170,7 +170,9 @@ impl<'db> File {
         definitions
     }
 
-    fn resolve_definition(
+    /// Return the definition at `(scope_id, def_id)`, or, for a `source()`
+    /// import, the definitions it forwards to in the sourced file.
+    pub(crate) fn resolve_definition(
         self,
         db: &'db dyn Db,
         scope_id: ScopeId,
@@ -335,7 +337,9 @@ pub(crate) fn resolve_import_layer<'db>(
             }
             return file.resolve_export(db, name);
         },
-        ImportLayer::Package(package) => *package,
+        // Lazy data has no definition to resolve to, so both layers resolve
+        // exports only.
+        ImportLayer::Import(package) | ImportLayer::Package(package) => *package,
         ImportLayer::From(importer) => {
             match importer.imported_from(db).get(name.text(db).as_str()) {
                 Some(source) => match db.package_by_name(source) {

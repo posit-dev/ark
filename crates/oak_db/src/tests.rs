@@ -14,6 +14,7 @@ mod file_resolve;
 mod file_resolve_at;
 mod file_root;
 mod file_source_site;
+mod file_visible_names;
 mod fuzz;
 mod identifier;
 mod inputs;
