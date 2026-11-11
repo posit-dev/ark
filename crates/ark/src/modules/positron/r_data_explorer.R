@@ -195,7 +195,7 @@ col_filter_indices <- function(col, idx = NULL) {
         params <- row_filters[[search_index]]$params
         row_filters_errors[search_index] <- tryCatch(
             {
-                result <- .ps.search_rows(
+                result <- .ps.filter_rows_by_search(
                     table,
                     params,
                     indices,
@@ -225,9 +225,9 @@ col_filter_indices <- function(col, idx = NULL) {
 # values match the null markers. Only `rows` (row indices) are scanned, limited
 # to `max_cells` cells. Returns the matching rows and, when `max_cells` limited
 # the scan, the number of rows scanned. `search` holds the filter's params.
-.ps.search_rows <- function(table, search, rows, cache) {
+.ps.filter_rows_by_search <- function(table, search, rows, cache) {
     query <- .ps.search_query(search)
-    columns <- .ps.search_columns(table)
+    columns <- .ps.columns_to_search(table)
     # An absent or zero `max_cells` means the scan is unlimited
     max_cells <- search$max_cells
     limited <- !is.null(max_cells) && max_cells > 0
@@ -252,15 +252,15 @@ col_filter_indices <- function(col, idx = NULL) {
         if (length(pending) == 0L) {
             break
         }
-        col <- .ps.search_col(table, j)
+        col <- .ps.get_column(table, j)
         text <- function() {
             # Formatted text is cached only when `max_cells` bounds its size
             if (!limited || .ps.is_plain_text(col)) {
-                return(.ps.search_text(col, rows[pending]))
+                return(.ps.displayed_text(col, rows[pending]))
             }
             key <- if (j == 0L) "row_names" else paste0("col_", j)
             if (is.null(cache$text[[key]])) {
-                cache$text[[key]] <- .ps.search_text(col, rows)
+                cache$text[[key]] <- .ps.displayed_text(col, rows)
             }
             cache$text[[key]][pending]
         }
@@ -277,7 +277,7 @@ col_filter_indices <- function(col, idx = NULL) {
     n <- nrow(table)
     matches <- Map(
         function(j, rows) {
-            col <- .ps.search_col(table, j)
+            col <- .ps.get_column(table, j)
             if (!.ps.is_searchable(col, n)) {
                 return(logical(length(rows)))
             }
@@ -320,7 +320,7 @@ col_filter_indices <- function(col, idx = NULL) {
 
     function(x) {
         if (is.double(x) && !is.null(format_options)) {
-            x <- .ps.search_displayed(x, format_options)
+            x <- .ps.round_as_displayed(x, format_options)
         }
         in_range <- if (value > 0) {
             x >= value - eps & x < value + step - eps
@@ -334,7 +334,7 @@ col_filter_indices <- function(col, idx = NULL) {
 }
 
 # Indices of the searched columns, with 0 standing for character row names
-.ps.search_columns <- function(table) {
+.ps.columns_to_search <- function(table) {
     # Matrix columns share the matrix's type, so are searchable unless it is a
     # list
     columns <- if (is.matrix(table)) {
@@ -346,15 +346,16 @@ col_filter_indices <- function(col, idx = NULL) {
             seq_len(ncol(table))
         )
     }
-    if (is.character(.ps.search_row_names(table))) {
+    if (is.character(.ps.row_names(table))) {
         columns <- c(0L, columns)
     }
     columns
 }
 
-.ps.search_col <- function(table, j) {
+# Column `j` of `table`, with 0 standing for its row names
+.ps.get_column <- function(table, j) {
     if (j == 0L) {
-        .ps.search_row_names(table)
+        .ps.row_names(table)
     } else if (is.matrix(table)) {
         table[, j]
     } else {
@@ -362,7 +363,9 @@ col_filter_indices <- function(col, idx = NULL) {
     }
 }
 
-.ps.search_row_names <- function(table) {
+# Row names of `table` as stored, so automatic data frame row names are not
+# character
+.ps.row_names <- function(table) {
     if (is.matrix(table)) {
         rownames(table)
     } else {
@@ -379,7 +382,7 @@ col_filter_indices <- function(col, idx = NULL) {
 
 # Doubles rounded as `format_dbl_value()` displays them, with NA for those it
 # displays in scientific notation
-.ps.search_displayed <- function(x, options) {
+.ps.round_as_displayed <- function(x, options) {
     magnitude <- abs(x)
     medium <- (magnitude >= 1 & magnitude < 10^options$max_integral_digits) |
         magnitude == 0
@@ -401,7 +404,7 @@ col_filter_indices <- function(col, idx = NULL) {
     col,
     rows,
     query,
-    text = function() .ps.search_text(col, rows)
+    text = function() .ps.displayed_text(col, rows)
 ) {
     tryCatch(
         {
@@ -425,7 +428,7 @@ col_filter_indices <- function(col, idx = NULL) {
 }
 
 # The displayed text of `col[rows]`
-.ps.search_text <- function(col, rows) {
+.ps.displayed_text <- function(col, rows) {
     x <- col[rows]
     if (.ps.is_plain_text(col)) {
         return(x)
