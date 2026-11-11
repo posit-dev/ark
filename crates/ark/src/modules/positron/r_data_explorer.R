@@ -127,19 +127,23 @@ col_filter_indices <- function(col, idx = NULL) {
     # Create the initial set of indices
     indices <- rep(TRUE, nrow(table))
     row_filters_errors <- rep(NA_character_, length(row_filters))
-    search_index <- NULL
     rows_scanned <- NA_integer_
 
-    for (i in seq_along(row_filters)) {
-        row_filter <- row_filters[[i]]
+    # The first global search runs last, on the rows that pass the other
+    # filters. Any others are ignored. It is retried even when marked invalid,
+    # since its errors depend on the data.
+    is_search <- vapply(
+        row_filters,
+        function(row_filter) identical(row_filter$filter_type, "global_search"),
+        logical(1)
+    )
+    search_index <- which(is_search)[1]
 
-        # The first global search runs last, on the rows that pass the other
-        # filters. Any others are ignored. It is retried even when marked
-        # invalid, since its errors depend on the data.
-        if (identical(row_filter$filter_type, "global_search")) {
-            search_index <- search_index %||% i
+    for (i in seq_along(row_filters)) {
+        if (is_search[i]) {
             next
         }
+        row_filter <- row_filters[[i]]
 
         # Do not try to apply filters that are already marked as invalid.
         if (!is.null(row_filter$is_valid) && !row_filter$is_valid) {
@@ -187,7 +191,7 @@ col_filter_indices <- function(col, idx = NULL) {
 
     indices <- which(indices)
 
-    if (!is.null(search_index)) {
+    if (!is.na(search_index)) {
         params <- row_filters[[search_index]]$params
         row_filters_errors[search_index] <- tryCatch(
             {
