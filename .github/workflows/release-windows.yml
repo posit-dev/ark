@@ -18,6 +18,8 @@ jobs:
 
         env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            # TODO: Remove after https://github.com/biomejs/biome/issues/13071
+            CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
         strategy:
             matrix:
@@ -32,6 +34,10 @@ jobs:
                       rust_target_prefix: aarch64
 
         steps:
+            # TODO: Remove after https://github.com/biomejs/biome/issues/13071
+            - name: Enable git long paths
+              run: git config --global core.longpaths true
+
             - name: Checkout sources
               uses: actions/checkout@v4
 
