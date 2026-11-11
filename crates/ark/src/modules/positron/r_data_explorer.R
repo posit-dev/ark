@@ -293,44 +293,50 @@ col_filter_indices <- function(col, idx = NULL) {
     term <- enc2utf8(search$term)
     list(
         pattern = .ps.regex_escape(term),
-        numeric = .ps.search_numeric_matcher(
-            trimws(term),
-            search$format_options
-        ),
-        null = tolower(trimws(term)) %in%
+        numeric_term = .ps.parse_numeric_term(trimws(term)),
+        format_options = search$format_options,
+        is_na_term = tolower(trimws(term)) %in%
             c("null", "na", "nan", "none", "nat", "<na>")
     )
 }
 
-# Returns a function matching numeric values against a numeric term: a value
-# matches when truncating it toward zero at the term's decimals gives the term.
-# Doubles are first rounded as displayed with `format_options`, when given.
-# Non-numeric terms match no numeric value.
-.ps.search_numeric_matcher <- function(term, format_options = NULL) {
+# Parses a numeric term into its value and the step implied by its decimals,
+# e.g. "3.1" gives value 3.1 and step 0.1. Grouped commas ("1,234") are
+# accepted. Returns NULL for terms that aren't plain numbers, like "1e3" or
+# "Inf".
+.ps.parse_numeric_term <- function(term) {
     if (grepl("^[+-]?[0-9]{1,3}(,[0-9]{3})+(\\.[0-9]*)?$", term)) {
         term <- gsub(",", "", term, fixed = TRUE)
     }
     if (!grepl("^[+-]?([0-9]+\\.?[0-9]*|\\.[0-9]+)$", term)) {
-        return(function(x) logical(length(x)))
+        return(NULL)
     }
+    list(
+        value = as.numeric(term),
+        step = 10^-nchar(sub("^[^.]*\\.?", "", term))
+    )
+}
 
-    value <- as.numeric(term)
-    step <- 10^-nchar(sub("^[^.]*\\.?", "", term))
+# Whether each of `x` matches `numeric_term`: a value matches when truncating
+# it toward zero at the term's decimals gives the term. Doubles are first
+# rounded as displayed with `format_options`, when given.
+.ps.match_numeric <- function(x, numeric_term, format_options = NULL) {
+    if (is.double(x) && !is.null(format_options)) {
+        x <- .ps.round_as_displayed(x, format_options)
+    }
+    value <- numeric_term$value
+    step <- numeric_term$step
+    # Half-open intervals, nudged by `eps`, rather than `trunc()`, so floating
+    # point error at the interval edges doesn't flip a match
     eps <- step * 1e-9
-
-    function(x) {
-        if (is.double(x) && !is.null(format_options)) {
-            x <- .ps.round_as_displayed(x, format_options)
-        }
-        in_range <- if (value > 0) {
-            x >= value - eps & x < value + step - eps
-        } else if (value < 0) {
-            x > value - step + eps & x <= value + eps
-        } else {
-            x > -step + eps & x < step - eps
-        }
-        is.finite(x) & in_range
+    in_range <- if (value > 0) {
+        x >= value - eps & x < value + step - eps
+    } else if (value < 0) {
+        x > value - step + eps & x <= value + eps
+    } else {
+        x > -step + eps & x < step - eps
     }
+    is.finite(x) & in_range
 }
 
 # Indices of the searched columns, with 0 standing for character row names
@@ -409,11 +415,19 @@ col_filter_indices <- function(col, idx = NULL) {
     tryCatch(
         {
             matches <- if (is.numeric(col) && !is.object(col)) {
-                query$numeric(col[rows])
+                if (is.null(query$numeric_term)) {
+                    logical(length(rows))
+                } else {
+                    .ps.match_numeric(
+                        col[rows],
+                        query$numeric_term,
+                        query$format_options
+                    )
+                }
             } else {
                 grepl(query$pattern, text(), perl = TRUE, ignore.case = TRUE)
             }
-            if (query$null) {
+            if (query$is_na_term) {
                 matches <- matches | is.na(col[rows])
             }
             matches
