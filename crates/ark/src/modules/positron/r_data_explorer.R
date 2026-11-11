@@ -224,12 +224,13 @@ col_filter_indices <- function(col, idx = NULL) {
 .ps.search_rows <- function(table, search, rows, cache) {
     query <- .ps.search_query(search)
     columns <- .ps.search_columns(table)
-    max_cells <- search$max_cells %||% 0
+    # An absent or zero `max_cells` means the scan is unlimited
+    max_cells <- search$max_cells
+    limited <- !is.null(max_cells) && max_cells > 0
 
-    # Formatted text is cached only when `max_cells` bounds its size
-    use_cache <- max_cells > 0
+    # Dividing, rather than multiplying rows by columns, avoids integer overflow
     rows_scanned <- NA_integer_
-    if (use_cache && as.double(length(rows)) * length(columns) > max_cells) {
+    if (limited && length(rows) > max_cells / length(columns)) {
         rows_scanned <- as.integer(max_cells %/% length(columns))
         rows <- rows[seq_len(rows_scanned)]
     }
@@ -249,7 +250,8 @@ col_filter_indices <- function(col, idx = NULL) {
         }
         col <- .ps.search_col(table, j)
         text <- function() {
-            if (!use_cache || .ps.is_plain_text(col)) {
+            # Formatted text is cached only when `max_cells` bounds its size
+            if (!limited || .ps.is_plain_text(col)) {
                 return(.ps.search_text(col, rows[pending]))
             }
             key <- as.character(j)
