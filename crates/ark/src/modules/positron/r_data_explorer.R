@@ -120,7 +120,7 @@ col_filter_indices <- function(col, idx = NULL) {
     col
 }
 
-.ps.filter_rows <- function(table, row_filters, search_cache = new.env()) {
+.ps.filter_rows <- function(table, row_filters, search_cache) {
     # Are we working with a matrix here?
     is_matrix <- is.matrix(table)
 

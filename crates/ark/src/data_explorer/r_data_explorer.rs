@@ -65,6 +65,7 @@ use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::socket::comm::CommOutgoingTx;
 use anyhow::anyhow;
 use anyhow::Context;
+use harp::environment::Environment;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -242,7 +243,7 @@ impl RDataExplorer {
             sorted_indices: None,
             filtered_indices: None,
             view_indices: None,
-            search_cache: Self::new_search_cache()?,
+            search_cache: Self::new_search_cache(),
             global_search_rows_scanned: None,
             sort_keys: vec![],
             row_filters: vec![],
@@ -251,8 +252,8 @@ impl RDataExplorer {
         })
     }
 
-    fn new_search_cache() -> anyhow::Result<RObject> {
-        Ok(RFunction::new("base", "new.env").call()?)
+    fn new_search_cache() -> RObject {
+        Environment::new_empty().into()
     }
 
     pub(crate) fn shape(&self) -> &DataObjectShape {
@@ -301,7 +302,7 @@ impl RDataExplorer {
             false
         } else {
             self.table.set(RObject::new(new));
-            self.search_cache = Self::new_search_cache()?;
+            self.search_cache = Self::new_search_cache();
             true
         };
 
@@ -777,7 +778,7 @@ impl RDataExplorer {
     fn row_filters_compute(&mut self) -> anyhow::Result<(Option<Vec<i32>>, Option<bool>)> {
         self.global_search_rows_scanned = None;
         if self.global_search().is_none() {
-            self.search_cache = Self::new_search_cache()?;
+            self.search_cache = Self::new_search_cache();
         }
 
         if self.row_filters.is_empty() {
