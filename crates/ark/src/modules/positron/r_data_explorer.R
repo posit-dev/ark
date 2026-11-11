@@ -235,11 +235,11 @@ col_filter_indices <- function(col, idx = NULL) {
         rows <- rows[seq_len(rows_scanned)]
     }
 
-    # The cache holds formatted text of the scanned rows, so it is stale when
-    # they change
+    # The cache holds formatted text of the scanned rows, one element of
+    # `cache$text` per column, so it is stale when the rows change
     if (!identical(cache$rows, rows)) {
-        rm(list = ls(cache), envir = cache)
         cache$rows <- rows
+        cache$text <- list()
     }
 
     matches <- logical(length(rows))
@@ -254,11 +254,11 @@ col_filter_indices <- function(col, idx = NULL) {
             if (!limited || .ps.is_plain_text(col)) {
                 return(.ps.search_text(col, rows[pending]))
             }
-            key <- as.character(j)
-            if (is.null(cache[[key]])) {
-                cache[[key]] <- .ps.search_text(col, rows)
+            key <- if (j == 0L) "row_names" else paste0("col_", j)
+            if (is.null(cache$text[[key]])) {
+                cache$text[[key]] <- .ps.search_text(col, rows)
             }
-            cache[[key]][pending]
+            cache$text[[key]][pending]
         }
         matches[pending] <- .ps.search_match(col, rows[pending], query, text)
     }
