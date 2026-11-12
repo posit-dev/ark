@@ -101,7 +101,23 @@ pub struct BackendState {
 
 	/// Optional experimental parameter to provide an explanation when
 	/// connected=false. This parameter may change.
-	pub error_message: Option<String>
+	pub error_message: Option<String>,
+
+	/// For Excel workbooks, the names of the worksheets available to read, in
+	/// workbook order. Absent for non-Excel data sources.
+	pub available_sheets: Option<Vec<String>>,
+
+	/// Set when the backend serves only the leading rows of a larger result:
+	/// table_shape.num_rows is then the number of rows served, and this is
+	/// the number of rows in the full filtered result. Absent when
+	/// table_shape covers every row.
+	pub total_num_rows: Option<i64>,
+
+	/// Set when the active global_search filter was limited by max_cells: the
+	/// number of leading candidate rows that were scanned. Rows beyond it are
+	/// treated as not matching. Absent when every row was searched or no
+	/// search is active.
+	pub global_search_rows_scanned: Option<i64>
 }
 
 /// Schema for a column in a table
@@ -145,14 +161,24 @@ pub struct ColumnSchema {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TableData {
 	/// The columns of data
-	pub columns: Vec<Vec<ColumnValue>>
+	pub columns: Vec<Vec<ColumnValue>>,
+
+	/// For each requested cell, whether it matched the active global_search
+	/// filter. Parallel to columns. Omitted when no global search is active
+	/// or the backend does not compute per-cell matches.
+	pub search_matches: Option<Vec<Vec<bool>>>
 }
 
 /// Formatted table row labels formatted as strings
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TableRowLabels {
 	/// Zero or more arrays of row labels
-	pub row_labels: Vec<Vec<String>>
+	pub row_labels: Vec<Vec<String>>,
+
+	/// For each row label, whether it matched the active global_search
+	/// filter. Parallel to row_labels. Omitted when no global search is
+	/// active or the backend does not compute per-label matches.
+	pub search_matches: Option<Vec<Vec<bool>>>
 }
 
 /// Formatting options for returning data values as strings
@@ -195,7 +221,8 @@ pub struct TableShape {
 	pub num_columns: i64
 }
 
-/// Specifies a table row filter based on a single column's values
+/// Specifies a table row filter based on a single column's values, or on
+/// all columns for the global_search filter type
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RowFilter {
 	/// Unique identifier for this filter
@@ -204,8 +231,9 @@ pub struct RowFilter {
 	/// Type of row filter to apply
 	pub filter_type: RowFilterType,
 
-	/// Column to apply filter to
-	pub column_schema: ColumnSchema,
+	/// Column to apply filter to. Absent for filter types that span all
+	/// columns (global_search)
+	pub column_schema: Option<ColumnSchema>,
 
 	/// The binary condition to use to combine with preceding row filters
 	pub condition: RowFilterCondition,
@@ -259,6 +287,26 @@ pub struct FilterSetMembership {
 
 	/// Filter by including only values passed (true) or excluding (false)
 	pub inclusive: bool
+}
+
+/// Parameters for the 'global_search' filter type, which matches a row
+/// when any searched column matches the term
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FilterGlobalSearch {
+	/// Text to search for; see the data explorer search semantics for how
+	/// numeric terms are matched
+	pub term: String,
+
+	/// Upper bound on the number of cells to scan. When the table exceeds it,
+	/// only the leading floor(max_cells / searched_columns) candidate rows
+	/// are scanned and the backend reports global_search_rows_scanned in its
+	/// state. Absent or 0 means unlimited.
+	pub max_cells: Option<i64>,
+
+	/// The options the frontend formats data values with, so numeric terms
+	/// match floating point values as they are displayed. Absent means
+	/// numeric terms match the values unrounded.
+	pub format_options: Option<FormatOptions>
 }
 
 /// Parameters for the 'search' filter type
@@ -710,13 +758,17 @@ pub struct ColumnSelection {
 	pub spec: ArraySelection
 }
 
-/// Import options for file-based data sources. Currently supports options
-/// for delimited text files (CSV, TSV).
+/// Import options for file-based data sources. Supports options for
+/// delimited text files (CSV, TSV) and Excel workbooks (XLSX).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DatasetImportOptions {
 	/// Whether the first row contains column headers (for delimited text
-	/// files)
-	pub has_header_row: Option<bool>
+	/// files and Excel workbooks)
+	pub has_header_row: Option<bool>,
+
+	/// The name of the worksheet to read (for Excel workbooks). Defaults to
+	/// the first sheet.
+	pub sheet_name: Option<String>
 }
 
 /// Possible values for SortOrder in SearchSchema
@@ -856,7 +908,11 @@ pub enum RowFilterType {
 
 	#[serde(rename = "set_membership")]
 	#[strum(to_string = "set_membership")]
-	SetMembership
+	SetMembership,
+
+	#[serde(rename = "global_search")]
+	#[strum(to_string = "global_search")]
+	GlobalSearch
 }
 
 /// Possible values for Op in FilterComparison
@@ -1051,7 +1107,9 @@ pub enum RowFilterParams {
 
 	TextSearch(FilterTextSearch),
 
-	SetMembership(FilterSetMembership)
+	SetMembership(FilterSetMembership),
+
+	GlobalSearch(FilterGlobalSearch)
 }
 
 /// Union type ColumnFilterParams
@@ -1343,6 +1401,7 @@ pub enum DataExplorerBackendRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
+#[allow(clippy::large_enum_variant)]
 pub enum DataExplorerBackendReply {
 	OpenDatasetReply(OpenDatasetResult),
 
@@ -1401,6 +1460,7 @@ pub enum DataExplorerFrontendRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
+#[allow(clippy::large_enum_variant)]
 pub enum DataExplorerFrontendReply {
 }
 

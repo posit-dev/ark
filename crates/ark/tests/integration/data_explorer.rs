@@ -11,6 +11,7 @@ use std::sync::Mutex;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ArraySelection;
+use amalthea::comm::data_explorer_comm::CodeSyntaxName;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnFilter;
 use amalthea::comm::data_explorer_comm::ColumnFilterParams;
@@ -28,6 +29,7 @@ use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnSelection;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::ColumnValue;
+use amalthea::comm::data_explorer_comm::ConvertToCodeParams;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
@@ -39,6 +41,7 @@ use amalthea::comm::data_explorer_comm::ExportFormat;
 use amalthea::comm::data_explorer_comm::ExportedData;
 use amalthea::comm::data_explorer_comm::FilterComparison;
 use amalthea::comm::data_explorer_comm::FilterComparisonOp;
+use amalthea::comm::data_explorer_comm::FilterGlobalSearch;
 use amalthea::comm::data_explorer_comm::FilterMatchDataTypes;
 use amalthea::comm::data_explorer_comm::FilterResult;
 use amalthea::comm::data_explorer_comm::FilterTextSearch;
@@ -55,6 +58,7 @@ use amalthea::comm::data_explorer_comm::SearchSchemaParams;
 use amalthea::comm::data_explorer_comm::SearchSchemaResult;
 use amalthea::comm::data_explorer_comm::SearchSchemaSortOrder;
 use amalthea::comm::data_explorer_comm::Selection;
+use amalthea::comm::data_explorer_comm::SetRowFiltersFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::data_explorer_comm::SummaryStatsBoolean;
@@ -541,7 +545,7 @@ impl RowFilterBuilder {
         value: &str,
     ) -> RowFilter {
         RowFilter {
-            column_schema,
+            column_schema: Some(column_schema),
             filter_type: RowFilterType::Compare,
             params: Some(RowFilterParams::Comparison(FilterComparison {
                 op,
@@ -561,7 +565,7 @@ impl RowFilterBuilder {
         case_sensitive: bool,
     ) -> RowFilter {
         RowFilter {
-            column_schema,
+            column_schema: Some(column_schema),
             filter_type: RowFilterType::Search,
             params: Some(RowFilterParams::TextSearch(FilterTextSearch {
                 search_type,
@@ -577,7 +581,7 @@ impl RowFilterBuilder {
 
     fn is_null(column_schema: amalthea::comm::data_explorer_comm::ColumnSchema) -> RowFilter {
         RowFilter {
-            column_schema,
+            column_schema: Some(column_schema),
             filter_type: RowFilterType::IsNull,
             params: None,
             filter_id: uuid::Uuid::new_v4().to_string(),
@@ -589,7 +593,7 @@ impl RowFilterBuilder {
 
     fn not_null(column_schema: amalthea::comm::data_explorer_comm::ColumnSchema) -> RowFilter {
         RowFilter {
-            column_schema,
+            column_schema: Some(column_schema),
             filter_type: RowFilterType::NotNull,
             params: None,
             filter_id: uuid::Uuid::new_v4().to_string(),
@@ -601,7 +605,7 @@ impl RowFilterBuilder {
 
     fn is_empty(column_schema: amalthea::comm::data_explorer_comm::ColumnSchema) -> RowFilter {
         RowFilter {
-            column_schema,
+            column_schema: Some(column_schema),
             filter_type: RowFilterType::IsEmpty,
             params: None,
             filter_id: uuid::Uuid::new_v4().to_string(),
@@ -613,7 +617,7 @@ impl RowFilterBuilder {
 
     fn is_true(column_schema: amalthea::comm::data_explorer_comm::ColumnSchema) -> RowFilter {
         RowFilter {
-            column_schema,
+            column_schema: Some(column_schema),
             filter_type: RowFilterType::IsTrue,
             params: None,
             filter_id: uuid::Uuid::new_v4().to_string(),
@@ -625,9 +629,33 @@ impl RowFilterBuilder {
 
     fn is_false(column_schema: amalthea::comm::data_explorer_comm::ColumnSchema) -> RowFilter {
         RowFilter {
-            column_schema,
+            column_schema: Some(column_schema),
             filter_type: RowFilterType::IsFalse,
             params: None,
+            filter_id: uuid::Uuid::new_v4().to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            error_message: None,
+        }
+    }
+
+    fn global_search(term: &str, max_cells: Option<i64>) -> RowFilter {
+        Self::global_search_formatted(term, max_cells, None)
+    }
+
+    fn global_search_formatted(
+        term: &str,
+        max_cells: Option<i64>,
+        format_options: Option<FormatOptions>,
+    ) -> RowFilter {
+        RowFilter {
+            column_schema: None,
+            filter_type: RowFilterType::GlobalSearch,
+            params: Some(RowFilterParams::GlobalSearch(FilterGlobalSearch {
+                term: term.to_string(),
+                max_cells,
+                format_options,
+            })),
             filter_id: uuid::Uuid::new_v4().to_string(),
             condition: RowFilterCondition::And,
             is_valid: None,
@@ -641,7 +669,7 @@ impl RowFilterBuilder {
         inclusive: bool,
     ) -> RowFilter {
         RowFilter {
-            column_schema,
+            column_schema: Some(column_schema),
             filter_type: RowFilterType::SetMembership,
             params: Some(RowFilterParams::SetMembership(
                 amalthea::comm::data_explorer_comm::FilterSetMembership { values, inclusive },
@@ -1187,7 +1215,7 @@ fn test_search_filters() {
     // Next, apply a filter to the data set. Check for rows that are greater than
     // "marshmallows". This is an invalid filter because the column is a date.
     let year_filter = RowFilter {
-        column_schema: schema.columns[0].clone(),
+        column_schema: Some(schema.columns[0].clone()),
         filter_type: RowFilterType::Compare,
         filter_id: "0DB2F23D-B299-4068-B8D5-A2B513A93330".to_string(),
         condition: RowFilterCondition::And,
@@ -1416,7 +1444,7 @@ fn test_invalid_filters_preserved() {
     // Next, apply a filter to the data set. Check for rows that are greater than
     // "marshmallows". This is an invalid filter because the column is a date.
     let x_is_empty = RowFilter {
-        column_schema: schema.columns[0].clone(),
+        column_schema: Some(schema.columns[0].clone()),
         filter_type: RowFilterType::IsEmpty,
         filter_id: "0DB2F23D-B299-4068-B8D5-A2B513A93330".to_string(),
         condition: RowFilterCondition::And,
@@ -3083,4 +3111,373 @@ fn test_single_row_data_frame_column_profiles() {
             assert_eq!(histogram.bin_counts, vec![1]);
         });
     }
+}
+
+fn assert_global_search_rows(setup: &TestSetup, term: &str, expected_rows: i64) {
+    let filter = RowFilterBuilder::global_search(term, None);
+    TestAssertions::assert_row_filters_applied(setup, vec![filter], expected_rows, Some(false));
+}
+
+#[test]
+fn test_global_search_column_types() {
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"
+            format.test_bad_format <- function(x, ...) stop("boom")
+            .S3method("format", "test_bad_format", format.test_bad_format)
+            search_df <- data.frame(
+                num = c(3.14159, -3.5, 0.5, 1234.9, NA),
+                int = c(3L, 12L, NA, 7L, 1L),
+                chr = c("v3.2", "Apple", "1e3", NA, "café"),
+                fct = factor(c("red", "Green", "blue", "red", NA)),
+                lgl = c(TRUE, FALSE, NA, TRUE, FALSE),
+                date = as.Date(c("2021-01-01", "2022-06-15", NA, "2023-12-25", "2020-02-29")),
+                dt = as.POSIXct(c(
+                    "2024-01-01 10:00:00",
+                    "2024-01-02 11:00:00",
+                    "2024-01-04 12:00:00",
+                    "2024-01-05 08:00:00",
+                    "2024-01-06 09:00:00"
+                ), tz = "UTC"),
+                dur = as.difftime(c(3, 5, 7, 9, 11), units = "days"),
+                row.names = c("alpha", "beta", "gamma", "delta", "epsilon")
+            )
+            search_df$bad <- structure(1:5, class = "test_bad_format")
+            search_df$lst <- list("zzz", 2, 3, 4, 5)
+            "#,
+        )
+        .unwrap();
+    });
+
+    let setup = TestSetup::new("search_df");
+
+    // Text terms: case-insensitive substrings of the displayed text
+    assert_global_search_rows(&setup, "apple", 1);
+    assert_global_search_rows(&setup, "green", 1);
+    assert_global_search_rows(&setup, "true", 2);
+    assert_global_search_rows(&setup, "2021", 1);
+    assert_global_search_rows(&setup, "days", 5);
+    assert_global_search_rows(&setup, "CAF\u{00c9}", 1);
+    assert_global_search_rows(&setup, "epsilon", 1);
+    assert_global_search_rows(&setup, "1e3", 1);
+    assert_global_search_rows(&setup, "zzz", 0);
+
+    // Numeric terms: implied-precision match on numeric columns
+    assert_global_search_rows(&setup, "-3", 1);
+    assert_global_search_rows(&setup, "1,234", 1);
+    assert_global_search_rows(&setup, ".5", 1);
+    assert_global_search_rows(&setup, "3.1", 1);
+    assert_global_search_rows(&setup, "12", 3);
+
+    // Null markers match missing values exactly
+    assert_global_search_rows(&setup, "NA", 3);
+    assert_global_search_rows(&setup, " na ", 3);
+    assert_global_search_rows(&setup, "nu", 0);
+
+    TestAssertions::assert_state(&setup, |state| {
+        let SetRowFiltersFeatures {
+            supported_types, ..
+        } = &state.supported_features.set_row_filters;
+        assert!(supported_types
+            .iter()
+            .any(|status| status.row_filter_type == RowFilterType::GlobalSearch));
+        assert_eq!(state.global_search_rows_scanned, None);
+    });
+}
+
+#[test]
+fn test_global_search_numeric_precision() {
+    let setup = TestSetup::from_expression(
+        "data.frame(
+            dbl = c(3, 3.5, 3.999, 2.9999999999, 2.9, 4, -3, 3.9999999999, -3.5, 0.5, -0.5, 1, -1, Inf, NaN),
+            int = c(rep(NA_integer_, 13), 3L, 4L)
+        )",
+        None,
+    )
+    .unwrap();
+
+    assert_global_search_rows(&setup, "3", 5);
+    assert_global_search_rows(&setup, "3.", 5);
+    assert_global_search_rows(&setup, "-3", 2);
+    assert_global_search_rows(&setup, "0", 2);
+    assert_global_search_rows(&setup, "+4", 3);
+    assert_global_search_rows(&setup, "3.1", 0);
+    assert_global_search_rows(&setup, "Inf", 0);
+    assert_global_search_rows(&setup, "nan", 14);
+}
+
+#[test]
+fn test_global_search_display_rounding() {
+    // Displayed: 3.00, 2.99, -3.00, 1.0000, 0.1235, 1.23e+09, 1.0000e-05
+    let setup = TestSetup::from_expression(
+        "data.frame(dbl = c(2.996, 2.994, -2.996, 0.99996, 0.12346, 1234567890.5, 0.00001))",
+        None,
+    )
+    .unwrap();
+
+    let assert_rows = |term: &str, format_options: Option<FormatOptions>, expected_rows: i64| {
+        let filter = RowFilterBuilder::global_search_formatted(term, None, format_options);
+        TestAssertions::assert_row_filters_applied(
+            &setup,
+            vec![filter],
+            expected_rows,
+            Some(false),
+        );
+    };
+    let options = || Some(default_format_options());
+
+    assert_rows("3.00", options(), 1);
+    assert_rows("3", options(), 1);
+    assert_rows("2.99", options(), 1);
+    assert_rows("-3", options(), 1);
+    assert_rows("1.0000", options(), 1);
+    assert_rows("0.1235", options(), 1);
+    assert_rows("0.12346", options(), 0);
+    assert_rows("1234567890", options(), 0);
+    assert_rows("0", options(), 1);
+
+    // Without format options, values match unrounded
+    assert_rows("2.99", None, 2);
+}
+
+#[test]
+fn test_global_search_table_kinds() {
+    for expr in [
+        "tibble::tibble(a = c('foo', 'bar'), b = c('baz', 'qux'))",
+        "data.table::data.table(a = c('foo', 'bar'), b = c('baz', 'qux'))",
+        "matrix(c('foo', 'bar', 'baz', 'qux'), 2, dimnames = list(c('r1', 'r2'), NULL))",
+    ] {
+        let setup = TestSetup::from_expression(expr, None).unwrap();
+        assert_global_search_rows(&setup, "FOO", 1);
+        assert_global_search_rows(&setup, "ba", 2);
+    }
+
+    let setup = TestSetup::from_expression(
+        "matrix(c('foo', 'bar', 'baz', 'qux'), 2, dimnames = list(c('r1', 'r2'), NULL))",
+        None,
+    )
+    .unwrap();
+    assert_global_search_rows(&setup, "r2", 1);
+}
+
+#[test]
+fn test_global_search_stacking() {
+    let setup = TestSetup::from_expression(
+        "data.frame(a = c(1, 2, 3, 4), b = c('x', 'y', 'x', 'y'))",
+        None,
+    )
+    .unwrap();
+    let schema = TestAssertions::get_column_schema(&setup, vec![0]);
+    let a_gt_1 =
+        RowFilterBuilder::comparison(schema.columns[0].clone(), FilterComparisonOp::Gt, "1");
+    let search = RowFilterBuilder::global_search("x", None);
+
+    TestAssertions::assert_row_filters_applied(
+        &setup,
+        vec![a_gt_1.clone(), search.clone()],
+        1,
+        Some(false),
+    );
+    TestAssertions::assert_row_filters_applied(&setup, vec![search, a_gt_1], 1, Some(false));
+}
+
+#[test]
+fn test_global_search_max_cells() {
+    let setup =
+        TestSetup::from_expression("data.frame(a = rep('hit', 10), b = 1:10)", None).unwrap();
+
+    let limited = RowFilterBuilder::global_search("hit", Some(8));
+    TestAssertions::assert_row_filters_applied(&setup, vec![limited], 4, Some(false));
+    TestAssertions::assert_state(&setup, |state| {
+        assert_eq!(state.global_search_rows_scanned, Some(4));
+    });
+
+    let unlimited = RowFilterBuilder::global_search("hit", Some(0));
+    TestAssertions::assert_row_filters_applied(&setup, vec![unlimited], 10, Some(false));
+    TestAssertions::assert_state(&setup, |state| {
+        assert_eq!(state.global_search_rows_scanned, None);
+    });
+
+    let limited = RowFilterBuilder::global_search("hit", Some(8));
+    TestAssertions::assert_row_filters_applied(&setup, vec![limited], 4, Some(false));
+    TestAssertions::assert_row_filters_applied(&setup, vec![], 10, None);
+    TestAssertions::assert_state(&setup, |state| {
+        assert_eq!(state.global_search_rows_scanned, None);
+    });
+}
+
+#[test]
+fn test_global_search_cache_candidate_rows_change() {
+    // Changing the column filter changes the rows the search scans, so dates
+    // cached for rows 1-2 must not be reused for rows 3-4
+    let setup = TestSetup::from_expression(
+        "data.frame(
+            n = 1:4,
+            d = as.Date(c('2040-01-01', '2040-02-02', '2040-03-03', '2040-04-04'))
+        )",
+        None,
+    )
+    .unwrap();
+    let schema = TestAssertions::get_column_schema(&setup, vec![0]);
+    let n_lt_3 =
+        RowFilterBuilder::comparison(schema.columns[0].clone(), FilterComparisonOp::Lt, "3");
+    let n_gt_2 =
+        RowFilterBuilder::comparison(schema.columns[0].clone(), FilterComparisonOp::Gt, "2");
+    let search = |term: &str| RowFilterBuilder::global_search(term, Some(100));
+
+    TestAssertions::assert_row_filters_applied(
+        &setup,
+        vec![n_lt_3, search("-01-")],
+        1,
+        Some(false),
+    );
+    TestAssertions::assert_row_filters_applied(
+        &setup,
+        vec![n_gt_2, search("-03-")],
+        1,
+        Some(false),
+    );
+}
+
+#[test]
+fn test_global_search_cache_data_change() {
+    // Replacing the data keeps the same candidate rows, so only the table
+    // change tells the search that its cached dates are stale
+    let setup = TestSetup::from_expression(
+        "x <- data.frame(d = as.Date(c('2040-01-01', '2040-02-02')))",
+        Some("x"),
+    )
+    .unwrap();
+    let search = RowFilterBuilder::global_search("-01-", Some(100));
+    TestAssertions::assert_row_filters_applied(&setup, vec![search], 1, Some(false));
+
+    r_task(|| {
+        harp::parse_eval_global("x$d <- as.Date(c('2040-01-01', '2040-01-15'))").unwrap();
+    });
+    setup.trigger_environment_change();
+    assert_match!(setup.iopub_rx.recv_comm_msg(),
+        CommMsg::Data(value) => {
+            assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                DataExplorerFrontendEvent::DataUpdate
+            );
+    });
+    TestAssertions::assert_state(&setup, |state| {
+        assert_eq!(state.table_shape.num_rows, 2);
+    });
+}
+
+#[test]
+fn test_global_search_formats_all_rows() {
+    // Row 2 matches on `a`, leaving only the midnight time in row 1 to search.
+    // Formatted alone it would drop its time, but it is displayed with it.
+    let setup = TestSetup::from_expression(
+        "data.frame(
+            a = c('q', '00:00 note'),
+            t = as.POSIXct(c('2021-01-01 00:00:00', '2021-01-01 12:00:00'), tz = 'UTC')
+        )",
+        None,
+    )
+    .unwrap();
+    assert_global_search_rows(&setup, "00:00", 2);
+}
+
+#[test]
+fn test_global_search_matches() {
+    let setup = TestSetup::from_expression(
+        "data.frame(a = c('foo', 'bar', 'foo bar'), b = c(1, 2, 3))",
+        None,
+    )
+    .unwrap();
+
+    let get_search_matches = || {
+        let req = RequestBuilder::get_data_values(0, 3, vec![0, 1]);
+        match setup.rpc(req) {
+            DataExplorerBackendReply::GetDataValuesReply(data) => data.search_matches,
+            reply => panic!("Expected GetDataValuesReply, got {reply:?}"),
+        }
+    };
+
+    assert_eq!(get_search_matches(), None);
+
+    assert_global_search_rows(&setup, "foo", 2);
+    assert_eq!(
+        get_search_matches(),
+        Some(vec![vec![true, true], vec![false, false]])
+    );
+
+    // Matches follow the view order when sorted
+    TestAssertions::assert_sort_columns_applied(&setup, vec![SelectionBuilder::column_sort_key(
+        1, false,
+    )]);
+    assert_global_search_rows(&setup, "3", 1);
+    assert_eq!(get_search_matches(), Some(vec![vec![false], vec![true]]));
+}
+
+#[test]
+fn test_global_search_update() {
+    let setup =
+        TestSetup::from_expression("x <- data.frame(a = c('foo', 'bar'))", Some("x")).unwrap();
+    assert_global_search_rows(&setup, "foo", 1);
+
+    // Adding a column changes the schema; the search is kept and reapplied
+    r_task(|| {
+        harp::parse_eval_global("x$b <- c('zip', 'foo')").unwrap();
+    });
+    setup.trigger_environment_change();
+    assert_match!(setup.iopub_rx.recv_comm_msg(),
+        CommMsg::Data(value) => {
+            assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                DataExplorerFrontendEvent::SchemaUpdate
+            );
+    });
+    TestAssertions::assert_state(&setup, |state| {
+        assert_eq!(state.table_shape.num_rows, 2);
+        assert_eq!(state.row_filters[0].is_valid, Some(true));
+    });
+
+    // Changing the data reapplies the search
+    r_task(|| {
+        harp::parse_eval_global("x$b <- c('zip', 'zap')").unwrap();
+    });
+    setup.trigger_environment_change();
+    assert_match!(setup.iopub_rx.recv_comm_msg(),
+        CommMsg::Data(value) => {
+            assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                DataExplorerFrontendEvent::DataUpdate
+            );
+    });
+    TestAssertions::assert_state(&setup, |state| {
+        assert_eq!(state.table_shape.num_rows, 1);
+    });
+}
+
+#[test]
+fn test_global_search_convert_to_code() {
+    let setup = TestSetup::from_expression("data.frame(a = c(1, 2, 3))", None).unwrap();
+    let schema = TestAssertions::get_column_schema(&setup, vec![0]);
+    let a_gt_1 =
+        RowFilterBuilder::comparison(schema.columns[0].clone(), FilterComparisonOp::Gt, "1");
+
+    let convert = |row_filters: Vec<RowFilter>| {
+        let req = DataExplorerBackendRequest::ConvertToCode(ConvertToCodeParams {
+            column_filters: vec![],
+            row_filters,
+            sort_keys: vec![],
+            code_syntax_name: CodeSyntaxName {
+                code_syntax_name: "dplyr".to_string(),
+            },
+        });
+        match setup.rpc(req) {
+            DataExplorerBackendReply::ConvertToCodeReply(code) => code.converted_code,
+            reply => panic!("Expected ConvertToCodeReply, got {reply:?}"),
+        }
+    };
+
+    assert_eq!(
+        convert(vec![
+            a_gt_1.clone(),
+            RowFilterBuilder::global_search("2", None)
+        ]),
+        convert(vec![a_gt_1])
+    );
 }

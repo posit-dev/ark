@@ -16,14 +16,20 @@ pub fn tbl_subset_with_view_indices(
     i: Option<Vec<i64>>,
     j: Option<Vec<i64>>,
 ) -> anyhow::Result<RObject> {
-    let i = match view_indices {
-        Some(view_indices) => {
-            i.map(|i| i.iter().map(|i| view_indices[*i as usize] as i64).collect())
-        },
-        None => i.map(|i| i.iter().map(|i| i + 1).collect()),
-    };
+    let i = i.map(|i| view_rows_to_table_rows(view_indices, &i));
     let j = j.map(|j| j.iter().map(|j| j + 1).collect());
     tbl_subset(x, i, j)
+}
+
+/// Maps 0-based view rows to 1-based table rows.
+pub fn view_rows_to_table_rows(view_indices: &Option<Vec<i32>>, rows: &[i64]) -> Vec<i64> {
+    match view_indices {
+        Some(view_indices) => rows
+            .iter()
+            .map(|row| view_indices[*row as usize] as i64)
+            .collect(),
+        None => rows.iter().map(|row| row + 1).collect(),
+    }
 }
 
 fn tbl_subset(x: SEXP, i: Option<Vec<i64>>, j: Option<Vec<i64>>) -> anyhow::Result<RObject> {

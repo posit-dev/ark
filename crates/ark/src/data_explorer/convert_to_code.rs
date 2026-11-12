@@ -1,7 +1,7 @@
 //
 // convert_to_code.rs
 //
-// Copyright (C) 2025 by Posit Software, PBC
+// Copyright (C) 2025-2026 by Posit Software, PBC
 //
 //
 
@@ -245,7 +245,9 @@ fn format_value_for_r(display_type: &ColumnDisplayType, value: &str) -> String {
 
 /// Converts a single row filter to a dplyr filter expression
 fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
-    let column_name = format_column_name(&filter.column_schema.column_name);
+    // Filters without a column (global search) are not translated to code
+    let column_schema = filter.column_schema.as_ref()?;
+    let column_name = format_column_name(&column_schema.column_name);
 
     match filter.filter_type {
         RowFilterType::Compare => {
@@ -260,8 +262,7 @@ fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
                 };
 
                 // Format the value based on the column's data type
-                let value =
-                    format_value_for_r(&filter.column_schema.type_display, &comparison.value);
+                let value = format_value_for_r(&column_schema.type_display, &comparison.value);
                 Some(format!("{} {} {}", column_name, op, value))
             } else {
                 None
@@ -270,10 +271,8 @@ fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
         RowFilterType::Between => {
             if let Some(RowFilterParams::Between(between)) = &filter.params {
                 // Format values based on column type
-                let left =
-                    format_value_for_r(&filter.column_schema.type_display, &between.left_value);
-                let right =
-                    format_value_for_r(&filter.column_schema.type_display, &between.right_value);
+                let left = format_value_for_r(&column_schema.type_display, &between.left_value);
+                let right = format_value_for_r(&column_schema.type_display, &between.right_value);
                 Some(format!(
                     "{} >= {} & {} <= {}",
                     column_name, left, column_name, right
@@ -285,10 +284,8 @@ fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
         RowFilterType::NotBetween => {
             if let Some(RowFilterParams::Between(between)) = &filter.params {
                 // Format values based on column type
-                let left =
-                    format_value_for_r(&filter.column_schema.type_display, &between.left_value);
-                let right =
-                    format_value_for_r(&filter.column_schema.type_display, &between.right_value);
+                let left = format_value_for_r(&column_schema.type_display, &between.left_value);
+                let right = format_value_for_r(&column_schema.type_display, &between.right_value);
                 Some(format!(
                     "{} < {} | {} > {}",
                     column_name, left, column_name, right
@@ -354,6 +351,7 @@ fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
                 None
             }
         },
+        RowFilterType::GlobalSearch => None,
     }
 }
 
@@ -413,7 +411,7 @@ mod tests {
     ) -> RowFilter {
         RowFilter {
             filter_id: "test".to_string(),
-            column_schema: test_column_schema(column_name, display_type),
+            column_schema: Some(test_column_schema(column_name, display_type)),
             filter_type: RowFilterType::Compare,
             condition: RowFilterCondition::And,
             params: Some(RowFilterParams::Comparison(FilterComparison {
@@ -434,7 +432,7 @@ mod tests {
     ) -> RowFilter {
         RowFilter {
             filter_id: "test".to_string(),
-            column_schema: test_column_schema(column_name, display_type),
+            column_schema: Some(test_column_schema(column_name, display_type)),
             filter_type: RowFilterType::Between,
             condition: RowFilterCondition::And,
             params: Some(RowFilterParams::Between(FilterBetween {
@@ -455,7 +453,7 @@ mod tests {
     ) -> RowFilter {
         RowFilter {
             filter_id: "test".to_string(),
-            column_schema: test_column_schema(column_name, ColumnDisplayType::String),
+            column_schema: Some(test_column_schema(column_name, ColumnDisplayType::String)),
             filter_type: RowFilterType::Search,
             condition: RowFilterCondition::And,
             params: Some(RowFilterParams::TextSearch(FilterTextSearch {
@@ -609,7 +607,7 @@ mod tests {
         // Test IsTrue filter
         let is_true_filter = RowFilter {
             filter_id: "test".to_string(),
-            column_schema: column_schema.clone(),
+            column_schema: Some(column_schema.clone()),
             filter_type: RowFilterType::IsTrue,
             condition: RowFilterCondition::And,
             params: None,
@@ -622,7 +620,7 @@ mod tests {
         // Test IsFalse filter
         let is_false_filter = RowFilter {
             filter_id: "test".to_string(),
-            column_schema,
+            column_schema: Some(column_schema),
             filter_type: RowFilterType::IsFalse,
             condition: RowFilterCondition::And,
             params: None,
@@ -985,7 +983,7 @@ mod execution_tests {
 
         let row_filter = RowFilter {
             filter_id: "test_filter".to_string(),
-            column_schema: age_schema,
+            column_schema: Some(age_schema),
             filter_type: RowFilterType::Compare,
             condition: RowFilterCondition::And,
             params: Some(RowFilterParams::Comparison(FilterComparison {

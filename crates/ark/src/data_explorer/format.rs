@@ -1,7 +1,7 @@
 //
 // format.rs
 //
-// Copyright (C) 2024 by Posit Software, PBC
+// Copyright (C) 2024-2026 by Posit Software, PBC
 //
 //
 
@@ -434,6 +434,13 @@ impl From<FormattedValue> for String {
             FormattedValue::Value(v) => v,
         }
     }
+}
+
+/// Formats a classed vector with the method used to display it, so that the
+/// global search matches the displayed text.
+#[harp::register]
+unsafe extern "C-unwind" fn ps_format_vec(x: SEXP) -> anyhow::Result<SEXP> {
+    Ok(r_format_vec(x)?)
 }
 
 #[cfg(test)]
