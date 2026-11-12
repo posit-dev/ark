@@ -64,7 +64,17 @@ pub const PLOT_COMM_NAME: &str = "positron.plot";
 
 /// Perform R-side initialization of the graphics device.
 /// Must be called from the main R thread after Console is initialized.
-pub(crate) fn init_graphics_device() {
+pub(crate) fn init_graphics_device(session_mode: SessionMode) {
+    // In notebooks, don't declare our graphics device as interactive. If it
+    // were, `dev.interactive()` would be `TRUE` and `plot.lm()` and similar
+    // functions would prompt "Hit <Return> to see next plot" between pages. A
+    // notebook frontend has no good way to answer, so the user would see only
+    // the last page (posit-dev/positron#14534). Jupyter kernels such as
+    // IRkernel also use a non-interactive device.
+    if session_mode == SessionMode::Notebook {
+        return;
+    }
+
     // Declare our graphics device as interactive
     if let Err(err) = RFunction::from(".ps.graphics.register_as_interactive").call() {
         log::error!("Failed to register Ark graphics device as interactive: {err:?}");
