@@ -204,8 +204,8 @@ pub struct RDataExplorer {
     /// data viewer.
     view_indices: Option<Vec<i32>>,
 
-    /// Environment caching the display strings the global search computes
-    /// for each column of the current table.
+    /// Environment where `.ps.filter_rows` caches the display strings the
+    /// global search computes. R manages its contents.
     search_cache: RObject,
 
     /// The number of leading candidate rows the global search scanned, when
@@ -243,17 +243,13 @@ impl RDataExplorer {
             sorted_indices: None,
             filtered_indices: None,
             view_indices: None,
-            search_cache: Self::new_search_cache(),
+            search_cache: Environment::new_empty().into(),
             global_search_rows_scanned: None,
             sort_keys: vec![],
             row_filters: vec![],
             col_filters: vec![],
             explorer_mode,
         })
-    }
-
-    fn new_search_cache() -> RObject {
-        Environment::new_empty().into()
     }
 
     pub(crate) fn shape(&self) -> &DataObjectShape {
@@ -302,7 +298,6 @@ impl RDataExplorer {
             false
         } else {
             self.table.set(RObject::new(new));
-            self.search_cache = Self::new_search_cache();
             true
         };
 
@@ -777,9 +772,6 @@ impl RDataExplorer {
     // fail during the computation.
     fn row_filters_compute(&mut self) -> anyhow::Result<(Option<Vec<i32>>, Option<bool>)> {
         self.global_search_rows_scanned = None;
-        if self.global_search().is_none() {
-            self.search_cache = Self::new_search_cache();
-        }
 
         if self.row_filters.is_empty() {
             return Ok((None, None));
@@ -794,11 +786,11 @@ impl RDataExplorer {
         Ok((Some(filtered.indices), had_errors))
     }
 
-    /// The parameters of the active global search filter, if any.
+    /// The parameters of the active global search filter, if any. Like
+    /// `.ps.filter_rows`, this is the first one, even when marked invalid.
     fn global_search(&self) -> Option<&FilterGlobalSearch> {
         self.row_filters
             .iter()
-            .filter(|filter| filter.is_valid != Some(false))
             .find_map(|filter| match &filter.params {
                 Some(RowFilterParams::GlobalSearch(search)) => Some(search),
                 _ => None,

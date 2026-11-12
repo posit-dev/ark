@@ -209,6 +209,8 @@ col_filter_indices <- function(col, idx = NULL) {
                 e$message
             }
         )
+    } else {
+        rm(list = ls(search_cache), envir = search_cache)
     }
 
     # Return the indices of the rows that pass all filters
@@ -239,9 +241,10 @@ col_filter_indices <- function(col, idx = NULL) {
         rows <- rows[seq_len(rows_scanned)]
     }
 
-    # The cache holds formatted text of the scanned rows, one element of
-    # `cache$text` per column, so it is stale when the rows change
-    if (!identical(cache$rows, rows)) {
+    # The cache holds formatted text of the scanned rows of `table`, one element
+    # of `cache$text` per column, so it is stale when either changes
+    if (!identical(cache$table, table) || !identical(cache$rows, rows)) {
+        cache$table <- table
         cache$rows <- rows
         cache$text <- list()
     }
