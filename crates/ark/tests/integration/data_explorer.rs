@@ -3307,6 +3307,66 @@ fn test_global_search_max_cells() {
 }
 
 #[test]
+fn test_global_search_cache_candidate_rows_change() {
+    // Changing the column filter changes the rows the search scans, so dates
+    // cached for rows 1-2 must not be reused for rows 3-4
+    let setup = TestSetup::from_expression(
+        "data.frame(
+            n = 1:4,
+            d = as.Date(c('2040-01-01', '2040-02-02', '2040-03-03', '2040-04-04'))
+        )",
+        None,
+    )
+    .unwrap();
+    let schema = TestAssertions::get_column_schema(&setup, vec![0]);
+    let n_lt_3 =
+        RowFilterBuilder::comparison(schema.columns[0].clone(), FilterComparisonOp::Lt, "3");
+    let n_gt_2 =
+        RowFilterBuilder::comparison(schema.columns[0].clone(), FilterComparisonOp::Gt, "2");
+    let search = |term: &str| RowFilterBuilder::global_search(term, Some(100));
+
+    TestAssertions::assert_row_filters_applied(
+        &setup,
+        vec![n_lt_3, search("-01-")],
+        1,
+        Some(false),
+    );
+    TestAssertions::assert_row_filters_applied(
+        &setup,
+        vec![n_gt_2, search("-03-")],
+        1,
+        Some(false),
+    );
+}
+
+#[test]
+fn test_global_search_cache_data_change() {
+    // Replacing the data keeps the same candidate rows, so only the table
+    // change tells the search that its cached dates are stale
+    let setup = TestSetup::from_expression(
+        "x <- data.frame(d = as.Date(c('2040-01-01', '2040-02-02')))",
+        Some("x"),
+    )
+    .unwrap();
+    let search = RowFilterBuilder::global_search("-01-", Some(100));
+    TestAssertions::assert_row_filters_applied(&setup, vec![search], 1, Some(false));
+
+    r_task(|| {
+        harp::parse_eval_global("x$d <- as.Date(c('2040-01-01', '2040-01-15'))").unwrap();
+    });
+    setup.trigger_environment_change();
+    assert_match!(setup.iopub_rx.recv_comm_msg(),
+        CommMsg::Data(value) => {
+            assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                DataExplorerFrontendEvent::DataUpdate
+            );
+    });
+    TestAssertions::assert_state(&setup, |state| {
+        assert_eq!(state.table_shape.num_rows, 2);
+    });
+}
+
+#[test]
 fn test_global_search_matches() {
     let setup = TestSetup::from_expression(
         "data.frame(a = c('foo', 'bar', 'foo bar'), b = c(1, 2, 3))",
