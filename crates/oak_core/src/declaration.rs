@@ -62,10 +62,12 @@ mod tests {
     use biome_rowan::AstSeparatedList;
 
     use super::*;
+    use crate::syntax_ext::AnyRStatementExt;
 
     fn parse_single_expr(code: &str) -> AnyRExpression {
         let parsed = aether_parser::parse(code, RParserOptions::default());
-        parsed.tree().expressions().iter().next().unwrap()
+        let statement = parsed.tree().statements().iter().next().unwrap();
+        statement.expression().unwrap()
     }
 
     fn declare_arg_values(code: &str) -> Option<Vec<String>> {

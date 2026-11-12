@@ -30,6 +30,7 @@ use std::iter;
 use std::sync::Arc;
 
 use aether_syntax::AnyRExpression;
+use aether_syntax::AnyRForVariable;
 use aether_syntax::AnyRValue;
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RRoot;
@@ -38,7 +39,6 @@ use biome_rowan::AstNode;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_core::syntax_ext::RIdentifierExt;
-use oak_core::syntax_ext::RStringValueExt;
 use oak_index_vec::Idx;
 use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
@@ -91,9 +91,9 @@ pub fn build_index(root: &RRoot, resolver: impl ImportsResolver) -> SemanticInde
 
     let mut builder = SemanticIndexBuilder::new(range, resolver);
     builder.begin_scan();
-    builder.scan_expression_list(&root.expressions());
+    builder.scan_statement_list(&root.statements());
     builder.scan_deferred_bodies(0);
-    builder.walk_expression_list(&root.expressions());
+    builder.walk_statement_list(&root.statements());
     builder.finish()
 }
 
@@ -446,11 +446,20 @@ fn assignment_name(target: &AnyRExpression) -> Option<(String, TextRange)> {
         },
         // `"x" <- 1` is equivalent to `x <- 1` in R
         AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
-            let name = s.string_text()?;
+            let name = s.inner_string_text().ok()?.to_string();
             let range = s.syntax().text_trimmed_range();
             Some((name, range))
         },
         _ => None,
+    }
+}
+
+fn for_variable_name(variable: &AnyRForVariable) -> Option<String> {
+    match variable {
+        AnyRForVariable::RIdentifier(ident) => Some(ident.name_text()),
+        AnyRForVariable::RDots(_) => Some(String::from("...")),
+        AnyRForVariable::RDotDotI(ddi) => Some(ddi.syntax().text_trimmed().to_string()),
+        AnyRForVariable::RBogusForVariable(_) => None,
     }
 }
 

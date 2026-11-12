@@ -35,7 +35,6 @@ pub enum NodeType {
     Identifier,
     DotDotI,
     Dots,
-    Return,
     Next,
     Break,
     True,
@@ -80,7 +79,6 @@ fn node_type(x: &Node) -> NodeType {
         "identifier" => NodeType::Identifier,
         "dot_dot_i" => NodeType::DotDotI,
         "dots" => NodeType::Dots,
-        "return" => NodeType::Return,
         "next" => NodeType::Next,
         "break" => NodeType::Break,
         "true" => NodeType::True,
@@ -343,8 +341,7 @@ impl NodeTypeExt for Node<'_> {
     fn is_keyword(&self) -> bool {
         matches!(
             self.node_type(),
-            NodeType::Return |
-                NodeType::Next |
+            NodeType::Next |
                 NodeType::Break |
                 NodeType::True |
                 NodeType::False |
@@ -753,9 +750,40 @@ impl<'tree, 'query, 'contents> Iterator for AllCaptures<'tree, 'query, 'contents
 
 #[cfg(test)]
 mod tests {
+    use tree_sitter::Parser;
     use tree_sitter::Point;
 
     use super::*;
+
+    fn string_text(contents: &str) -> anyhow::Result<String> {
+        let mut parser = Parser::new();
+        if let Err(err) = parser.set_language(&tree_sitter_r::LANGUAGE.into()) {
+            panic!("Failed to set language: {err:?}");
+        }
+        let Some(tree) = parser.parse(contents, None) else {
+            panic!("Failed to parse {contents}");
+        };
+        let Some(node) = tree.root_node().child(0) else {
+            panic!("Empty program for {contents}");
+        };
+        let text = node.get_identifier_or_string_text(contents)?;
+        Ok(text.to_string())
+    }
+
+    #[test]
+    fn test_get_identifier_or_string_text() {
+        assert_eq!(string_text("foo").unwrap(), "foo");
+        assert_eq!(string_text("'foo'").unwrap(), "foo");
+        assert_eq!(string_text("\"foo\"").unwrap(), "foo");
+
+        // Raw strings have a `content` field since r-lib/tree-sitter-r#199
+        assert_eq!(string_text("r\"(foo)\"").unwrap(), "foo");
+        assert_eq!(string_text("r'-[foo]-'").unwrap(), "foo");
+
+        // Empty strings have no `content`
+        assert!(string_text("''").is_err());
+        assert!(string_text("r\"()\"").is_err());
+    }
 
     #[test]
     fn test_point_end_of_previous_row() {

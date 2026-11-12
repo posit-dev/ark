@@ -74,6 +74,7 @@ use crate::lsp::statement_range::StatementRangeResponse;
 use crate::lsp::symbols;
 use crate::lsp::traits::url::UriExt;
 use crate::r_task;
+use crate::r_task::try_r_task;
 
 pub static ARK_VDOC_REQUEST: &str = "ark/internal/virtualDocument";
 
@@ -216,8 +217,11 @@ pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult
         None,
     );
 
-    // request hover information
-    let result = r_task(|| r_hover(&context));
+    // Skip rather than block the LSP main loop while R is busy
+    let Some(result) = try_r_task(|| r_hover(&context)) else {
+        log::trace!("Skipping hover: R is busy");
+        return Ok(None);
+    };
 
     // unwrap errors
     let result = unwrap!(result, Err(err) => {
@@ -263,8 +267,13 @@ pub(crate) fn handle_signature_help(
         None,
     );
 
-    // request signature help
-    let result = r_task(|| r_signature_help(&context));
+    // Skip rather than block the LSP main loop while R is busy
+    // TODO: Once formals and argument matching are computed statically (#1095),
+    // show the signature while R is busy and only skip the parameter docs.
+    let Some(result) = try_r_task(|| r_signature_help(&context)) else {
+        log::trace!("Skipping signature help: R is busy");
+        return Ok(None);
+    };
 
     // unwrap errors
     let result = unwrap!(result, Err(err) => {

@@ -41,7 +41,7 @@ dependencies = [
 [[package]]
 name = "air_r_factory"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=d2659d5b158374bf486b594625ca50abbd0ac879#d2659d5b158374bf486b594625ca50abbd0ac879"
+source = "git+https://github.com/posit-dev/air?rev=9b7627a0e05511a9052ea569e88cf8192474b85f#9b7627a0e05511a9052ea569e88cf8192474b85f"
 dependencies = [
  "air_r_syntax",
  "biome_rowan",
@@ -50,23 +50,19 @@ dependencies = [
 [[package]]
 name = "air_r_parser"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=d2659d5b158374bf486b594625ca50abbd0ac879#d2659d5b158374bf486b594625ca50abbd0ac879"
+source = "git+https://github.com/posit-dev/air?rev=9b7627a0e05511a9052ea569e88cf8192474b85f#9b7627a0e05511a9052ea569e88cf8192474b85f"
 dependencies = [
  "air_r_factory",
  "air_r_syntax",
  "biome_parser",
  "biome_rowan",
- "biome_unicode_table",
- "serde",
- "tracing",
- "tree-sitter",
- "tree-sitter-r",
+ "unicode-ident",
 ]
 
 [[package]]
 name = "air_r_syntax"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=d2659d5b158374bf486b594625ca50abbd0ac879#d2659d5b158374bf486b594625ca50abbd0ac879"
+source = "git+https://github.com/posit-dev/air?rev=9b7627a0e05511a9052ea569e88cf8192474b85f#9b7627a0e05511a9052ea569e88cf8192474b85f"
 dependencies = [
  "biome_rowan",
  "serde",
@@ -116,8 +112,8 @@ dependencies = [
 
 [[package]]
 name = "biome_console"
-version = "0.5.7"
-source = "git+https://github.com/lionel-/biome?rev=a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9#a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9"
+version = "0.7.0"
+source = "git+https://github.com/biomejs/biome?rev=8c43bc0b620e0db4ec841ae20756acedcead9599#8c43bc0b620e0db4ec841ae20756acedcead9599"
 dependencies = [
  "biome_markup",
  "biome_text_size",
@@ -129,8 +125,8 @@ dependencies = [
 
 [[package]]
 name = "biome_diagnostics"
-version = "0.5.7"
-source = "git+https://github.com/lionel-/biome?rev=a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9#a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9"
+version = "0.7.0"
+source = "git+https://github.com/biomejs/biome?rev=8c43bc0b620e0db4ec841ae20756acedcead9599#8c43bc0b620e0db4ec841ae20756acedcead9599"
 dependencies = [
  "backtrace",
  "biome_console",
@@ -149,8 +145,8 @@ dependencies = [
 
 [[package]]
 name = "biome_diagnostics_categories"
-version = "0.5.7"
-source = "git+https://github.com/lionel-/biome?rev=a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9#a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9"
+version = "0.7.0"
+source = "git+https://github.com/biomejs/biome?rev=8c43bc0b620e0db4ec841ae20756acedcead9599#8c43bc0b620e0db4ec841ae20756acedcead9599"
 dependencies = [
  "quote",
  "serde",
@@ -158,10 +154,10 @@ dependencies = [
 
 [[package]]
 name = "biome_diagnostics_macros"
-version = "0.5.7"
-source = "git+https://github.com/lionel-/biome?rev=a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9#a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9"
+version = "0.7.0"
+source = "git+https://github.com/biomejs/biome?rev=8c43bc0b620e0db4ec841ae20756acedcead9599#8c43bc0b620e0db4ec841ae20756acedcead9599"
 dependencies = [
- "proc-macro-error2",
+ "proc-macro-error3",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -169,8 +165,8 @@ dependencies = [
 
 [[package]]
 name = "biome_line_index"
-version = "0.1.0"
-source = "git+https://github.com/lionel-/biome?rev=a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9#a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9"
+version = "0.7.0"
+source = "git+https://github.com/biomejs/biome?rev=8c43bc0b620e0db4ec841ae20756acedcead9599#8c43bc0b620e0db4ec841ae20756acedcead9599"
 dependencies = [
  "biome_text_size",
  "rustc-hash",
@@ -178,18 +174,18 @@ dependencies = [
 
 [[package]]
 name = "biome_markup"
-version = "0.5.7"
-source = "git+https://github.com/lionel-/biome?rev=a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9#a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9"
+version = "0.7.0"
+source = "git+https://github.com/biomejs/biome?rev=8c43bc0b620e0db4ec841ae20756acedcead9599#8c43bc0b620e0db4ec841ae20756acedcead9599"
 dependencies = [
- "proc-macro-error2",
+ "proc-macro-error3",
  "proc-macro2",
  "quote",
 ]
 
 [[package]]
 name = "biome_parser"
-version = "0.5.7"
-source = "git+https://github.com/lionel-/biome?rev=a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9#a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9"
+version = "0.7.0"
+source = "git+https://github.com/biomejs/biome?rev=8c43bc0b620e0db4ec841ae20756acedcead9599#8c43bc0b620e0db4ec841ae20756acedcead9599"
 dependencies = [
  "biome_console",
  "biome_diagnostics",
@@ -202,8 +198,8 @@ dependencies = [
 
 [[package]]
 name = "biome_rowan"
-version = "0.5.7"
-source = "git+https://github.com/lionel-/biome?rev=a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9#a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9"
+version = "0.7.0"
+source = "git+https://github.com/biomejs/biome?rev=8c43bc0b620e0db4ec841ae20756acedcead9599#8c43bc0b620e0db4ec841ae20756acedcead9599"
 dependencies = [
  "biome_text_edit",
  "biome_text_size",
@@ -214,8 +210,8 @@ dependencies = [
 
 [[package]]
 name = "biome_text_edit"
-version = "0.5.7"
-source = "git+https://github.com/lionel-/biome?rev=a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9#a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9"
+version = "0.7.0"
+source = "git+https://github.com/biomejs/biome?rev=8c43bc0b620e0db4ec841ae20756acedcead9599#8c43bc0b620e0db4ec841ae20756acedcead9599"
 dependencies = [
  "biome_text_size",
  "serde",
@@ -224,16 +220,16 @@ dependencies = [
 
 [[package]]
 name = "biome_text_size"
-version = "0.5.7"
-source = "git+https://github.com/lionel-/biome?rev=a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9#a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9"
+version = "0.7.0"
+source = "git+https://github.com/biomejs/biome?rev=8c43bc0b620e0db4ec841ae20756acedcead9599#8c43bc0b620e0db4ec841ae20756acedcead9599"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "biome_unicode_table"
-version = "0.5.7"
-source = "git+https://github.com/lionel-/biome?rev=a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9#a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9"
+version = "0.7.0"
+source = "git+https://github.com/biomejs/biome?rev=8c43bc0b620e0db4ec841ae20756acedcead9599#8c43bc0b620e0db4ec841ae20756acedcead9599"
 
 [[package]]
 name = "bitflags"
@@ -713,9 +709,9 @@ dependencies = [
 
 [[package]]
 name = "mutatis"
-version = "0.5.3"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "468ca2a8bc8087a0b2c11d21e7dca51d92cc2662a6993d6b56bac2701795f202"
+checksum = "a61dd769784c9841c5020894ef75c02b3e747b4818e3c74f5e5362e50dfe5f5b"
 dependencies = [
  "log",
  "rand 0.8.8",
@@ -886,22 +882,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "proc-macro-error-attr2"
-version = "2.0.0"
+name = "proc-macro-error-attr3"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96de42df36bb9bba5542fe9f1a054b8cc87e172759a1868aa05c1f3acc89dfc5"
+checksum = "9e564d14133360e1ae169ffde5da25881b5fa47261665b8e5713c212c27799da"
 dependencies = [
  "proc-macro2",
  "quote",
 ]
 
 [[package]]
-name = "proc-macro-error2"
-version = "2.0.1"
+name = "proc-macro-error3"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11ec05c52be0a07b08061f7dd003e7d7092e0472bc731b4af7bb1ef876109802"
+checksum = "8f0d4471b3436c22106b21913b1dda531558918ae9b7ec55d58aa84b43552233"
 dependencies = [
- "proc-macro-error-attr2",
+ "proc-macro-error-attr3",
  "proc-macro2",
  "quote",
 ]
@@ -1143,10 +1139,11 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.151"
+version = "1.0.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+checksum = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6"
 dependencies = [
+ "foldhash",
  "indexmap",
  "itoa",
  "memchr",
@@ -1209,12 +1206,6 @@ dependencies = [
  "anyhow",
  "log",
 ]
-
-[[package]]
-name = "streaming-iterator"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
 name = "syn"
@@ -1328,34 +1319,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter"
-version = "0.24.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5387dffa7ffc7d2dae12b50c6f7aab8ff79d6210147c6613561fc3d474c6f75"
-dependencies = [
- "cc",
- "regex",
- "regex-syntax",
- "streaming-iterator",
- "tree-sitter-language",
-]
-
-[[package]]
-name = "tree-sitter-language"
-version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca0d1bf6fdd806e43ae5198f82f527056d359def39e54e67a0f478ac09dac081"
-
-[[package]]
-name = "tree-sitter-r"
-version = "1.1.0"
-source = "git+https://github.com/r-lib/tree-sitter-r?rev=daa26a2ff0d9546e9125c7d8bcec046027f02070#daa26a2ff0d9546e9125c7d8bcec046027f02070"
-dependencies = [
- "cc",
- "tree-sitter-language",
-]
-
-[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1381,9 +1344,9 @@ checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 
 [[package]]
 name = "unicode-width"
-version = "0.1.14"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
+checksum = "ca718471876992059f251e33aafc334346ada08042b7661dd1fe313a9bced557"
 
 [[package]]
 name = "url"

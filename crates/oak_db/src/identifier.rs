@@ -135,12 +135,12 @@ impl<'db> File {
         if !is_name_token(&token) || token.text_trimmed_range() != range {
             return None;
         }
-        if token.kind() == RSyntaxKind::IDENT {
-            return Some(NameSpelling::Identifier);
-        }
-        match token.text_trimmed().chars().next()? {
-            delimiter @ ('"' | '\'') => Some(NameSpelling::Quoted(delimiter)),
-            _ => Some(NameSpelling::RawString),
+        match token.kind() {
+            RSyntaxKind::IDENT => Some(NameSpelling::Identifier),
+            RSyntaxKind::R_DOUBLE_QUOTED_STRING_LITERAL => Some(NameSpelling::Quoted('"')),
+            RSyntaxKind::R_SINGLE_QUOTED_STRING_LITERAL => Some(NameSpelling::Quoted('\'')),
+            RSyntaxKind::R_RAW_STRING_LITERAL => Some(NameSpelling::RawString),
+            _ => None,
         }
     }
 
@@ -264,30 +264,38 @@ fn classify_namespace(token: &RSyntaxToken) -> Option<(String, String, Namespace
     Some((package, name, visibility))
 }
 
-/// The name token the cursor is on, after snapping to the nearest name-token
-/// boundary. `None` when the cursor isn't on (or beside) a name.
+/// The name token the cursor is on, if any
 ///
-/// A cursor at a name's edge sits between two tokens, so we prefer the name on
-/// either side. The downstream `classify_*` helpers then read the offset back
-/// as `token.text_trimmed_range().start()`.
+/// Requires that the cursor actually touch the name token. For example, with
+/// `x @ <- 1` the cursor is in the trailing whitespace owned by `x`, so
+/// [RSyntaxNode::token_at_offset()] reports `x`'s token as the owner. But the
+/// cursor isn't actually touching `x`, so [is_name_token_touching_cursor()]
+/// rejects it.
+///
+/// In ambiguous cases like `x@<-1` where a cursor sits between two tokens,
+/// we prefer the name on either side (left wins if both are names), so we'd
+/// snap to `x` here.
 fn snap_to_name_token(root: &RSyntaxNode, offset: TextSize) -> Option<RSyntaxToken> {
     match root.token_at_offset(offset) {
         TokenAtOffset::None => None,
         TokenAtOffset::Single(token) => {
-            if is_name_token(&token) {
+            if is_name_token_touching_cursor(&token, offset) {
                 Some(token)
             } else if matches!(token.kind(), RSyntaxKind::COLON2 | RSyntaxKind::COLON3) {
-                // Cursor strictly inside `::` / `:::` (only multi-char operators
-                // have an interior). Snap onto the qualified symbol on its right.
+                // Cursor is at one of these positions:
+                // - `pkg:@:sym`
+                // - `pkg:@::sym` or `pkg::@:sym`
+                // - `pkg::@ sym` (in the whitespace)
+                // We snap all of these to the `sym`
                 token.next_token().filter(is_name_token)
             } else {
                 None
             }
         },
         TokenAtOffset::Between(left, right) => {
-            if is_name_token(&left) {
+            if is_name_token_touching_cursor(&left, offset) {
                 Some(left)
-            } else if is_name_token(&right) {
+            } else if is_name_token_touching_cursor(&right, offset) {
                 Some(right)
             } else {
                 None
@@ -302,6 +310,16 @@ fn is_name_token(token: &RSyntaxToken) -> bool {
     // function call position.
     matches!(
         token.kind(),
-        RSyntaxKind::IDENT | RSyntaxKind::R_STRING_LITERAL
+        RSyntaxKind::IDENT |
+            RSyntaxKind::R_SINGLE_QUOTED_STRING_LITERAL |
+            RSyntaxKind::R_DOUBLE_QUOTED_STRING_LITERAL |
+            RSyntaxKind::R_RAW_STRING_LITERAL
     )
+}
+
+// `offset` must be in the inclusive range (`start <= offset <= end`) of
+// `token`'s actual content, excluding trivia (whitespace!). In other words, the
+// cursor must TOUCH the `token`!
+fn is_name_token_touching_cursor(token: &RSyntaxToken, offset: TextSize) -> bool {
+    is_name_token(token) && token.text_trimmed_range().contains_inclusive(offset)
 }

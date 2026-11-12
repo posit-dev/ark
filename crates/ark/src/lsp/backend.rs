@@ -125,6 +125,8 @@ pub(crate) enum LspNotification {
     TestCancelRTask,
     #[cfg(feature = "testing")]
     TestPanicRTask,
+    #[cfg(feature = "testing")]
+    TestRErrorRTask,
 }
 
 #[derive(Debug)]
@@ -611,6 +613,11 @@ impl Backend {
     }
 
     #[cfg(feature = "testing")]
+    async fn test_r_error_r_task(&self, _params: Option<Value>) {
+        self.notify(LspNotification::TestRErrorRTask);
+    }
+
+    #[cfg(feature = "testing")]
     async fn test_panic_main_loop(&self, _params: Option<Value>) {
         let _ = self.events_tx.send(Event::TestPanicMainLoop);
     }
@@ -638,6 +645,8 @@ pub(crate) static ARK_TEST_PANIC_MAIN_LOOP: &str = "ark/testPanicMainLoop";
 pub(crate) static ARK_TEST_CANCEL_R_TASK: &str = "ark/testCancelRTask";
 #[cfg(feature = "testing")]
 pub(crate) static ARK_TEST_PANIC_R_TASK: &str = "ark/testPanicRTask";
+#[cfg(feature = "testing")]
+pub(crate) static ARK_TEST_R_ERROR_R_TASK: &str = "ark/testRErrorRTask";
 #[cfg(feature = "testing")]
 pub(crate) static ARK_TEST_PANIC_AUXILIARY: &str = "ark/testPanicAuxiliary";
 #[cfg(feature = "testing")]
@@ -750,6 +759,7 @@ pub(crate) fn start_lsp(
             .custom_method(ARK_TEST_PANIC_MAIN_LOOP, Backend::test_panic_main_loop)
             .custom_method(ARK_TEST_CANCEL_R_TASK, Backend::test_cancel_r_task)
             .custom_method(ARK_TEST_PANIC_R_TASK, Backend::test_panic_r_task)
+            .custom_method(ARK_TEST_R_ERROR_R_TASK, Backend::test_r_error_r_task)
             .custom_method(ARK_TEST_PANIC_AUXILIARY, Backend::test_panic_auxiliary)
             .custom_method(ARK_TEST_PANIC_SERVICE, Backend::test_panic_service);
 

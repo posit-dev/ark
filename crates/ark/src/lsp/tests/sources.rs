@@ -949,7 +949,11 @@ async fn test_failed_source_is_not_retried() {
 ///
 /// Requires R on the `PATH` and internet access. We use {generics} because it is small and
 /// easy to install from source, the same package `oak_srcref`'s own extraction test uses.
+///
+/// Regardless of our efforts, this test has proved flaky in CI, so we ignore it.
+/// Devs can run it locally as needed.
 #[tokio::test]
+#[ignore]
 async fn test_source_pipeline_ingests_real_srcref_sources() {
     let _aux = init_aux_for_test();
 

@@ -359,6 +359,19 @@ pub struct ExecuteCodeParams {
 	pub allow_incomplete: bool,
 }
 
+/// Parameters for the ExecuteCodeInNewSession method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ExecuteCodeInNewSessionParams {
+	/// The language ID of the code to execute
+	pub language_id: String,
+
+	/// The code to execute
+	pub code: String,
+
+	/// The name of the new session
+	pub session_name: String,
+}
+
 /// Parameters for the OpenWorkspace method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct OpenWorkspaceParams {
@@ -537,6 +550,18 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "execute_code")]
 	ExecuteCode(ExecuteCodeParams),
 
+	/// Execute code in a new session
+	///
+	/// Start a new console session in the background, without making it the
+	/// foreground session, and queue code in it. When a session sends the
+	/// request, the new session uses that session's runtime, and the request
+	/// fails if that session is for another language. Otherwise the new
+	/// session uses the preferred runtime for the language. Returns once the
+	/// code is queued. The code must be complete; it is run as-is without
+	/// completeness checks.
+	#[serde(rename = "execute_code_in_new_session")]
+	ExecuteCodeInNewSession(ExecuteCodeInNewSessionParams),
+
 	/// Path to the workspace folder
 	///
 	/// Returns the path to the workspace folder, or first folder if there are
@@ -595,6 +620,8 @@ pub enum UiFrontendReply {
 
 	/// Reply for the execute_code method (no result)
 	ExecuteCodeReply(),
+
+	ExecuteCodeInNewSessionReply(String),
 
 	/// The path to the workspace folder
 	WorkspaceFolderReply(Option<String>),
@@ -710,6 +737,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::ExecuteCommand(_) => Ok(UiFrontendReply::ExecuteCommandReply()),
 		UiFrontendRequest::EvaluateWhenClause(_) => Ok(UiFrontendReply::EvaluateWhenClauseReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ExecuteCode(_) => Ok(UiFrontendReply::ExecuteCodeReply()),
+		UiFrontendRequest::ExecuteCodeInNewSession(_) => Ok(UiFrontendReply::ExecuteCodeInNewSessionReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::WorkspaceFolder => Ok(UiFrontendReply::WorkspaceFolderReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ModifyEditorSelections(_) => Ok(UiFrontendReply::ModifyEditorSelectionsReply()),
 		UiFrontendRequest::LastActiveEditorContext(_) => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),

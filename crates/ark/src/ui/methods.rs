@@ -8,6 +8,7 @@
 use amalthea::comm::ui_comm::AskForPasswordParams;
 use amalthea::comm::ui_comm::DebugSleepParams;
 use amalthea::comm::ui_comm::EvaluateWhenClauseParams;
+use amalthea::comm::ui_comm::ExecuteCodeInNewSessionParams;
 use amalthea::comm::ui_comm::ExecuteCodeParams;
 use amalthea::comm::ui_comm::ExecuteCommandParams;
 use amalthea::comm::ui_comm::LastActiveEditorContextParams;
@@ -197,6 +198,23 @@ pub unsafe extern "C-unwind" fn ps_ui_execute_code(
     let out = Console::get()
         .try_ui_comm()?
         .call_frontend_method(UiFrontendRequest::ExecuteCode(params))?;
+    Ok(out.sexp)
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_ui_execute_code_in_new_session(
+    code: SEXP,
+    session_name: SEXP,
+) -> anyhow::Result<SEXP> {
+    let params = ExecuteCodeInNewSessionParams {
+        language_id: String::from("r"),
+        code: RObject::view(code).try_into()?,
+        session_name: RObject::view(session_name).try_into()?,
+    };
+
+    let out = Console::get()
+        .try_ui_comm()?
+        .call_frontend_method(UiFrontendRequest::ExecuteCodeInNewSession(params))?;
     Ok(out.sexp)
 }
 

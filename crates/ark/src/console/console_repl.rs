@@ -24,7 +24,7 @@ use crate::panic;
 use crate::panic::Recovery;
 use crate::r_task::QueuedRTask;
 use crate::r_task::RTask;
-use crate::r_task::TryIdleTask;
+use crate::r_task::TRY_TASKS;
 use crate::request::DebugRequest;
 
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
@@ -246,6 +246,14 @@ pub(super) enum PromptKind {
     InputRequest,
 }
 
+impl PromptKind {
+    /// Whether this prompt permits "idle any" tasks. Input requests are
+    /// excluded to reduce reentrancy.
+    fn serves_idle_any_tasks(&self) -> bool {
+        matches!(self, PromptKind::TopLevel | PromptKind::Browser)
+    }
+}
+
 /// This struct represents the data that we wish R would pass to
 /// `ReadConsole()` methods. We need this information to determine what kind
 /// of prompt we are dealing with.
@@ -396,13 +404,13 @@ impl Console {
             };
         }
 
-        let (tasks_idle_rx, tasks_idle_any_rx, try_idle_rx) = r_task::take_receivers();
+        let (tasks_idle_rx, tasks_idle_any_rx, try_tasks_wake_rx) = r_task::take_receivers();
 
         CONSOLE.set(UnsafeCell::new(Console::new(
             r_home,
             tasks_idle_rx,
             tasks_idle_any_rx,
-            try_idle_rx,
+            try_tasks_wake_rx,
             comm_event_tx,
             r_request_rx,
             stdin_request_tx,
@@ -542,7 +550,7 @@ impl Console {
 
         // R-side graphics device initialization. The `DeviceContext`
         // itself is already created as part of `Console::new()`.
-        graphics_device::init_graphics_device();
+        graphics_device::init_graphics_device(console.session_mode);
 
         // Now that R has started and libr and ark have fully initialized, run site and user
         // level R profiles, in that order
@@ -643,7 +651,7 @@ impl Console {
         r_home: PathBuf,
         tasks_idle_rx: Receiver<QueuedRTask>,
         tasks_idle_any_rx: Receiver<QueuedRTask>,
-        try_idle_rx: Receiver<TryIdleTask>,
+        try_tasks_wake_rx: Receiver<()>,
         comm_event_tx: Sender<CommEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
@@ -678,7 +686,7 @@ impl Console {
             debug_stopped_reason: None,
             tasks_idle_rx,
             tasks_idle_any_rx,
-            try_idle_rx,
+            try_tasks_wake_rx,
             pending_futures: HashMap::new(),
             session_mode,
             is_positron: std::env::var("POSITRON").as_deref() == Ok("1"),
@@ -769,7 +777,7 @@ impl Console {
 
             let (_, tasks_idle_rx) = crossbeam::channel::unbounded();
             let (_, tasks_idle_any_rx) = crossbeam::channel::unbounded();
-            let (_, try_idle_rx) = crossbeam::channel::unbounded();
+            let (_, try_tasks_wake_rx) = crossbeam::channel::unbounded();
             let (comm_event_tx, _) = crossbeam::channel::unbounded();
             let (r_request_tx, r_request_rx) = crossbeam::channel::unbounded();
             let (stdin_request_tx, _) = crossbeam::channel::unbounded();
@@ -782,7 +790,7 @@ impl Console {
                 PathBuf::new(),
                 tasks_idle_rx,
                 tasks_idle_any_rx,
-                try_idle_rx,
+                try_tasks_wake_rx,
                 comm_event_tx,
                 r_request_rx,
                 stdin_request_tx,
@@ -1079,6 +1087,7 @@ impl Console {
     /// - Reception of either input replies or execute requests (as determined
     ///   by `wait_for`)
     /// - Idle-time tasks
+    /// - `try_r_task()`s, when waiting for execute requests
     /// - Requests from the frontend (currently only used for establishing UI comm)
     /// - R's activity handlers
     /// - R's `R_ProcessEvents()`
@@ -1097,7 +1106,7 @@ impl Console {
         let kernel_request_rx = self.kernel_request_rx.clone();
         let tasks_idle_rx = self.tasks_idle_rx.clone();
         let tasks_idle_any_rx = self.tasks_idle_any_rx.clone();
-        let try_idle_rx = self.try_idle_rx.clone();
+        let try_tasks_wake_rx = self.try_tasks_wake_rx.clone();
 
         // Run activity handlers regularly while waiting for console input.
         // We used to poll every 200ms but that slowed down callbacks from the later
@@ -1136,15 +1145,20 @@ impl Console {
         };
 
         // "Idle any" tasks run at both top-level and browser prompts
-        let tasks_idle_any_index =
-            if matches!(info.kind, PromptKind::TopLevel | PromptKind::Browser) {
-                Some(select.recv(&tasks_idle_any_rx))
-            } else {
-                None
-            };
+        let tasks_idle_any_index = if info.kind.serves_idle_any_tasks() {
+            Some(select.recv(&tasks_idle_any_rx))
+        } else {
+            None
+        };
 
-        let try_idle_index = if matches!(info.kind, PromptKind::TopLevel | PromptKind::Browser) {
-            Some(select.recv(&try_idle_rx))
+        // Unlike "idle any" tasks, try tasks must not run at browser prompts
+        // routed to stdin. Those prompts and input requests use
+        // `WaitFor::InputReply`. Use `wait_for` rather than current
+        // admission, which a nested prompt during preparation may have closed.
+        // The loop reopens admission before taking a try task.
+        let serves_try_tasks = matches!(wait_for, WaitFor::ExecuteRequest);
+        let try_tasks_wake_index = if serves_try_tasks {
+            Some(select.recv(&try_tasks_wake_rx))
         } else {
             None
         };
@@ -1184,6 +1198,21 @@ impl Console {
                 }
                 if let Ok(req) = kernel_request_rx.try_recv() {
                     self.handle_kernel_request(req);
+                    continue;
+                }
+            }
+
+            // Try tasks come next, before `select` can pick an idle task.
+            // Their callers are blocked waiting, and give up if the task
+            // doesn't start soon.
+            //
+            // A handler can enter a nested `ReadConsole()` call that closes
+            // admission. Reopen on each iteration so try tasks can queue again
+            // once the handler returns.
+            if serves_try_tasks {
+                TRY_TASKS.open();
+                if let Some(task) = TRY_TASKS.pop() {
+                    self.handle_task(task);
                     continue;
                 }
             }
@@ -1241,11 +1270,12 @@ impl Console {
                     self.handle_task(task);
                 },
 
-                // A try-idle task woke us up
-                i if Some(i) == try_idle_index => {
-                    let task = oper.recv(&try_idle_rx).unwrap();
-                    let mut capture = self.start_capture();
-                    (task.fun)(&mut capture);
+                // A try task was queued. It's taken off the queue at the
+                // top of the loop.
+                i if Some(i) == try_tasks_wake_index => {
+                    if let Err(err) = oper.recv(&try_tasks_wake_rx) {
+                        log::error!("Try tasks wake-up channel disconnected: {err:?}");
+                    }
                 },
 
                 // It's time to run activity handlers
@@ -1470,6 +1500,14 @@ impl Console {
             input_prompt: input_prompt.to_string(),
             continuation_prompt: continuation_prompt.to_string(),
         });
+
+        // Open before the execute reply unblocks Shell and lets it send Idle,
+        // so try tasks submitted in response can queue before the event loop
+        // serves them. Keep this immediately before the reply because graphics
+        // and environment callbacks can run R and enter a nested `ReadConsole()`
+        // call that closes admission. Input requests and stdin-routed browser
+        // prompts return through `handle_input_request()` before reaching here.
+        TRY_TASKS.open();
 
         // Now unblock Shell, which sends Idle
         log::trace!("Sending `execute_reply`: {reply:?}");
@@ -2034,6 +2072,11 @@ impl Console {
                     status_tx.send(RTaskStatus::Started).unwrap();
                 }
 
+                // When the caller recovers panics, `task.fun` enters a panic
+                // boundary on this thread. An R error escaping it longjumps to
+                // `r_sandbox()` over that boundary's guard, so restore the state
+                // from this frame, which the jump doesn't cross.
+                let _boundary = panic::preserve_boundary();
                 let result = task.start_info.span.in_scope(|| r_sandbox(task.fun));
 
                 // Unblock caller via the notification channel
@@ -2734,6 +2777,13 @@ pub extern "C-unwind" fn r_read_console(
         return 0;
     }
 
+    // Close admission before preparing this prompt, including the environment
+    // capture round trip below. For a nested call, the enclosing event loop
+    // cannot serve try tasks until R returns to its handler and that handler
+    // returns to the loop. Admission reopens before an eligible prompt's
+    // announcement or when its event loop is about to take a try task.
+    TRY_TASKS.close();
+
     // Handle any pending action from a previous `r_read_console` call.
     // These are multi-step operations that required returning control to R.
     let env: RObject = match console.read_console_pending_action.take() {
@@ -2832,6 +2882,12 @@ fn r_read_console_impl(
     hist: c_int,
 ) -> i32 {
     let result = r_sandbox(|| console.read_console(prompt, buf, buflen, hist));
+
+    // Close before evaluating pending input or returning control to R, since
+    // neither path serves try tasks. Use an explicit call rather than a guard
+    // because this function must have no destructors when an interrupt
+    // longjumps out of it.
+    TRY_TASKS.close();
 
     let result = unwrap!(result, Err(err) => {
         panic!("Unexpected longjump while reading from console: {err:?}");

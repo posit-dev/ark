@@ -1,8 +1,8 @@
 use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRSelector;
+use aether_syntax::AnyRStatement;
 use aether_syntax::RCall;
 use aether_syntax::RIdentifier;
-use aether_syntax::RStringValue;
 use biome_rowan::AstNode;
 use biome_rowan::AstSeparatedList;
 
@@ -27,30 +27,14 @@ impl RIdentifierExt for RIdentifier {
     }
 }
 
-pub trait RStringValueExt {
-    /// Return the string contents without surrounding quotes.
-    ///
-    /// Works around `RStringValue::inner_string_text()` in `aether_syntax`
-    /// which checks for node kind `R_STRING_VALUE` instead of token kind
-    /// `R_STRING_LITERAL`, so it never actually strips the delimiters.
-    fn string_text(&self) -> Option<String>;
-}
-
-impl RStringValueExt for RStringValue {
-    fn string_text(&self) -> Option<String> {
-        let token = self.value_token().ok()?;
-        let text = token.text_trimmed();
-        Some(text[1..text.len() - 1].to_string())
-    }
-}
-
 pub trait AnyRSelectorExt {
-    /// Uses [RIdentifierExt::name_text()] and [RStringValueExt::string_text()] to report
-    /// the name without backticks or quotes
+    /// Uses [RIdentifierExt::name_text()] and
+    /// [aether_syntax::RStringValue::inner_string_text()] to report the name
+    /// without backticks or quotes
     ///
     /// Returns [None] for [aether_syntax::AnyRSelector::RDotDotI] and
     /// [aether_syntax::AnyRSelector::RDots], which we don't consider standard
-    /// identifiers.
+    /// identifiers, and for [aether_syntax::AnyRSelector::RBogusSelector].
     fn identifier_text(&self) -> Option<String>;
 }
 
@@ -58,8 +42,26 @@ impl AnyRSelectorExt for AnyRSelector {
     fn identifier_text(&self) -> Option<String> {
         match self {
             AnyRSelector::RIdentifier(node) => Some(node.name_text()),
-            AnyRSelector::RStringValue(node) => node.string_text(),
+            AnyRSelector::RStringValue(node) => Some(node.inner_string_text().ok()?.to_string()),
             AnyRSelector::RDots(_) | AnyRSelector::RDotDotI(_) => None,
+            AnyRSelector::RBogusSelector(_) => None,
+        }
+    }
+}
+
+pub trait AnyRStatementExt {
+    /// The expression of an [aether_syntax::RExpressionStatement].
+    ///
+    /// Returns [None] for an [aether_syntax::REmptyStatement] (a lone `;`)
+    /// and for an expression statement whose expression is missing.
+    fn expression(&self) -> Option<AnyRExpression>;
+}
+
+impl AnyRStatementExt for AnyRStatement {
+    fn expression(&self) -> Option<AnyRExpression> {
+        match self {
+            AnyRStatement::RExpressionStatement(statement) => statement.expression().ok(),
+            AnyRStatement::REmptyStatement(_) => None,
         }
     }
 }
@@ -94,7 +96,8 @@ mod tests {
 
     fn parse_single_expr(code: &str) -> AnyRExpression {
         let parsed = aether_parser::parse(code, RParserOptions::default());
-        parsed.tree().expressions().iter().next().unwrap()
+        let statement = parsed.tree().statements().iter().next().unwrap();
+        statement.expression().unwrap()
     }
 
     #[test]
@@ -114,14 +117,42 @@ mod tests {
     #[test]
     fn string_double_quoted() {
         assert_matches!(parse_single_expr("\"hello\""), AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
-            assert_eq!(s.string_text().unwrap(), "hello");
+            assert_eq!(s.inner_string_text().unwrap().text(), "hello");
         });
     }
 
     #[test]
     fn string_single_quoted() {
         assert_matches!(parse_single_expr("'world'"), AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
-            assert_eq!(s.string_text().unwrap(), "world");
+            assert_eq!(s.inner_string_text().unwrap().text(), "world");
+        });
+    }
+
+    #[test]
+    fn string_raw() {
+        assert_matches!(parse_single_expr("r\"(hello)\""), AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
+            assert_eq!(s.inner_string_text().unwrap().text(), "hello");
+        });
+    }
+
+    #[test]
+    fn string_raw_with_dashes_and_brackets() {
+        assert_matches!(parse_single_expr("R'--[a)-\"b]--'"), AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
+            assert_eq!(s.inner_string_text().unwrap().text(), "a)-\"b");
+        });
+    }
+
+    #[test]
+    fn string_raw_braces() {
+        assert_matches!(parse_single_expr("r\"{x}\""), AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
+            assert_eq!(s.inner_string_text().unwrap().text(), "x");
+        });
+    }
+
+    #[test]
+    fn string_raw_pipes() {
+        assert_matches!(parse_single_expr("r\"-|a|-\""), AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
+            assert_eq!(s.inner_string_text().unwrap().text(), "a");
         });
     }
 }

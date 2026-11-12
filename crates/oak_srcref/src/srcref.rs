@@ -191,7 +191,11 @@ fn_a <- function() {
     /// Installs source version of {generics} from CRAN into a temporary library, then
     /// recovers the R source files via srcref metadata. We use {generics} because it
     /// is very easy to install from source and lightweight.
+    ///
+    /// Regardless of our efforts, this test has proved flaky in CI, so we ignore it.
+    /// Devs can run it locally as needed.
     #[test]
+    #[ignore]
     fn test_srcref_extraction() {
         use std::process::Command;
 

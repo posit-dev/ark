@@ -57,7 +57,7 @@ fn test_magrittr_compound_assignment_name_and_value_handles() {
     // the right operand.
     let source = "x %<>% f()";
     let parsed = parse(source, RParserOptions::default());
-    assert!(!parsed.has_error());
+    assert!(!parsed.has_errors());
     let root = parsed.tree().syntax().clone();
     let index = build_index(
         &parsed.tree(),

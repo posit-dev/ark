@@ -168,7 +168,6 @@ use crate::r_task::BoxFuture;
 use crate::r_task::QueuedRTask;
 use crate::r_task::RTaskStartInfo;
 use crate::r_task::RTaskStatus;
-use crate::r_task::TryIdleTask;
 use crate::repos::apply_default_repos;
 use crate::repos::DefaultRepos;
 use crate::request::debug_request_command;
@@ -243,7 +242,8 @@ pub struct Console {
     /// Channel to send and receive tasks from `QueuedRTask`s
     tasks_idle_rx: Receiver<QueuedRTask>,
     tasks_idle_any_rx: Receiver<QueuedRTask>,
-    try_idle_rx: Receiver<TryIdleTask>,
+    /// Wakes the event loop when a `try_r_task()` is queued
+    try_tasks_wake_rx: Receiver<()>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo, Option<String>)>,
 
     /// Comm IDs of the singleton UI and help comms, if connected. Opening a

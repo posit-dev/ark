@@ -77,3 +77,73 @@
         PACKAGE = "(embedding)"
     ))
 }
+
+#' @export
+.rs.api.runScriptJob <- function(
+    path,
+    name = NULL,
+    encoding = "unknown",
+    workingDir = NULL,
+    importEnv = FALSE,
+    exportEnv = ""
+) {
+    if (missing(path)) {
+        stop("Must specify path to R script to run.", call. = FALSE)
+    }
+    check_string <- function(x, arg) {
+        if (!is_string(x)) {
+            stop("`", arg, "` must be a single string.", call. = FALSE)
+        }
+    }
+    check_string(path, "path")
+    if (!is.null(name)) {
+        check_string(name, "name")
+    }
+    check_string(encoding, "encoding")
+    if (!is.null(workingDir)) {
+        check_string(workingDir, "workingDir")
+    }
+    if (!file.exists(path) || dir.exists(path)) {
+        stop("The R script '", path, "' does not exist.", call. = FALSE)
+    }
+    path <- normalizePath(path, winslash = "/")
+
+    if (is.null(name) || !nzchar(name)) {
+        name <- basename(path)
+    }
+    if (is.null(workingDir)) {
+        workingDir <- dirname(path)
+    }
+    if (!dir.exists(workingDir)) {
+        stop(
+            "The working directory '",
+            workingDir,
+            "' does not exist.",
+            call. = FALSE
+        )
+    }
+    workingDir <- normalizePath(workingDir, winslash = "/")
+
+    if (isTRUE(importEnv)) {
+        warning(
+            "`importEnv = TRUE` is not supported in Positron and is ignored.",
+            call. = FALSE
+        )
+    }
+    if (is_string(exportEnv) && nzchar(exportEnv)) {
+        warning(
+            "`exportEnv` is not supported in Positron and is ignored.",
+            call. = FALSE
+        )
+    }
+
+    # Braces make one expression so a failed setwd() stops the job before source()
+    code <- sprintf(
+        "{\n    setwd(%s)\n    source(%s, encoding = %s)\n}",
+        deparse(workingDir),
+        deparse(path),
+        deparse(encoding)
+    )
+
+    invisible(.ps.ui.executeCodeInNewSession(code, name))
+}

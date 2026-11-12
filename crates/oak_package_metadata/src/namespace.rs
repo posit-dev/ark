@@ -5,8 +5,8 @@ use aether_syntax::RArgument;
 use biome_rowan::AstNodeList;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxResult;
+use oak_core::syntax_ext::AnyRStatementExt;
 use oak_core::syntax_ext::RIdentifierExt;
-use oak_core::syntax_ext::RStringValueExt;
 use stdext::SortedVec;
 
 /// Parsed NAMESPACE file
@@ -32,8 +32,11 @@ impl Namespace {
     pub fn parse(contents: &str) -> anyhow::Result<Self> {
         let parsed = aether_parser::parse(contents, RParserOptions::default());
 
-        if let Some(err) = parsed.error() {
-            return Err(anyhow::anyhow!("Failed to parse NAMESPACE file: {err:?}"));
+        if let Some(diagnostic) = parsed.diagnostics().first() {
+            return Err(anyhow::anyhow!(
+                "Failed to parse NAMESPACE file: {message}",
+                message = diagnostic.message
+            ));
         }
 
         let root = parsed.tree();
@@ -42,8 +45,8 @@ impl Namespace {
         let mut imports = Vec::new();
         let mut package_imports = Vec::new();
 
-        for expr in root.expressions().iter() {
-            let AnyRExpression::RCall(call) = expr else {
+        for statement in root.statements().iter() {
+            let Some(AnyRExpression::RCall(call)) = statement.expression() else {
                 continue;
             };
             let Ok(AnyRExpression::RIdentifier(fn_ident)) = call.function() else {
@@ -133,7 +136,9 @@ fn collect_arg_identifiers(
 fn directive_name(value: &AnyRExpression) -> Option<String> {
     match value {
         AnyRExpression::RIdentifier(ident) => Some(ident.name_text()),
-        AnyRExpression::AnyRValue(AnyRValue::RStringValue(string)) => string.string_text(),
+        AnyRExpression::AnyRValue(AnyRValue::RStringValue(string)) => {
+            Some(string.inner_string_text().ok()?.to_string())
+        },
         _ => None,
     }
 }

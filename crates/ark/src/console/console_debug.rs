@@ -27,6 +27,7 @@ use stdext::result::ResultExt;
 use crate::console::Console;
 use crate::console::SessionMode;
 use crate::modules::ARK_ENVS;
+use crate::r_task::TRY_TASKS;
 use crate::srcref::ark_uri;
 use crate::thread::RThreadSafe;
 
@@ -96,6 +97,9 @@ impl Console {
         transient_eval: bool,
         debug_stopped_reason: DebugStoppedReason,
     ) {
+        // Admission can open here because `read_console()` routes notebook
+        // browser prompts without a DAP connection to stdin before reaching
+        // this function. Those prompts must not serve try tasks.
         match self.debug_stack_info() {
             Ok(mut stack) => {
                 // Figure out whether we changed location since last time,
@@ -112,6 +116,12 @@ impl Console {
 
                 // Transient eval with unchanged stack: just refresh variables
                 if transient_eval && !stack_changed {
+                    // Open before `invalidated` so try tasks submitted in
+                    // response can queue before the event loop starts. Keep
+                    // this immediately before the announcement because stack
+                    // inspection runs R and can enter a nested `ReadConsole()`
+                    // call that closes admission.
+                    TRY_TASKS.open();
                     let mut dap = self.debug_dap.lock().unwrap();
                     dap.send_invalidated();
                     return;
@@ -137,6 +147,12 @@ impl Console {
                     remove_fenced_frames(&mut stack);
                 }
 
+                // Open before `stopped` so try tasks submitted in response
+                // can queue before the event loop starts. Keep this immediately
+                // before the announcement because preparation, including
+                // `get_show_hidden_frames()`, runs R and can enter a nested
+                // `ReadConsole()` call that closes admission.
+                TRY_TASKS.open();
                 let mut dap = self.debug_dap.lock().unwrap();
                 dap.start_debug(stack, fallback_sources, debug_stopped_reason)
             },

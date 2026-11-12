@@ -5,22 +5,22 @@
 //
 
 use aether_path::FilePath;
-use aether_syntax::RBracedExpressions;
-use aether_syntax::RExpressionList;
+use aether_syntax::RBracedStatements;
 use aether_syntax::RLanguage;
 use aether_syntax::RSyntaxElement;
-use aether_syntax::RSyntaxKind;
 use aether_syntax::RSyntaxNode;
 use amalthea::wire::execute_request::CodeLocation;
 use anyhow::anyhow;
 use biome_line_index::LineIndex;
 use biome_rowan::AstNode;
+use biome_rowan::AstNodeList;
 use biome_rowan::SyntaxRewriter;
 use biome_rowan::TextSize;
 use biome_rowan::TriviaPieceKind;
 use biome_rowan::VisitNodeSignal;
 use harp::object::RObject;
 use libr::SEXP;
+use oak_core::syntax_ext::AnyRStatementExt;
 use url::Url;
 
 use crate::console::Console;
@@ -130,25 +130,30 @@ const AUTO_STEP_FUNCTION: &str = ".ark_auto_step";
 //   expression are now "verified", i.e. the breakpoints have been injected and
 //   the code containing them has been evaluated.
 
-// Breakpoint injection uses a Biome `SyntaxRewriter`, a tree visitor with
-// preorder and postorder hooks that allows replacing nodes on the way out.
+// Breakpoint injection uses a Biome `SyntaxRewriter`, a tree visitor that calls
+// `visit_node()` on each node in preorder. We only intercept braced
+// expressions, and for those we perform a manual postorder traversal. We
+// perform the following 4 steps:
 //
-// - Preorder (`visit_node`): Cache line information for braced expressions.
-//   We record where each expression starts and its line range. This must be
-//   done before any modifications because the postorder hook sees a partially
-//   rebuilt tree with shifted token offsets.
+// 1. Cache the line information for the braced expression list (where each
+//    expression starts and its line range). `visit_node()` always receives
+//    nodes from the original tree, so these line lookups are reliable.
 //
-// - Postorder (`visit_node_post`): Process expression lists bottom-up. For
-//   lists inside braces, we inject breakpoint calls, add `#line` directives,
-//   and mark remaining breakpoints (e.g. on closing braces) as invalid. The
-//   cached line info represents original source positions, which is exactly
-//   what we need for anchoring breakpoints to document lines.
+// 2. Recursively `transform()` each child expression of the braced expression
+//    list. This processes nested braced expressions bottom-up before the
+//    current list.
 //
-// Note: The line info cached in pre-order visit can potentially become stale in
-// the post-order hook, since the latter is operating on a reconstructed tree.
-// However, we only use the cached info to reason about where original
-// expressions lived in the source document, not where they end up in the
-// rewritten tree. This is safe as long as we don't reorder or remove
+// 3. Inject breakpoint calls and `#line` directives in the list of transformed
+//    children, and mark remaining breakpoints (e.g. on closing braces) as
+//    invalid.
+//
+// 4. Return `VisitNodeSignal::Replace` with the rebuilt braced expression so
+//    the rewriter doesn't traverse it again.
+//
+// Line info is cached early on because the transformed children are rebuilt
+// nodes with shifted token offsets. We only use the cached info to reason about
+// where original expressions lived in the source document, not where they end
+// up in the rewritten tree. This is safe as long as we don't reorder or remove
 // expressions (we only inject siblings and trivia).
 //
 // We use `SyntaxRewriter` instead of `BatchMutation` because the latter:
@@ -166,7 +171,9 @@ const AUTO_STEP_FUNCTION: &str = ".ark_auto_step";
 //   BP 2 causes changes inside the braces. Then BP 1 causes the whole brace
 //   expression to be replaced with a variant that has a `#line` directive.
 //   BatchMutation can't express both changes because it takes modifications
-//   upfront. `SyntaxRewriter` lets us replace nodes bottom-up as we go.
+//   upfront. With `SyntaxRewriter`, we transform a braced expression's
+//   children before replacing the braced expression itself, so nested changes
+//   compose bottom-up as we go.
 
 /// Annotate console input for `ReadConsole`.
 ///
@@ -183,9 +190,12 @@ pub(super) fn annotate_input(
     // directives are shifted by 1 line.
     let annotated_code = if let Some(breakpoints) = breakpoints {
         let parse = aether_parser::parse(code, Default::default());
-        if let Some(err) = parse.error() {
+        if let Some(diagnostic) = parse.diagnostics().first() {
             // Shouldn't happen since we're only operating on code that was parsed by R
-            return Err(anyhow!("Parse error in `annotate_input()`: {err}"));
+            return Err(anyhow!(
+                "Parse error in `annotate_input()`: {message}",
+                message = diagnostic.message
+            ));
         }
 
         let root = parse.tree();
@@ -337,9 +347,12 @@ fn annotate_braced_block(
     let line_index = LineIndex::new(&wrapped);
 
     let parse = aether_parser::parse(&wrapped, Default::default());
-    if let Some(err) = parse.error() {
+    if let Some(diagnostic) = parse.diagnostics().first() {
         // Shouldn't happen since we're only operating on code that was parsed by R
-        return Err(anyhow!("Parse error in `annotate_braced_block()`: {err}"));
+        return Err(anyhow!(
+            "Parse error in `annotate_braced_block()`: {message}",
+            message = diagnostic.message
+        ));
     }
 
     let root = parse.tree();
@@ -384,23 +397,33 @@ struct AnnotationRewriter<'a> {
     line_index: &'a LineIndex,
     /// Set of breakpoint IDs that have been consumed (placed in nested lists)
     consumed: std::collections::HashSet<i64>,
-    /// Stack tracking braced expression context. Each entry contains precomputed
-    /// line information captured before child transformations (which can corrupt ranges).
-    brace_stack: Vec<BraceFrame>,
     /// First error encountered during transformation (if any)
     err: Option<anyhow::Error>,
 }
 
-/// Holds precomputed line information for a braced expression list.
-/// Captured on entry to a braced expression since line info becomes unreliable
-/// after child transformations.
+/// Holds precomputed line information for a braced statement list.
+/// Captured before transforming children since line info becomes unreliable
+/// after that.
 struct BraceFrame {
     /// Code line of the opening `{`
-    brace_code_line: u32,
+    opening_brace_code_line: u32,
     /// Code line of the closing `}`
     closing_brace_code_line: u32,
-    /// Line info for each expression (indexed by slot position)
-    expr_info: Vec<ExprLineInfo>,
+    /// Line info for each statement (indexed by slot position). `None` for
+    /// empty statements (a lone `;`), which have no expression to break on.
+    expr_info: Vec<Option<ExprLineInfo>>,
+}
+
+impl BraceFrame {
+    /// Line info of the last statement that has an expression
+    fn last_expr(&self) -> Option<&ExprLineInfo> {
+        self.expr_info.iter().rev().find_map(Option::as_ref)
+    }
+
+    /// Slot position of the last statement that has an expression
+    fn last_expr_index(&self) -> Option<usize> {
+        self.expr_info.iter().rposition(Option::is_some)
+    }
 }
 
 /// Precomputed line information for a single expression in a braced list.
@@ -428,7 +451,6 @@ impl<'a> AnnotationRewriter<'a> {
             line_offset,
             line_index,
             consumed: std::collections::HashSet::new(),
-            brace_stack: Vec::new(),
             err: None,
         }
     }
@@ -538,156 +560,177 @@ impl SyntaxRewriter for AnnotationRewriter<'_> {
             return VisitNodeSignal::Traverse(node);
         }
 
-        // Track `BraceFrame` information when we enter a braced expression.
-        // This must be done on entry, since the exit hook only sees the
-        // (partially) rebuilt tree with invalid line information.
+        // Only braced statements are annotated. Breakpoints in the root
+        // statement list are left as `Unverified` (they can't be hit in
+        // console input, but may be valid when sourcing).
+        let Some(braced) = RBracedStatements::cast_ref(&node) else {
+            return VisitNodeSignal::Traverse(node);
+        };
+
+        // Cache line info BEFORE transforming children. The cached source
+        // positions are exactly what we need to anchor and invalidate
+        // breakpoints.
+        let frame = match self.brace_frame(&braced) {
+            Ok(frame) => frame,
+            Err(err) => {
+                self.err = Some(err);
+                return VisitNodeSignal::Traverse(node);
+            },
+        };
+
+        if frame.last_expr().is_none() {
+            // Nothing to break on!
+            self.mark_empty_braces_breakpoints_invalid(&frame);
+            return VisitNodeSignal::Replace(node);
+        }
+
+        // Manual postorder traversal of the statement list
         //
-        // Note: we intentionally cache line info from the original parse tree.
-        // Downstream injections (breakpoint calls, `#line` trivia, verify calls)
-        // can change token offsets and make line lookups on the rebuilt nodes
-        // unreliable, but they do not change where the original expressions
-        // lived in the source. We only rely on these cached source positions
-        // when anchoring and invalidating breakpoints, tasks for which we need
-        // the _original_ coordinates, not the new ones.
-        if let Some(braced) = RBracedExpressions::cast_ref(&node) {
-            let Some(brace_code_line) = first_token_code_line(&node, self.line_index) else {
-                self.err = Some(anyhow!("Failed to get line for opening brace"));
-                return VisitNodeSignal::Traverse(node);
-            };
+        // Transform children first so that nested braced statements get
+        // annotated before this parent list. Since we return `Replace`, the
+        // rewriter does not continue traversal of `node` on its own, we've
+        // already done it!
+        let statements = braced.statements();
+        let statements_transformed: Vec<RSyntaxNode> = statements
+            .iter()
+            .map(|statement| self.transform(statement.into_syntax()))
+            .collect();
 
-            let Some(closing_brace_code_line) = braced
-                .r_curly_token()
-                .ok()
-                .and_then(|token| self.to_code_line(token.text_trimmed_range().start()))
-            else {
-                self.err = Some(anyhow!("Failed to get line for closing brace"));
-                return VisitNodeSignal::Traverse(node);
-            };
-
-            let mut expr_info = Vec::new();
-
-            for expr in braced.expressions() {
-                let Some(start) = first_token_code_line(expr.syntax(), self.line_index) else {
-                    self.err = Some(anyhow!("Failed to get start line for expression"));
-                    return VisitNodeSignal::Traverse(node);
-                };
-                let range = match text_trimmed_line_range(expr.syntax(), self.line_index) {
-                    Ok(range) => range,
-                    Err(err) => {
-                        self.err = Some(err);
-                        return VisitNodeSignal::Traverse(node);
-                    },
-                };
-
-                expr_info.push(ExprLineInfo { start, range });
-            }
-
-            self.brace_stack.push(BraceFrame {
-                brace_code_line,
-                closing_brace_code_line,
-                expr_info,
-            });
-        }
-
-        VisitNodeSignal::Traverse(node)
-    }
-
-    fn visit_node_post(&mut self, node: RSyntaxNode) -> RSyntaxNode {
         if self.err.is_some() {
-            // Something is wrong but we can't short-circuit the visit. Just
-            // visit nodes until exhaustion.
-            return node;
+            // Early return on an error when transforming a child
+            return VisitNodeSignal::Replace(node);
         }
 
-        // Only process expression lists
-        if node.kind() != RSyntaxKind::R_EXPRESSION_LIST {
-            return node;
-        }
+        let statements = statements.into_syntax();
+        let index = statements.index();
+        let statements = self.annotate_braced_statements(statements, statements_transformed, frame);
 
-        // Note we assume that only braced expressions and the root list have
-        // `R_EXPRESSION_LIST`, which is the case in our syntax
-        if let Some(frame) = self.brace_stack.pop() {
-            if frame.expr_info.is_empty() {
-                // Empty braces have no expressions to break on. Mark breakpoints
-                // strictly inside as "empty braces", and the closing brace as
-                // "closing brace". Breakpoints on the opening brace line belong
-                // to the parent scope (for `{}` on a single line, this means no
-                // breakpoints are marked invalid here).
-
-                let brace_doc_start = self.to_doc_line(frame.brace_code_line);
-                let closing_doc_line = self.to_doc_line(frame.closing_brace_code_line);
-
-                // Mark lines strictly inside as "empty braces"
-                let inner_start = brace_doc_start + 1;
-                let inner_end = closing_doc_line - 1;
-                if inner_start <= inner_end {
-                    self.mark_breakpoints_invalid(
-                        Some(inner_start),
-                        Some(inner_end),
-                        InvalidReason::EmptyBraces,
-                    );
-                }
-
-                // Mark the closing brace line as "closing brace"
-                if closing_doc_line > brace_doc_start {
-                    self.mark_breakpoints_invalid(
-                        Some(closing_doc_line),
-                        Some(closing_doc_line),
-                        InvalidReason::ClosingBrace,
-                    );
-                }
-
-                return node;
-            }
-
-            // Brace range in document coordinates. Since we checked for empty
-            // expr_info above, first/last are guaranteed to exist.
-            let Some(last_info) = frame.expr_info.last() else {
-                return self.fail(anyhow!("expr_info unexpectedly empty"), node);
-            };
-
-            let brace_doc_start = self.to_doc_line(frame.brace_code_line);
-            let brace_doc_end = self.to_doc_line(last_info.range.end);
-
-            // Annotate statements in the braced list
-            let result = self.annotate_braced_list(node, frame.brace_code_line, frame.expr_info);
-
-            // Mark any remaining breakpoints in this brace range as invalid
-            // (closing braces). Breakpoints on the brace line itself belong to
-            // the parent scope, so we start invalidation from brace_doc_start +
-            // 1.
-            let invalidation_floor = brace_doc_start + 1;
-            self.mark_breakpoints_invalid(
-                Some(invalidation_floor),
-                Some(brace_doc_end),
-                InvalidReason::ClosingBrace,
-            );
-
-            result
-        } else {
-            // Root expression list: leave breakpoints as Unverified.
-            // They can't be hit in console input, but may be valid when sourcing.
-            node
-        }
+        VisitNodeSignal::Replace(node.splice_slots(index..=index, [Some(statements.into())]))
     }
 }
 
 impl AnnotationRewriter<'_> {
-    /// Annotate an expression list inside braces with breakpoints, `#line`
+    /// Compute line information for a braced statement list
+    fn brace_frame(&self, braced: &RBracedStatements) -> anyhow::Result<BraceFrame> {
+        let opening_brace_code_line = first_token_code_line(braced.syntax(), self.line_index)
+            .ok_or_else(|| anyhow!("Failed to get line for opening brace"))?;
+
+        let closing_brace_code_line = braced
+            .r_curly_token()
+            .ok()
+            .and_then(|token| self.to_code_line(token.text_trimmed_range().start()))
+            .ok_or_else(|| anyhow!("Failed to get line for closing brace"))?;
+
+        let mut expr_info = Vec::new();
+
+        for statement in braced.statements() {
+            let Some(expr) = statement.expression() else {
+                // Empty statement, a lone `;`
+                expr_info.push(None);
+                continue;
+            };
+
+            let start = first_token_code_line(expr.syntax(), self.line_index)
+                .ok_or_else(|| anyhow!("Failed to get start line for expression"))?;
+            let range = text_trimmed_line_range(expr.syntax(), self.line_index)?;
+
+            expr_info.push(Some(ExprLineInfo { start, range }));
+        }
+
+        Ok(BraceFrame {
+            opening_brace_code_line,
+            closing_brace_code_line,
+            expr_info,
+        })
+    }
+
+    /// Empty braces have no expressions to break on. Mark breakpoints strictly
+    /// inside as "empty braces", and the closing brace as "closing brace".
+    /// Breakpoints on the opening brace line belong to the parent scope (for
+    /// `{}` on a single line, this means no breakpoints are marked invalid
+    /// here).
+    fn mark_empty_braces_breakpoints_invalid(&mut self, frame: &BraceFrame) {
+        let opening_brace_doc_start = self.to_doc_line(frame.opening_brace_code_line);
+        let closing_brace_doc_line = self.to_doc_line(frame.closing_brace_code_line);
+
+        // Mark lines strictly inside as "empty braces"
+        let inner_start = opening_brace_doc_start + 1;
+        let inner_end = closing_brace_doc_line - 1;
+        if inner_start <= inner_end {
+            self.mark_breakpoints_invalid(
+                Some(inner_start),
+                Some(inner_end),
+                InvalidReason::EmptyBraces,
+            );
+        }
+
+        // Mark the closing brace line as "closing brace"
+        if closing_brace_doc_line > opening_brace_doc_start {
+            self.mark_breakpoints_invalid(
+                Some(closing_brace_doc_line),
+                Some(closing_brace_doc_line),
+                InvalidReason::ClosingBrace,
+            );
+        }
+    }
+
+    /// Annotate the statement list of a non-empty braced statement, then
+    /// mark remaining breakpoints in the brace range as invalid
+    fn annotate_braced_statements(
+        &mut self,
+        statements: RSyntaxNode,
+        statements_transformed: Vec<RSyntaxNode>,
+        frame: BraceFrame,
+    ) -> RSyntaxNode {
+        // Brace range in document coordinates
+        let Some(last_info) = frame.last_expr() else {
+            return self.fail(
+                anyhow!("expr_info unexpectedly has no expressions"),
+                statements,
+            );
+        };
+
+        let brace_doc_start = self.to_doc_line(frame.opening_brace_code_line);
+        let brace_doc_end = self.to_doc_line(last_info.range.end);
+
+        // Annotate statements in the braced list
+        let result = self.annotate_braced_list(statements, statements_transformed, &frame);
+
+        // Mark any remaining breakpoints in this brace range as invalid
+        // (closing braces). Breakpoints on the brace line itself belong to
+        // the parent scope, so we start invalidation from brace_doc_start +
+        // 1.
+        let invalidation_floor = brace_doc_start + 1;
+        self.mark_breakpoints_invalid(
+            Some(invalidation_floor),
+            Some(brace_doc_end),
+            InvalidReason::ClosingBrace,
+        );
+
+        result
+    }
+
+    /// Annotate a statement list inside braces with breakpoints, `#line`
     /// directives, and verification calls.
     fn annotate_braced_list(
         &mut self,
-        list_node: RSyntaxNode,
-        brace_code_line: u32,
-        expr_info: Vec<ExprLineInfo>,
+        statements: RSyntaxNode,
+        statements_transformed: Vec<RSyntaxNode>,
+        frame: &BraceFrame,
     ) -> RSyntaxNode {
-        let Some(list) = RExpressionList::cast(list_node.clone()) else {
-            return list_node;
+        let Some(last_expr_index) = frame.last_expr_index() else {
+            // Shouldn't happen, we checked that `expr_info` had expressions early on
+            return statements;
         };
-
-        let elements: Vec<_> = list.into_iter().collect();
-        if elements.is_empty() {
-            return list_node;
+        if statements_transformed.len() != frame.expr_info.len() {
+            return self.fail(
+                anyhow!(
+                    "Mismatched statement count: {} statements, {} line infos",
+                    statements_transformed.len(),
+                    frame.expr_info.len()
+                ),
+                statements,
+            );
         }
 
         // Convert brace code line to document coordinates. This is the floor
@@ -695,22 +738,30 @@ impl AnnotationRewriter<'_> {
         // outer scope, not this braced list. Note that due to the injected
         // wrapper braces in `annotate_source()`, this can be -1 (before any doc
         // line).
-        let brace_doc_start: i32 = self.to_doc_line(brace_code_line);
+        let opening_brace_doc_start: i32 = self.to_doc_line(frame.opening_brace_code_line);
 
         let mut result_slots: Vec<Option<RSyntaxElement>> = Vec::new();
         let mut needs_line_directive = false;
 
-        // Braced expressions never claim breakpoints on their opening brace
+        // Braced statements never claim breakpoints on their opening brace
         // line. This prevents injecting breakpoints inside `{ foo }` or `{{ foo
         // }}` when they appear on a single line - those breakpoints belong to
         // the parent scope.
-        let mut prev_doc_end: Option<i32> = Some(brace_doc_start + 1);
+        let mut prev_doc_end: Option<i32> = Some(opening_brace_doc_start + 1);
 
-        for (i, expr) in elements.iter().enumerate() {
-            // Use precomputed line info captured on the preorder visit, when
-            // positions were still valid
-            let Some(info) = expr_info.get(i) else {
-                return self.fail(anyhow!("Missing line info for expression {i}"), list_node);
+        // Uses precomputed line info captured before children were transformed,
+        // when positions were still valid
+        for (i, (statement, info)) in statements_transformed
+            .into_iter()
+            .zip(frame.expr_info.iter())
+            .enumerate()
+        {
+            let Some(info) = info else {
+                // Empty statements (a lone `;`) have no expression to break on.
+                // Keep them as is, and leave any pending line directive to the
+                // next expression.
+                result_slots.push(Some(statement.into()));
+                continue;
             };
 
             let expr_doc_start = self.to_doc_line(info.start);
@@ -723,7 +774,7 @@ impl AnnotationRewriter<'_> {
             // breakpoints inside multiline expressions (which all anchor to the start).
             let bp_indices = match self.match_breakpoints(prev_doc_end, expr_doc_end - 1) {
                 Ok(indices) => indices,
-                Err(e) => return self.fail(e, list_node),
+                Err(e) => return self.fail(e, statements),
             };
 
             if !bp_indices.is_empty() {
@@ -746,26 +797,29 @@ impl AnnotationRewriter<'_> {
                 // Inject a single breakpoint call for all matching breakpoints
                 // (all breakpoints are shown at the same location in the
                 // frontend, once verified)
-                let breakpoint_call = create_breakpoint_call(self.uri, first_bp_id);
+                let breakpoint_call = match create_breakpoint_call(self.uri, first_bp_id) {
+                    Ok(call) => call,
+                    Err(e) => return self.fail(e, statements),
+                };
                 result_slots.push(Some(breakpoint_call.into()));
 
-                // We've injected an expression so we'll need to fix sourcerefs
+                // We've injected a statement so we'll need to fix sourcerefs
                 // with a line directive
                 needs_line_directive = true;
             }
 
             // There are two reasons we might need a line directive:
             // - We've just injected a breakpoint
-            // - We've injected a verify call at last iteration
-            let expr_node = if needs_line_directive {
-                match add_line_directive_to_node(expr.syntax(), expr_doc_start, self.uri) {
+            // - We've injected a verify call after the previous expression
+            let statement_node = if needs_line_directive {
+                match add_line_directive_to_node(&statement, expr_doc_start, self.uri) {
                     Ok(n) => n,
-                    Err(e) => return self.fail(e, list_node),
+                    Err(e) => return self.fail(e, statements),
                 }
             } else {
-                expr.syntax().clone()
+                statement
             };
-            result_slots.push(Some(expr_node.into()));
+            result_slots.push(Some(statement_node.into()));
 
             // If this expression's range contains any breakpoints, we inject a
             // verify call right after it to ensure that they are immediately
@@ -773,11 +827,14 @@ impl AnnotationRewriter<'_> {
             // expression in the list is an exception. We don't inject a verify
             // call because we have nowhere to attach a corresponding line
             // directive. Instead we rely on the parent list to verify.
-            let is_last = i == elements.len() - 1;
+            let is_last = i == last_expr_index;
             if !is_last && self.has_breakpoints_in_range(expr_doc_start, expr_doc_end) {
                 let start_u32 = expr_doc_start.max(0) as u32;
                 let end_u32 = expr_doc_end.max(0) as u32;
-                let verify_call = create_verify_call(self.uri, &(start_u32..end_u32));
+                let verify_call = match create_verify_call(self.uri, &(start_u32..end_u32)) {
+                    Ok(call) => call,
+                    Err(e) => return self.fail(e, statements),
+                };
                 result_slots.push(Some(verify_call.into()));
 
                 // Next expression will need a line directive no matter what
@@ -791,8 +848,8 @@ impl AnnotationRewriter<'_> {
         }
 
         // Replace all slots with the new list
-        let slot_count = list_node.slots().count();
-        list_node.splice_slots(0..slot_count, result_slots)
+        let slot_count = statements.slots().count();
+        statements.splice_slots(0..slot_count, result_slots)
     }
 
     /// Mark remaining unconsumed breakpoints as invalid within the given range.
@@ -913,12 +970,14 @@ fn add_line_directive_to_node(
 
     let mut existing_trivia = collect_leading_trivia(&first_token);
 
-    // Skip leading newline as it belongs to the previous node
-    if existing_trivia
+    // Line directives always follow an injected statement, which doesn't end
+    // with a newline. Make sure the trivia starts with one so the directive
+    // sits on its own line, e.g. for `x; y` on a single line.
+    if !existing_trivia
         .first()
         .is_some_and(|(kind, _)| *kind == TriviaPieceKind::Newline)
     {
-        existing_trivia.remove(0);
+        existing_trivia.insert(0, (TriviaPieceKind::Newline, "\n".to_string()));
     }
 
     let directive_trivia = line_directive_trivia(line, uri);
@@ -935,20 +994,36 @@ fn add_line_directive_to_node(
 // We create new calls by parsing strings. Although less elegant, it's much less
 // verbose and easier to see what's going on.
 
-fn create_breakpoint_call(uri: &Url, id: i64) -> RSyntaxNode {
+fn create_breakpoint_call(uri: &Url, id: i64) -> anyhow::Result<RSyntaxNode> {
     // NOTE: If you use `base::browser()` here in an attempt to prevent masking
     // issues in case someone redefined `browser()`, you'll cause the function
     // in which the breakpoint is injected to be bytecode-compiled. This is a
     // limitation/bug of https://github.com/r-devel/r-svn/blob/e2aae817/src/library/compiler/R/cmp.R#L1273-L1290
     let code = format!(
-        "\nbase::{AUTO_STEP_FUNCTION}(base::.ark_breakpoint(browser(), \"{uri}\", \"{id}\"))\n"
+        "base::{AUTO_STEP_FUNCTION}(base::.ark_breakpoint(browser(), \"{uri}\", \"{id}\"))"
     );
-    aether_parser::parse(&code, Default::default()).syntax()
+    create_injected_statement(&code)
 }
 
-fn create_verify_call(uri: &Url, line_range: &std::ops::Range<u32>) -> RSyntaxNode {
-    let code = format!("\n{}\n", format_verify_call(uri, line_range));
-    aether_parser::parse(&code, Default::default()).syntax()
+fn create_verify_call(uri: &Url, line_range: &std::ops::Range<u32>) -> anyhow::Result<RSyntaxNode> {
+    create_injected_statement(&format_verify_call(uri, line_range))
+}
+
+fn create_injected_statement(code: &str) -> anyhow::Result<RSyntaxNode> {
+    // The injected statement starts on a new line, and this `\n` becomes
+    // leading trivia on its first token. It doesn't end with a newline as that
+    // would become leading trivia on the `EOF` token. We do want a trailing
+    // newline though, and it is added by `add_line_directive_to_node()` when
+    // adding the statement's line directive later on.
+    let code = format!("\n{code}");
+
+    let root = aether_parser::parse(&code, Default::default()).tree();
+
+    let Some(statement) = root.statements().first() else {
+        return Err(anyhow!("Can't find statement in injected code: {code}"));
+    };
+
+    Ok(statement.into_syntax())
 }
 
 /// Formats a verify call as a string. Takes 0-indexed line range.
@@ -1240,6 +1315,45 @@ mod tests {
         // Both breakpoints are valid (inside brace lists)
         assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid(_)));
         assert!(!matches!(breakpoints[1].state, BreakpointState::Invalid(_)));
+    }
+
+    #[test]
+    fn test_inject_breakpoints_sibling_brace_lists() {
+        // Injecting into the first sibling must not shift the second sibling's coordinates.
+        let code = "{\n  {\n    x <- 1\n    y <- 2\n  }\n  {\n    z <- 3\n    w <- 4\n  }\n}";
+        let location = CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 9,
+                character: 1,
+            },
+        };
+        let mut breakpoints = vec![
+            Breakpoint::new(1, 2, BreakpointState::Unverified),
+            Breakpoint::new(2, 6, BreakpointState::Unverified),
+        ];
+
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        insta::assert_snapshot!(result);
+        assert_eq!(
+            breakpoints
+                .iter()
+                .map(|breakpoint| (
+                    breakpoint.id,
+                    breakpoint.line,
+                    breakpoint.state,
+                    breakpoint.injected
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, 2, BreakpointState::Unverified, true),
+                (2, 6, BreakpointState::Unverified, true),
+            ]
+        );
     }
 
     #[test]

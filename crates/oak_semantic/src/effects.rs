@@ -13,7 +13,6 @@ use biome_rowan::TextRange;
 // can name the `name_expr` field's type without depending on oak_core directly.
 pub use oak_core::range::RangedAstPtr;
 use oak_core::syntax_ext::RIdentifierExt;
-use oak_core::syntax_ext::RStringValueExt;
 use rustc_hash::FxHashMap;
 
 use crate::semantic_index::AmbiguityReason;
@@ -497,7 +496,7 @@ fn match_named(arg: &RArgument, formals: Formals) -> Option<usize> {
     let name = clause.name().ok()?;
     let name_text = match &name {
         AnyRArgumentName::RIdentifier(ident) => ident.name_text(),
-        AnyRArgumentName::RStringValue(s) => s.string_text()?,
+        AnyRArgumentName::RStringValue(s) => s.inner_string_text().ok()?.to_string(),
         _ => return None,
     };
     formals
@@ -744,7 +743,9 @@ impl AssignHandler for BindingOperatorHandler {
 pub fn resolve_quoted_symbol_or_string(value: &AnyRExpression) -> Option<String> {
     match value {
         AnyRExpression::RIdentifier(ident) => Some(ident.name_text()),
-        AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
+        AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
+            Some(s.inner_string_text().ok()?.to_string())
+        },
         _ => None,
     }
 }
