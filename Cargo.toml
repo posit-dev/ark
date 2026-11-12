@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-rust-version = "1.94"
+rust-version = "1.95"
 edition = "2021"
 license = "MIT"
 authors = ["Posit Software, PBC"]
@@ -25,10 +25,10 @@ too_many_arguments = "allow"
 
 [workspace.dependencies]
 actix-web = "4.13.0"
-aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_factory", rev = "2ef1b8551d2d6a493215e110616a1b3083e5858b" }
+aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_factory", rev = "9b7627a0e05511a9052ea569e88cf8192474b85f" }
 aether_lsp_utils = { path = "crates/aether_lsp_utils" }
-aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "2ef1b8551d2d6a493215e110616a1b3083e5858b" }
-aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "2ef1b8551d2d6a493215e110616a1b3083e5858b" }
+aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "9b7627a0e05511a9052ea569e88cf8192474b85f" }
+aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "9b7627a0e05511a9052ea569e88cf8192474b85f" }
 aether_path = { path = "crates/aether_path" }
 amalthea = { path = "crates/amalthea" }
 annotate-snippets = "0.12.16"
@@ -39,9 +39,9 @@ ark_test = { path = "crates/ark_test" }
 assert_matches = "1.5.0"
 async-trait = "0.1.89"
 base64 = "0.23.1"
-biome_line_index = { git = "https://github.com/biomejs/biome", rev = "927eea3d3169214d5fb12c355f99a0ab00e10a20" }
-biome_rowan = { git = "https://github.com/biomejs/biome", rev = "927eea3d3169214d5fb12c355f99a0ab00e10a20" }
-biome_text_size = { git = "https://github.com/biomejs/biome", rev = "927eea3d3169214d5fb12c355f99a0ab00e10a20" }
+biome_line_index = { git = "https://github.com/biomejs/biome", rev = "8c43bc0b620e0db4ec841ae20756acedcead9599" }
+biome_rowan = { git = "https://github.com/biomejs/biome", rev = "8c43bc0b620e0db4ec841ae20756acedcead9599" }
+biome_text_size = { git = "https://github.com/biomejs/biome", rev = "8c43bc0b620e0db4ec841ae20756acedcead9599" }
 blake3 = "1.8.5"
 bus = "2.4.1"
 camino = "1.1"
