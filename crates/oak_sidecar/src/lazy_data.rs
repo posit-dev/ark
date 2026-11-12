@@ -37,6 +37,7 @@ pub fn read_object_names(r: &Path, rdata_files: &[PathBuf]) -> anyhow::Result<Ve
     let paths_arg = paths.path().to_string_lossy();
     let output = oak_r_process::run_text(r, SCRIPT, &oak_r_process::RunOptions {
         args: &[paths_arg.as_ref()],
+        timeout: Some(crate::R_TIMEOUT),
         ..Default::default()
     })?;
 

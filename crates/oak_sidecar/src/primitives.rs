@@ -75,6 +75,7 @@ fn key(version: &str, built: &str) -> String {
 fn populate(r: &Path, version: &str, dir: &Path) -> anyhow::Result<bool> {
     let output = oak_r_process::run_text(r, SCRIPT, &oak_r_process::RunOptions {
         args: &[version],
+        timeout: Some(crate::R_TIMEOUT),
         ..Default::default()
     })?;
 
