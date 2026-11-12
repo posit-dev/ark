@@ -287,14 +287,19 @@ impl SourceScheduler {
 
             let handler = Arc::clone(handler);
             let enabled_rx = self.enabled_tx.subscribe();
-            let tx = events_tx.clone();
 
             // An older fetch may still be in flight. Replacing its recorded
             // revision makes `finish()` discard its completion without cancelling it.
             self.state
                 .insert(package, (description_revision, SourceState::Pending));
 
-            pool.submit(move || {
+            let on_abort = Event::SourceCompleted(SourceCompleted {
+                package,
+                description_revision,
+                response: SourceResponse::Failure,
+            });
+
+            pool.submit_reporting(events_tx, on_abort, move || {
                 // Copy the value before fetching so the `borrow()` guard does
                 // not span `handle()`.
                 let enabled = *enabled_rx.borrow();
@@ -305,12 +310,11 @@ impl SourceScheduler {
                     SourceResponse::Skipped
                 };
 
-                tx.send(Event::SourceCompleted(SourceCompleted {
+                Event::SourceCompleted(SourceCompleted {
                     package,
                     description_revision,
                     response,
-                }))
-                .log_err();
+                })
             });
         }
     }
@@ -322,9 +326,9 @@ impl SourceScheduler {
     /// failed.
     ///
     /// A package not requested yet at its current revision counts as pending:
-    /// if a file uses it, the next tick-end scheduling queues it. A job that
-    /// panicked stays `Pending`, which costs only extra requests from an
-    /// editor that re-asks while the user types in an open completion popup.
+    /// if a file uses it, the next tick-end scheduling queues it. A fetch job
+    /// that panicked or never ran completes as [`SourceResponse::Failure`], so
+    /// it settles like any other failure.
     pub(crate) fn sources_may_arrive(
         &self,
         db: &dyn Db,

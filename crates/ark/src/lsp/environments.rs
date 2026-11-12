@@ -35,7 +35,6 @@ use oak_scan::is_environment_sentinel;
 use oak_scan::list_libraries;
 use oak_scan::DbScan;
 use oak_scan::LibraryListing;
-use stdext::result::ResultExt;
 
 use crate::lsp;
 use crate::lsp::io_pool::IoPool;
@@ -376,17 +375,22 @@ impl EnvironmentScheduler {
         self.jobs.insert(environment, JobState::Running);
 
         let resolver = self.resolver.as_ref().map(Arc::clone);
-        let guard = ResolutionFailureGuard {
+        let on_abort = Event::EnvironmentResolved(EnvironmentCompleted {
             environment,
-            events_tx: Some(events_tx.clone()),
-        };
-        pool.submit(move || {
+            result: Err(anyhow!(
+                "the library resolution job stopped before reporting a result"
+            )),
+        });
+        pool.submit_reporting(events_tx, on_abort, move || {
             let result = match (&resolver, request) {
                 (_, Err(err)) => Err(err),
                 (Some(resolver), Ok(request)) => resolver.resolve(&request),
                 (None, Ok(_)) => Err(anyhow!(NO_R_EXECUTABLE)),
             };
-            guard.complete(result);
+            Event::EnvironmentResolved(EnvironmentCompleted {
+                environment,
+                result,
+            })
         });
     }
 
@@ -464,47 +468,6 @@ fn environment_name(db: &OakDatabase, environment: Environment) -> String {
     match environment.dir(db) {
         Some(dir) => dir.to_string(),
         None => String::from("the default environment"),
-    }
-}
-
-/// Sends a completion even if the resolver panics or the pool drops the job
-/// without running it, so the scheduler can clear its pending entry.
-/// [`Self::complete()`] sends the normal result and disarms the guard.
-struct ResolutionFailureGuard {
-    environment: Environment,
-    events_tx: Option<TokioUnboundedSender<Event>>,
-}
-
-impl ResolutionFailureGuard {
-    fn complete(mut self, result: anyhow::Result<Vec<LibraryListing>>) {
-        let Some(events_tx) = self.events_tx.take() else {
-            return;
-        };
-        events_tx
-            .send(Event::EnvironmentResolved(EnvironmentCompleted {
-                environment: self.environment,
-                result,
-            }))
-            .log_err();
-    }
-}
-
-impl Drop for ResolutionFailureGuard {
-    fn drop(&mut self) {
-        let Some(events_tx) = self.events_tx.take() else {
-            return;
-        };
-        // Log with `log_err()`, not `lsp::log_error!`: the latter goes through
-        // the auxiliary channel, which can panic, and a panic in `drop()`
-        // while the job is already unwinding aborts the process.
-        events_tx
-            .send(Event::EnvironmentResolved(EnvironmentCompleted {
-                environment: self.environment,
-                result: Err(anyhow!(
-                    "the library resolution job stopped before reporting a result"
-                )),
-            }))
-            .log_err();
     }
 }
 

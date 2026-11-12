@@ -107,7 +107,7 @@ impl OakSidecarHandler {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(crate) struct SidecarRequest {
     packages: Vec<SidecarPackage>,
 }
@@ -256,14 +256,21 @@ impl SidecarScheduler {
         }
 
         let handler = Arc::clone(handler);
-        let guard = SidecarFailureGuard {
-            request: SidecarRequest { packages },
-            events_tx: Some(events_tx.clone()),
-        };
+        let request = SidecarRequest { packages };
 
-        pool.submit(move || {
-            let response = handler.handle(&guard.request);
-            guard.complete(response);
+        // Without a response, `finish()` records every requested package as
+        // failed at its requested revision.
+        let on_abort = Event::SidecarCompleted(SidecarCompleted {
+            request: request.clone(),
+            response: None,
+        });
+
+        pool.submit_reporting(events_tx, on_abort, move || {
+            let response = handler.handle(&request);
+            Event::SidecarCompleted(SidecarCompleted {
+                request,
+                response: Some(response),
+            })
         });
 
         covered
@@ -372,44 +379,6 @@ fn library_packages(db: &dyn Db) -> impl Iterator<Item = Package> + '_ {
         // for analysis, and `SidecarScheduler::finish()` would drop its facts.
         // Selecting it anyway would submit it again after every completion.
         .filter(|package| package.is_installed(db))
-}
-
-/// Sends a completion without a response if the handler panics or the pool
-/// drops the job without running it, so [`SidecarScheduler::finish()`] can
-/// clear pending state. [`Self::complete()`] sends the response and disarms
-/// the guard.
-struct SidecarFailureGuard {
-    request: SidecarRequest,
-    events_tx: Option<TokioUnboundedSender<Event>>,
-}
-
-impl SidecarFailureGuard {
-    fn complete(mut self, response: SidecarResponse) {
-        self.send(Some(response));
-    }
-
-    fn send(&mut self, response: Option<SidecarResponse>) {
-        let Some(events_tx) = self.events_tx.take() else {
-            return;
-        };
-        let request = std::mem::take(&mut self.request);
-
-        // `lsp::log_error!` uses the auxiliary channel, which can panic.
-        // Use `log_err()` to avoid a second panic during `drop()` while the
-        // handler is unwinding, which would abort the process.
-        events_tx
-            .send(Event::SidecarCompleted(SidecarCompleted {
-                request,
-                response,
-            }))
-            .log_err();
-    }
-}
-
-impl Drop for SidecarFailureGuard {
-    fn drop(&mut self) {
-        self.send(None);
-    }
 }
 
 impl SidecarRequest {

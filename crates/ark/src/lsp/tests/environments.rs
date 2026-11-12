@@ -486,7 +486,7 @@ async fn test_missing_r_fails_every_environment() {
     assert_eq!(library_paths(&state), Vec::<PathBuf>::new());
 }
 
-/// The job guard reports a generic failure after a resolver panic, allowing
+/// The pool's abort event reports a generic failure after a resolver panic, allowing
 /// the scheduler to settle.
 #[tokio::test]
 async fn test_resolver_panic_records_failure() {

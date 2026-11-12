@@ -306,7 +306,7 @@ async fn test_failed_package_is_retried_only_at_new_revision() {
     assert!(!may_change(&state, "withdata"));
 }
 
-/// A panicking handler sends no response. The job's guard reports the batch
+/// A panicking handler sends no response. The pool's abort event reports the batch
 /// as failed, so its packages settle instead of staying pending.
 #[tokio::test]
 async fn test_panicking_handler_is_reported_as_failed() {

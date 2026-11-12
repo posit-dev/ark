@@ -1414,64 +1414,19 @@ fn classify_event_unwind(payload: panic::PanicPayload) -> EventUnwind {
 /// [`ScanRequest::run`] and ships the [`ScanCompleted`] back to the main loop as
 /// [`Event::OakScanCompleted`], where the scheduler then applies it.
 ///
-/// [`ScanFailureGuard`] reports [`Event::OakScanFailed`] if a job panics or
-/// is dropped before running. Without that notification, the root would remain
-/// `Scanning`, preventing buffered watcher events under it from applying.
+/// A scan that panics or never runs reports [`Event::OakScanFailed`]. Without
+/// that notification, the root would remain `Scanning`, preventing buffered
+/// watcher events under it from applying.
 pub(super) fn dispatch_scan_requests(
     pool: &IoPool,
     events_tx: &TokioUnboundedSender<Event>,
     requests: Vec<ScanRequest>,
 ) {
     for req in requests {
-        pool.submit(scan_job(req, events_tx));
-    }
-}
-
-/// The pool job for one scan. Dropping it before it runs, or panicking inside
-/// [`ScanRequest::run()`], sends [`Event::OakScanFailed`]. Running it to
-/// completion sends only [`Event::OakScanCompleted`].
-fn scan_job(
-    req: ScanRequest,
-    events_tx: &TokioUnboundedSender<Event>,
-) -> impl FnOnce() + Send + 'static {
-    let guard = ScanFailureGuard {
-        root: req.root,
-        events_tx: Some(events_tx.clone()),
-    };
-    move || guard.complete(req.run())
-}
-
-/// Report scan failure if the job is dropped before [`ScanRequest::run()`]
-/// returns. Capturing the guard in the job covers both panic unwinding and
-/// cancellation before execution. A successful scan reports through
-/// [`Self::complete()`] instead.
-struct ScanFailureGuard {
-    root: Root,
-    events_tx: Option<TokioUnboundedSender<Event>>,
-}
-
-impl ScanFailureGuard {
-    /// Send [`Event::OakScanCompleted`] in place of the failure report.
-    fn complete(mut self, scan: ScanCompleted) {
-        let Some(events_tx) = self.events_tx.take() else {
-            return;
-        };
-        events_tx.send(Event::OakScanCompleted(scan)).log_err();
-    }
-}
-
-impl Drop for ScanFailureGuard {
-    fn drop(&mut self) {
-        let Some(events_tx) = self.events_tx.take() else {
-            return;
-        };
-        // Failure reporting can race with main-loop shutdown. Once the receiver
-        // is gone, no scheduler remains to recover the root.
-        //
-        // Log with `log_err()`, not `lsp::log_error!`: the latter goes through
-        // the auxiliary channel, which can panic, and a panic in `drop()` while
-        // the scan job is already unwinding aborts the process.
-        events_tx.send(Event::OakScanFailed(self.root)).log_err();
+        let on_abort = Event::OakScanFailed(req.root);
+        pool.submit_reporting(events_tx, on_abort, move || {
+            Event::OakScanCompleted(req.run())
+        });
     }
 }
 
@@ -1829,12 +1784,7 @@ mod tests {
     use std::time::Instant;
 
     use aether_path::FilePath;
-    use oak_db::OakDatabase;
-    use oak_db::Root;
-    use oak_db::RootKind;
     use oak_scan::DbScan;
-    use oak_scan::ScanRequest;
-    use oak_scan::ScanScheduler;
     use serde_json::Value;
     use tower_lsp_server::jsonrpc;
     use url::Url;
@@ -1843,7 +1793,6 @@ mod tests {
     use super::init_aux_for_test;
     use super::register_auxiliary_tx;
     use super::respond;
-    use super::scan_job;
     use super::send_auxiliary;
     use super::tokio_unbounded_channel;
     use super::AuxiliaryEvent;
@@ -1855,7 +1804,6 @@ mod tests {
     use super::GlobalState;
     use super::LspServiceContext;
     use super::LspState;
-    use super::ScanFailureGuard;
     use super::MAX_REFRESH_DELAY;
     use crate::lsp::backend::LspError;
     use crate::lsp::backend::LspMessage;
@@ -1868,7 +1816,6 @@ mod tests {
     use crate::lsp::harness::editor::notifications::did_open;
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
-    use crate::panic::Recovery;
 
     #[tokio::test]
     async fn test_background_panic_is_reported_once_per_session() {
@@ -2062,93 +2009,6 @@ mod tests {
             WorldState::default(),
             LspState::new(tokio_unbounded_channel().0),
         )
-    }
-
-    fn scan_failure_guard() -> (
-        ScanFailureGuard,
-        Root,
-        tokio::sync::mpsc::UnboundedReceiver<Event>,
-    ) {
-        let db = OakDatabase::new();
-        let path = FilePath::from_path_buf(std::env::temp_dir()).unwrap();
-        let root = Root::new(
-            &db,
-            path,
-            RootKind::Workspace,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        );
-        let (events_tx, events_rx) = tokio_unbounded_channel::<Event>();
-        let guard = ScanFailureGuard {
-            root,
-            events_tx: Some(events_tx),
-        };
-        (guard, root, events_rx)
-    }
-
-    fn scan_request() -> (ScanRequest, tempfile::TempDir) {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut db = OakDatabase::new();
-        let mut scheduler = ScanScheduler::new();
-        let requests = scheduler.set_workspace_paths(&mut db, &[tmp.path().to_path_buf()]);
-        let request = requests.into_iter().next().unwrap();
-        (request, tmp)
-    }
-
-    #[test]
-    fn test_scan_job_reports_failure_when_dropped() {
-        let (request, _tmp) = scan_request();
-        let root = request.root;
-        let (events_tx, mut events_rx) = tokio_unbounded_channel::<Event>();
-
-        drop(scan_job(request, &events_tx));
-
-        let Ok(Event::OakScanFailed(failed)) = events_rx.try_recv() else {
-            panic!("Expected `OakScanFailed`");
-        };
-        assert_eq!(failed, root);
-        assert!(events_rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn test_scan_job_reports_only_completion_when_run() {
-        let (request, _tmp) = scan_request();
-        let (events_tx, mut events_rx) = tokio_unbounded_channel::<Event>();
-
-        scan_job(request, &events_tx)();
-
-        let Ok(Event::OakScanCompleted(_)) = events_rx.try_recv() else {
-            panic!("Expected `OakScanCompleted`");
-        };
-        assert!(events_rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn test_scan_failure_guard_reports_panicked_job() {
-        let (guard, root, mut events_rx) = scan_failure_guard();
-        let job = move || {
-            let _guard = guard;
-            panic!("Test panic in a scan job");
-        };
-
-        assert!(crate::panic::catch_unwind(Recovery::Always, job).is_err());
-        let Ok(Event::OakScanFailed(failed)) = events_rx.try_recv() else {
-            panic!("Expected `OakScanFailed`");
-        };
-        assert_eq!(failed, root);
-    }
-
-    #[test]
-    fn test_scan_failure_guard_reports_dropped_job() {
-        let (guard, root, mut events_rx) = scan_failure_guard();
-        let job = move || drop(guard);
-
-        drop(job);
-        let Ok(Event::OakScanFailed(failed)) = events_rx.try_recv() else {
-            panic!("Expected `OakScanFailed`");
-        };
-        assert_eq!(failed, root);
     }
 
     #[test]

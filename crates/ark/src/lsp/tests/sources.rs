@@ -917,6 +917,60 @@ async fn test_failed_source_is_not_retried() {
     )]);
 }
 
+/// A fetch that panics settles as a failure instead of leaving its package
+/// pending, so answers that depend on its sources can complete.
+#[tokio::test]
+async fn test_panicking_fetch_settles_as_failed() {
+    let _aux = init_aux_for_test();
+
+    let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
+        String::from("donor"),
+        TestBehavior::Panic,
+    )])));
+
+    let lib = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("donor")
+        .version("0.0.0")
+        .built("dummy")
+        .write_installed(&lib.path().join("donor"));
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        world_with_source_fetching(db),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(source_scheduler_for_test(handler.clone()))
+            .with_environment_scheduler(fixed_environments(&[lib.path()])),
+    );
+
+    let workspace = tempfile::tempdir().unwrap();
+    let myproj = workspace.path().join("myproj");
+    DescriptionWriter::new()
+        .package("myproj")
+        .version("0.0.0")
+        .write(&myproj);
+    write_sources(&myproj.join("R"), &[("use.R", "donor::foo()\n")]);
+
+    state
+        .handle_event_to_quiescence(did_change_workspace_folders(workspace.path()))
+        .await;
+
+    assert_eq!(dispatched_names(handler.calls()), vec![String::from(
+        "donor"
+    )]);
+    assert!(!state.lsp_state().source_scheduler.has_pending());
+
+    let db = state.world().db();
+    let donor = db.package_by_name("donor").unwrap();
+    assert!(!state.lsp_state().source_scheduler.sources_may_arrive(
+        db,
+        &state.world().config.oak,
+        donor
+    ));
+}
+
 /// A late source result for a removed package must not replace the sources a
 /// reinstall has already ingested at the same paths. The reinstall reuses the
 /// `Package` by `DESCRIPTION` path, so the late result is told apart by its

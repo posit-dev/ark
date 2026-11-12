@@ -222,9 +222,10 @@ async fn test_main_loop_write_survives_saturated_source_pool() {
     drop(releases);
 }
 
-/// `settle()` must report a worker panic while waiting because the missing
-/// `SourceCompleted` event leaves the source scheduler permanently pending. The
-/// timeout ensures that failing to observe the report does not hang the test.
+/// `settle()` must report a worker panic. The pool reports the panic before it
+/// sends the failed `SourceCompleted` that lets the source scheduler settle, so
+/// `settle()` sees the report before it can return. The timeout ensures that a
+/// regression does not hang the test.
 #[tokio::test]
 #[should_panic(expected = "background failure")]
 async fn test_settle_reports_a_panicking_source_worker() {
