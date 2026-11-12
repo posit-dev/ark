@@ -56,11 +56,11 @@ We prefer using the ragg device if it is available, as it is cheaper and has bet
 
 # Device interactivity
 
-Certain plotting functions like `stats:::plot.lm()` or `demo(graphics)` will draw multiple plots in a row, pausing for the user to hit enter before advancing to the next page. This requires a few things to work properly:
+Certain plotting functions like `stats:::plot.lm()` or `demo(graphics)` will draw multiple plots in a row, pausing for the user to hit enter before advancing to the next page. In console and background sessions, this requires a few things to work properly:
 
 -   Internally, `ARK_GRAPHICS_DEVICE_NAME` is set to `".ark.graphics.device"`, which matches the name of a function we expose named `.ark.graphics.device()`, which is in charge of creating a new Ark graphics device and is findable by `get0(".ark.graphics.device", globalenv(), inherits = TRUE)`.
 
--   `grDevices::deviceIsInteractive(ARK_GRAPHICS_DEVICE_NAME)` must be called during startup to "register" ourselves as a known interactive graphics device.
+-   `grDevices::deviceIsInteractive(ARK_GRAPHICS_DEVICE_NAME)` must be called during startup to "register" ourselves as a known interactive graphics device. `init_graphics_device()` does this, except in notebook mode (see below).
 
 -   `options(device = ARK_GRAPHICS_DEVICE_NAME)` must be called during startup so that:
 
@@ -70,13 +70,19 @@ Certain plotting functions like `stats:::plot.lm()` or `demo(graphics)` will dra
 
 -   When we send Positron a notification about a new plot, we *also* send along an initial version of that plot to show the user. Even if our dimensions are wrong, this allows Positron to show the user a plot after each `Enter` keypress, where ark is otherwise paused waiting for the user to do something and cannot handle a render request.
 
-With all of that in place:
+With all of that in place, in console and background sessions:
 
 -   `grDevices::dev.interactive(orNone = TRUE)` should always return `TRUE`, even in a fresh session when the current device is technically `"null device"`.
 
 -   `grDevices::dev.interactive()` should return `TRUE` after you've created your first plot (before then, the device is `"null device"` and this returns `FALSE`, this matches RStudio).
 
     -   This is used in the default value of the `ask` argument of `stats:::plot.lm()` and by the time `ask` is evaluated our device has been created so this returns `TRUE` there as intended.
+
+In notebook mode (Jupyter notebooks and Quarto inline output), we do not register the device as interactive. A notebook frontend has no good way to answer the "Hit <Return> to see next plot" prompt, so the user would only see the last page (posit-dev/positron#14534). This matches IRkernel, which also uses a non-interactive device. As a result, in notebook mode:
+
+-   `grDevices::dev.interactive()` and `grDevices::dev.interactive(orNone = TRUE)` return `FALSE`, even after the first plot.
+
+-   `stats:::plot.lm()` and similar functions draw every page without a prompt, and each page is sent to the frontend as its own `display_data` message.
 
 Note that with this approach, a motivated user can still set `options(device = "quartz")` in their `.Rprofile` if they'd like to use their own default graphics device rather than the one that comes with ark / Positron.
 
