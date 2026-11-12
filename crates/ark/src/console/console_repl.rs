@@ -550,7 +550,7 @@ impl Console {
 
         // R-side graphics device initialization. The `DeviceContext`
         // itself is already created as part of `Console::new()`.
-        graphics_device::init_graphics_device();
+        graphics_device::init_graphics_device(console.session_mode);
 
         // Now that R has started and libr and ark have fully initialized, run site and user
         // level R profiles, in that order

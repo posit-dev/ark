@@ -229,3 +229,52 @@ fn test_notebook_ignores_plot_render_settings() {
         |result| assert_eq!(result, "[1] TRUE"),
     );
 }
+
+#[test]
+fn test_notebook_graphics_device_is_not_interactive() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // In notebooks, the Ark device is not an interactive device. Otherwise
+    // `plot.lm()` and others prompt "Hit <Return> to see next plot" between
+    // pages, and a notebook frontend has no good way to answer
+    // (posit-dev/positron#14534).
+    let code = "x <- .ark.graphics.device(); grDevices::dev.interactive()";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] FALSE");
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
+fn test_notebook_plot_lm_shows_all_pages_without_prompting() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // Allow stdin, so that a "Hit <Return>" prompt would block on an input
+    // request instead of failing silently
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
+
+    let code = "plot(lm(dist ~ speed, data = cars))";
+    frontend.send_execute_request(code, options);
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // One plot per diagnostic page, with no prompt in between
+    let ids: Vec<String> = (0..4)
+        .map(|_| frontend.recv_iopub_display_data_id())
+        .collect();
+    let unique: std::collections::HashSet<&String> = ids.iter().collect();
+    assert_eq!(unique.len(), 4);
+
+    // The last page is completed after its first snapshot
+    frontend.recv_iopub_update_display_data();
+
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}

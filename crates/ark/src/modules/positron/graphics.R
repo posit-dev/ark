@@ -440,11 +440,11 @@ finalize_device_arguments <- function(format, width, height, pixel_ratio) {
     stop("Internal error: Unknown plot `format`.")
 }
 
-#' Default OS resolution in PPI (pixels per inch)
+#' Default screen resolution in PPI (pixels per inch)
 #'
-#' Thomas thinks these are "more correct than any other numbers." Specifically,
-#' macOS uses 96 DPI for its internal scaling, but this is user definable on
-#' Windows.
+#' 96 on all platforms, which is the logical screen DPI at 100% display scaling
+#' and matches RStudio. High-DPI displays are handled separately through
+#' `pixel_ratio`.
 #'
 #' This corresponds to a scaling factor that tries to make things that appear
 #' "on screen" be as close to the size in which they are actually printed at,
