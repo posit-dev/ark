@@ -9,14 +9,8 @@ use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
 use base64::prelude::*;
 
-/// Default DPI for the current OS, matching the constant in graphics_device.rs.
-fn default_dpi() -> f64 {
-    if cfg!(target_os = "macos") {
-        96.0
-    } else {
-        72.0
-    }
-}
+/// Default DPI, matching the constant in graphics_device.rs.
+const DEFAULT_DPI: f64 = 96.0;
 
 /// Extract pixel dimensions (width, height) from base64-encoded PNG data.
 fn png_dimensions(base64_data: &str) -> (u32, u32) {
@@ -693,10 +687,9 @@ fn test_plot_with_fig_size_metadata() {
         .expect("display_data should contain image/png");
     let (width, height) = png_dimensions(png_data);
 
-    let dpi = default_dpi();
     // 5 inches * DPI, 4 inches * DPI
-    assert_eq!(width, (5.0 * dpi).round() as u32);
-    assert_eq!(height, (4.0 * dpi).round() as u32);
+    assert_eq!(width, (5.0 * DEFAULT_DPI).round() as u32);
+    assert_eq!(height, (4.0 * DEFAULT_DPI).round() as u32);
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
@@ -728,10 +721,9 @@ fn test_plot_with_lone_fig_width_metadata() {
         .expect("display_data should contain image/png");
     let (width, height) = png_dimensions(png_data);
 
-    let dpi = default_dpi();
     // 2 inches * DPI, 5 inches (default) * DPI
-    assert_eq!(width, (2.0 * dpi).round() as u32);
-    assert_eq!(height, (5.0 * dpi).round() as u32);
+    assert_eq!(width, (2.0 * DEFAULT_DPI).round() as u32);
+    assert_eq!(height, (5.0 * DEFAULT_DPI).round() as u32);
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
@@ -763,10 +755,9 @@ fn test_plot_with_lone_fig_height_metadata() {
         .expect("display_data should contain image/png");
     let (width, height) = png_dimensions(png_data);
 
-    let dpi = default_dpi();
     // 7 inches (default) * DPI, 2 inches * DPI
-    assert_eq!(width, (7.0 * dpi).round() as u32);
-    assert_eq!(height, (2.0 * dpi).round() as u32);
+    assert_eq!(width, (7.0 * DEFAULT_DPI).round() as u32);
+    assert_eq!(height, (2.0 * DEFAULT_DPI).round() as u32);
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
@@ -797,9 +788,8 @@ fn test_plot_with_pixel_ratio_reports_logical_size_in_metadata() {
         .expect("display_data should contain image/png");
     let (width, height) = png_dimensions(png_data);
 
-    let dpi = default_dpi();
-    let logical_width = (4.0 * dpi).round() as u32;
-    let logical_height = (3.0 * dpi).round() as u32;
+    let logical_width = (4.0 * DEFAULT_DPI).round() as u32;
+    let logical_height = (3.0 * DEFAULT_DPI).round() as u32;
 
     // A 2x pixel ratio doubles the PNG's physical dimensions.
     assert_eq!(width, logical_width * 2);
@@ -892,9 +882,8 @@ fn test_render_intrinsic_size_uses_high_dpi() {
     };
     let (width, height) = png_dimensions(&result.data);
 
-    // 4x2 inches at the intrinsic render DPI (192), independent of the OS base
-    // screen DPI. Before the fix this rendered at 288x144 (4x2 in at 72 DPI on
-    // Linux) or 384x192 (at 96 DPI on macOS).
+    // 4x2 inches at the intrinsic render DPI (192), independent of the base
+    // screen DPI. Before the fix this rendered at 384x192 (4x2 in at 96 DPI).
     assert_eq!((width, height), (768, 384));
 }
 
