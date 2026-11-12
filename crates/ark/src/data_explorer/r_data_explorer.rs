@@ -205,7 +205,8 @@ pub struct RDataExplorer {
     view_indices: Option<Vec<i32>>,
 
     /// Environment where `.ps.filter_rows` caches the display strings the
-    /// global search computes. R manages its contents.
+    /// global search computes. R invalidates it; it is replaced when no
+    /// search is active.
     search_cache: RObject,
 
     /// The number of leading candidate rows the global search scanned, when
@@ -772,6 +773,9 @@ impl RDataExplorer {
     // fail during the computation.
     fn row_filters_compute(&mut self) -> anyhow::Result<(Option<Vec<i32>>, Option<bool>)> {
         self.global_search_rows_scanned = None;
+        if self.global_search().is_none() {
+            self.search_cache = Environment::new_empty().into();
+        }
 
         if self.row_filters.is_empty() {
             return Ok((None, None));

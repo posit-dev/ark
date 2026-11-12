@@ -209,8 +209,6 @@ col_filter_indices <- function(col, idx = NULL) {
                 e$message
             }
         )
-    } else {
-        rm(list = ls(search_cache), envir = search_cache)
     }
 
     # Return the indices of the rows that pass all filters
@@ -257,9 +255,14 @@ col_filter_indices <- function(col, idx = NULL) {
         }
         col <- .ps.get_column(table, j)
         text <- function() {
-            # Formatted text is cached only when `max_cells` bounds its size
-            if (!limited || .ps.is_plain_text(col)) {
+            if (.ps.is_plain_text(col)) {
                 return(.ps.displayed_text(col, rows[pending]))
+            }
+            # `format()` output can depend on the whole vector, so all `rows`
+            # are formatted. The text is cached only when `max_cells` bounds
+            # its size.
+            if (!limited) {
+                return(.ps.displayed_text(col, rows)[pending])
             }
             key <- if (j == 0L) "row_names" else paste0("col_", j)
             if (is.null(cache$text[[key]])) {

@@ -3367,6 +3367,21 @@ fn test_global_search_cache_data_change() {
 }
 
 #[test]
+fn test_global_search_formats_all_rows() {
+    // Row 2 matches on `a`, leaving only the midnight time in row 1 to search.
+    // Formatted alone it would drop its time, but it is displayed with it.
+    let setup = TestSetup::from_expression(
+        "data.frame(
+            a = c('q', '00:00 note'),
+            t = as.POSIXct(c('2021-01-01 00:00:00', '2021-01-01 12:00:00'), tz = 'UTC')
+        )",
+        None,
+    )
+    .unwrap();
+    assert_global_search_rows(&setup, "00:00", 2);
+}
+
+#[test]
 fn test_global_search_matches() {
     let setup = TestSetup::from_expression(
         "data.frame(a = c('foo', 'bar', 'foo bar'), b = c(1, 2, 3))",
