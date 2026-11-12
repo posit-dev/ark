@@ -985,13 +985,10 @@ impl From<&PlotId> for RObject {
 }
 
 /// Default DPI for converting inches to pixels.
-/// Matches R's default: 96 on macOS, 72 on Linux/Windows.
+/// Matches the logical screen DPI at 100% display scaling on all platforms, and
+/// matches RStudio. High-DPI scaling is applied separately via `pixel_ratio`.
 /// See `default_resolution_in_pixels_per_inch()` in graphics.R.
-const DEFAULT_DPI: f64 = if cfg!(target_os = "macos") {
-    96.0
-} else {
-    72.0
-};
+const DEFAULT_DPI: f64 = 96.0;
 
 /// Default aspect ratio (width:height) used when only output_width_px is provided.
 const DEFAULT_ASPECT_RATIO: f64 = 4.0 / 3.0;
