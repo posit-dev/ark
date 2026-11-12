@@ -135,13 +135,25 @@ pub trait DbScan: Db + DbInputs {
     /// [`OrphanRoot`](oak_db::OrphanRoot) if no other live container lists them.
     fn set_package_sources(&mut self, package: Package, directory: &Path);
 
-    /// Replace generated files with the `.R` files directly under `directory`,
-    /// such as `base`'s primitive stubs. In [`Package::files()`], they follow all
-    /// source files and are ordered by basename.
+    /// Store `package`'s host-supplied facts for its current `DESCRIPTION`
+    /// revision, and record that revision as [`Package::facts_revision()`].
     ///
-    /// `Collate:` does not apply to generated files. Source files and
-    /// [`Package::scripts`] are preserved, so either ingestion job can finish first.
-    fn set_package_generated_files(&mut self, package: Package, directory: &Path);
+    /// The caller must supply facts for the current revision. Generated files
+    /// are replaced with the `.R` files directly under `generated` (such as
+    /// `base`'s primitive stubs), or cleared when it is `None`. In
+    /// [`Package::files()`], they follow all source files and are ordered by
+    /// basename. `Collate:` does not apply to generated files. Lazy data names
+    /// are replaced with `lazy_data`. Source files and [`Package::scripts()`]
+    /// are preserved, so either ingestion job can finish first.
+    ///
+    /// Open buffers among the dropped generated files stay visible through
+    /// [`OrphanRoot`](oak_db::OrphanRoot) if no other live container lists them.
+    fn set_package_facts(
+        &mut self,
+        package: Package,
+        generated: Option<&Path>,
+        lazy_data: Vec<String>,
+    );
 }
 
 impl<DB: Db + DbInputs> DbScan for DB {
@@ -232,21 +244,49 @@ impl<DB: Db + DbInputs> DbScan for DB {
         keep_open_files_visible(self);
     }
 
-    fn set_package_generated_files(&mut self, package: Package, directory: &Path) {
-        // Generated bindings must be indexed even though `Collate:` omits them.
-        let (generated, _) = read_package_sources(directory, None);
-        let mut upserts = FileUpserts::new();
+    fn set_package_facts(
+        &mut self,
+        package: Package,
+        generated: Option<&Path>,
+        lazy_data: Vec<String>,
+    ) {
+        let previous = package.files(self).to_vec();
+        match generated {
+            Some(directory) => set_generated_files_from(self, package, directory),
+            None => replace_package_membership(self, package, |db| {
+                package.set_generated_files(db, Vec::new())
+            }),
+        }
+        package.set_lazy_data(self, lazy_data);
 
-        let generated: Vec<File> = generated
-            .into_iter()
-            .map(|entry| upserts.upsert(self, Some(package), entry))
-            .collect();
+        // The LSP drops facts computed for an older `DESCRIPTION` revision
+        // (`SidecarScheduler::finish()`), so these facts are for the current one.
+        let revision = Some(package.description_revision(self));
+        if package.facts_revision(self) != revision {
+            package.set_facts_revision(self).to(revision);
+        }
 
-        replace_package_membership(self, package, |db| {
-            package.set_generated_files(db, generated)
-        });
-        upserts.finish(self);
+        // If membership is unchanged, no open buffer lost visibility. Avoid
+        // revalidating `file_by_path()` for every open buffer after writing
+        // `Package::facts_revision()` in that case.
+        if package.files(self) != previous.as_slice() {
+            keep_open_files_visible(self);
+        }
     }
+}
+
+fn set_generated_files_from<DB: Db + DbInputs>(db: &mut DB, package: Package, directory: &Path) {
+    // Generated bindings must be indexed even though `Collate:` omits them.
+    let (generated, _) = read_package_sources(directory, None);
+    let mut upserts = FileUpserts::new();
+
+    let generated: Vec<File> = generated
+        .into_iter()
+        .map(|entry| upserts.upsert(db, Some(package), entry))
+        .collect();
+
+    replace_package_membership(db, package, |db| package.set_generated_files(db, generated));
+    upserts.finish(db);
 }
 
 fn set_package_source_entries<DB: Db + DbInputs>(

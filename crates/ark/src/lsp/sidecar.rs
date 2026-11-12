@@ -1,16 +1,20 @@
 //! Package facts computed by a separate R process, without using the user's session.
 //!
-//! One job runs per LSP session, independently of the per-package source fetches
-//! in [`crate::lsp::sources`]. It needs no network and is not gated by
+//! Batches request facts for library packages whose [`Package::facts_revision()`]
+//! differs from their current `DESCRIPTION` revision, unless a request failed
+//! at that revision. Jobs need no network and run independently of source
+//! fetches in [`crate::lsp::sources`], regardless of
 //! `oak.sourceFetching.enabled` or the outcome of a source fetch.
-//! For installed `base`, it supplies primitive stubs as generated files in
-//! [`Package::files()`]. For installed packages with lazy data, it supplies
+//! For installed `base`, they supply primitive stubs as generated files in
+//! [`Package::files()`]. For installed packages with lazy data, they supply
 //! the object names that `pkg::` lists through [`Package::lazy_data()`].
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use oak_db::Db;
+use oak_db::FileRevision;
 use oak_db::Package;
 use oak_sidecar::lazy_data;
 use oak_sidecar::primitives::PrimitivesCache;
@@ -103,7 +107,7 @@ impl OakSidecarHandler {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct SidecarRequest {
     packages: Vec<SidecarPackage>,
 }
@@ -112,6 +116,9 @@ pub(crate) struct SidecarRequest {
 #[derive(Debug, Clone)]
 pub(crate) struct SidecarPackage {
     package: Package,
+
+    /// The `DESCRIPTION` revision the facts are requested for.
+    description_revision: FileRevision,
 
     /// The build fields that key the primitive-stub cache. `Some` only for
     /// `base`.
@@ -143,113 +150,274 @@ pub(crate) struct PackageFacts {
     pub(crate) primitive_stubs: Option<PathBuf>,
 
     /// Lazy data object names, in any order. `None` if no index was requested
-    /// or the batch read failed. An unreadable index gives `Some` with no names.
+    /// or the batch read failed. An unreadable index gives `Some` with no names
+    /// and counts as an answered lazy data request.
     pub(crate) lazy_data: Option<Vec<String>>,
 }
 
+#[derive(Debug)]
+pub(crate) struct SidecarCompleted {
+    /// Retained so [`SidecarScheduler::finish()`] can reject stale revisions
+    /// and detect missing facts, even when there is no response.
+    pub(crate) request: SidecarRequest,
+
+    /// `None` when the job stopped before reporting a response.
+    pub(crate) response: Option<SidecarResponse>,
+}
+
+/// Request state for a [`Package`] at one `DESCRIPTION` revision.
+/// Ingested facts are recorded in the database as [`Package::facts_revision()`].
 enum SidecarState {
-    /// The job starts at the end of the first main-loop tick, after the library
-    /// scan in [`super::main_loop::GlobalState::new()`] has registered packages.
-    NotStarted,
+    Pending,
 
-    /// The job is in flight and can change these packages.
-    Running(Vec<Package>),
-
-    /// The response has arrived, or there was nothing to compute.
-    Finished,
+    /// Missing requested facts prevent retries at the same `DESCRIPTION` revision.
+    Failed,
 }
 
 pub(crate) struct SidecarScheduler {
     handler: Option<Arc<dyn SidecarHandler>>,
-    state: SidecarState,
+
+    /// Retains at most one revision per package. All [`SidecarState::Pending`]
+    /// entries belong to the same batch, so any pending entry blocks another
+    /// batch from starting.
+    state: HashMap<Package, (FileRevision, SidecarState)>,
 }
 
 impl SidecarScheduler {
-    /// With no `handler`, the job never runs.
+    /// With no `handler`, no batch ever runs.
     pub(crate) fn new(handler: Option<Arc<dyn SidecarHandler>>) -> Self {
         Self {
             handler,
-            state: SidecarState::NotStarted,
+            state: HashMap::new(),
         }
     }
 
-    /// Submit at most one job per scheduler, returning its facts through
-    /// [`Event::SidecarCompleted`].
+    /// Submit a batch on `pool` for library packages not covered by
+    /// [`Package::facts_revision()`] and not pending or failed at their current
+    /// `DESCRIPTION` revision. Results arrive as [`Event::SidecarCompleted`]
+    /// for [`Self::finish()`] to validate before ingestion.
+    ///
+    /// Includes packages shadowed by an earlier library in R's library search
+    /// order. At most one batch runs at a time. Packages needing facts that
+    /// appear or change during a batch wait for the next batch.
+    ///
+    /// Returns packages with no facts to request, even while a batch is in
+    /// flight. The caller must record them as covered with empty facts so
+    /// answers that depend on them can settle without waiting for R.
+    /// With no handler, submits nothing and returns no packages.
+    ///
     /// The job owns no database handle, so waiting for R cannot block a
     /// main-loop write that needs exclusive database access.
-    pub(crate) fn start(
+    #[must_use]
+    pub(crate) fn schedule(
         &mut self,
         db: &dyn Db,
         pool: &IoPool,
         events_tx: &TokioUnboundedSender<Event>,
-    ) {
-        if !matches!(self.state, SidecarState::NotStarted) {
-            return;
-        }
+    ) -> Vec<Package> {
         let Some(handler) = &self.handler else {
-            return;
+            return Vec::new();
         };
 
-        let request = SidecarRequest::from_db(db);
-        if request.packages.is_empty() {
-            self.state = SidecarState::Finished;
-            return;
+        let in_flight = self.has_pending();
+
+        let mut covered = Vec::new();
+        let mut packages = Vec::new();
+
+        for package in library_packages(db) {
+            let description_revision = package.description_revision(db);
+
+            if package.facts_revision(db) == Some(description_revision) {
+                continue;
+            }
+            if self
+                .state
+                .get(&package)
+                .is_some_and(|(revision, _)| *revision == description_revision)
+            {
+                continue;
+            }
+
+            let Some(sidecar_package) = SidecarPackage::from_package(db, package) else {
+                covered.push(package);
+                continue;
+            };
+            if in_flight {
+                continue;
+            }
+
+            self.state
+                .insert(package, (description_revision, SidecarState::Pending));
+            packages.push(sidecar_package);
         }
 
-        let packages = request
-            .packages
-            .iter()
-            .map(|package| package.package)
-            .collect();
-        self.state = SidecarState::Running(packages);
+        if packages.is_empty() {
+            return covered;
+        }
 
         let handler = Arc::clone(handler);
-        let tx = events_tx.clone();
+        let guard = SidecarFailureGuard {
+            request: SidecarRequest { packages },
+            events_tx: Some(events_tx.clone()),
+        };
+
         pool.submit(move || {
-            let response = handler.handle(&request);
-            tx.send(Event::SidecarCompleted(response)).log_err();
+            let response = handler.handle(&guard.request);
+            guard.complete(response);
         });
+
+        covered
     }
 
-    /// Whether the running job can still change `package`. If the job panics,
-    /// no response arrives to clear `Running`, so its completion lists remain
-    /// incomplete and test pumps keep waiting for the job.
-    pub(crate) fn may_change(&self, package: Package) -> bool {
-        match &self.state {
-            SidecarState::Running(packages) => packages.contains(&package),
-            SidecarState::NotStarted | SidecarState::Finished => false,
+    /// Whether facts can still arrive and change an answer for `package`.
+    /// Returns `false` if there is no handler, the package is outside library
+    /// roots, or its current `DESCRIPTION` revision is covered by
+    /// [`Package::facts_revision()`] or recorded as failed.
+    ///
+    /// Waiting for a batch counts too. A package with no facts to compute
+    /// returns `true` until the caller records coverage from [`Self::schedule()`].
+    pub(crate) fn may_change(&self, db: &dyn Db, package: Package) -> bool {
+        if self.handler.is_none() || !package.is_installed(db) {
+            return false;
         }
+
+        let description_revision = package.description_revision(db);
+        if package.facts_revision(db) == Some(description_revision) {
+            return false;
+        }
+
+        !matches!(
+            self.state.get(&package),
+            Some((revision, SidecarState::Failed)) if *revision == description_revision
+        )
     }
 
-    /// Record that the job's response arrived. The caller ingests its facts.
-    pub(crate) fn finish(&mut self) {
-        self.state = SidecarState::Finished;
+    /// Return complete facts for packages still installed at the requested
+    /// `DESCRIPTION` revision. The caller must ingest them and record
+    /// [`Package::facts_revision()`] before scheduling again.
+    ///
+    /// Completions without a matching scheduler entry are ignored, so they
+    /// cannot settle a request for a different revision. For matching entries,
+    /// changed or removed packages are dropped and their entries cleared.
+    /// They can be requested again if installed and still needing facts.
+    ///
+    /// If any requested fact is missing, record failure at the requested
+    /// revision instead of returning partial facts. This also handles jobs
+    /// that stop without a response.
+    #[must_use]
+    pub(crate) fn finish(&mut self, db: &dyn Db, completed: SidecarCompleted) -> Vec<PackageFacts> {
+        let SidecarCompleted { request, response } = completed;
+
+        let mut facts: HashMap<Package, PackageFacts> = response
+            .into_iter()
+            .flat_map(|response| response.packages)
+            .map(|facts| (facts.package, facts))
+            .collect();
+
+        let mut ingested = Vec::new();
+
+        for requested in request.packages {
+            let package = requested.package;
+            let description_revision = requested.description_revision;
+
+            let Some((recorded, _)) = self.state.get(&package) else {
+                continue;
+            };
+            if *recorded != description_revision {
+                continue;
+            }
+            self.state.remove(&package);
+
+            if package.description_revision(db) != description_revision {
+                continue;
+            }
+
+            // Do not restore generated files after removal or eviction cleared
+            // the package's files and coverage.
+            if !package.is_installed(db) {
+                continue;
+            }
+
+            match facts
+                .remove(&package)
+                .filter(|facts| requested.is_answered_by(facts))
+            {
+                Some(facts) => ingested.push(facts),
+                None => {
+                    self.state
+                        .insert(package, (description_revision, SidecarState::Failed));
+                },
+            }
+        }
+
+        ingested
     }
 
-    /// Test pumps must check this separately from analysis-pool counters,
-    /// which do not include the sidecar job.
-    #[cfg(any(test, feature = "testing"))]
+    /// Whether a batch is in flight. Test pumps must check this separately
+    /// from analysis-pool counters, which do not include the sidecar job.
     pub(crate) fn has_pending(&self) -> bool {
-        matches!(self.state, SidecarState::Running(_))
+        self.state
+            .values()
+            .any(|(_, state)| matches!(state, SidecarState::Pending))
+    }
+}
+
+/// Packages of every library root, in library search order.
+fn library_packages(db: &dyn Db) -> impl Iterator<Item = Package> + '_ {
+    db.library_roots()
+        .roots(db)
+        .iter()
+        .flat_map(|root| root.packages(db).iter().copied())
+        // A package that a deeper workspace root also holds is not installed
+        // for analysis, and `SidecarScheduler::finish()` would drop its facts.
+        // Selecting it anyway would submit it again after every completion.
+        .filter(|package| package.is_installed(db))
+}
+
+/// Sends a completion without a response if the handler panics or the pool
+/// drops the job without running it, so [`SidecarScheduler::finish()`] can
+/// clear pending state. [`Self::complete()`] sends the response and disarms
+/// the guard.
+struct SidecarFailureGuard {
+    request: SidecarRequest,
+    events_tx: Option<TokioUnboundedSender<Event>>,
+}
+
+impl SidecarFailureGuard {
+    fn complete(mut self, response: SidecarResponse) {
+        self.send(Some(response));
+    }
+
+    fn send(&mut self, response: Option<SidecarResponse>) {
+        let Some(events_tx) = self.events_tx.take() else {
+            return;
+        };
+        let request = std::mem::take(&mut self.request);
+
+        // `lsp::log_error!` uses the auxiliary channel, which can panic.
+        // Use `log_err()` to avoid a second panic during `drop()` while the
+        // handler is unwinding, which would abort the process.
+        events_tx
+            .send(Event::SidecarCompleted(SidecarCompleted {
+                request,
+                response,
+            }))
+            .log_err();
+    }
+}
+
+impl Drop for SidecarFailureGuard {
+    fn drop(&mut self) {
+        self.send(None);
     }
 }
 
 impl SidecarRequest {
-    /// Selects `base` for primitive stubs and packages with `data/Rdata.rds`
-    /// for lazy data names, across all library roots. This includes packages
-    /// shadowed by an earlier library in the library search order.
-    ///
-    /// Checking for `Rdata.rds` before scheduling keeps packages with neither
-    /// a lazy data index nor primitive stubs out of
-    /// [`SidecarScheduler::may_change()`]. Only existing index files are passed
-    /// to R for lazy data names.
+    /// Request facts for every library package that has any to compute.
+    #[cfg(test)]
     pub(crate) fn from_db(db: &dyn Db) -> Self {
-        let packages = db
-            .library_roots()
-            .roots(db)
-            .iter()
-            .flat_map(|root| root.packages(db).iter())
-            .filter_map(|package| SidecarPackage::from_package(db, *package))
+        let packages = library_packages(db)
+            .filter_map(|package| SidecarPackage::from_package(db, package))
             .collect();
 
         Self { packages }
@@ -262,6 +430,9 @@ impl SidecarRequest {
 }
 
 impl SidecarPackage {
+    /// Request primitive stubs for `base` when its cache-key fields are
+    /// available, and lazy data names when `data/Rdata.rds` exists.
+    /// Returns `None` if neither can be requested.
     fn from_package(db: &dyn Db, package: Package) -> Option<Self> {
         let base = if package.name(db) == "base" {
             BaseBuild::from_package(db, package).log_err()
@@ -282,14 +453,25 @@ impl SidecarPackage {
 
         Some(Self {
             package,
+            description_revision: package.description_revision(db),
             base,
             lazy_data,
         })
     }
 
+    fn is_answered_by(&self, facts: &PackageFacts) -> bool {
+        (self.base.is_none() || facts.primitive_stubs.is_some()) &&
+            (self.lazy_data.is_none() || facts.lazy_data.is_some())
+    }
+
     #[cfg(test)]
     pub(crate) fn package(&self) -> Package {
         self.package
+    }
+
+    #[cfg(test)]
+    pub(crate) fn description_revision(&self) -> FileRevision {
+        self.description_revision
     }
 
     #[cfg(test)]
@@ -300,6 +482,11 @@ impl SidecarPackage {
     #[cfg(test)]
     pub(crate) fn has_lazy_data(&self) -> bool {
         self.lazy_data.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn lazy_data_file(&self) -> Option<&std::path::Path> {
+        self.lazy_data.as_deref()
     }
 }
 

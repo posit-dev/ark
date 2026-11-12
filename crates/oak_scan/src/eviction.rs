@@ -41,7 +41,7 @@ pub(crate) fn evict_root<DB: Db + DbInputs>(db: &mut DB, root: Root) {
     }
     root.set_scripts(db).to(Vec::new());
 
-    clear_package_sources(db, &packages);
+    clear_package_contents(db, &packages);
     root.set_packages(db).to(Vec::new());
     root.set_environment_dirs(db).to(Vec::new());
 }
@@ -51,20 +51,26 @@ pub(crate) fn evict_root<DB: Db + DbInputs>(db: &mut DB, root: Root) {
 /// association is `None`, and a file must not point to a package that no
 /// longer lists it.
 ///
-/// Also resets [`Package::sources_revision()`], so the LSP fetches sources
-/// again if the package returns to a library root.
+/// Also empties [`Package::lazy_data()`] and resets
+/// [`Package::sources_revision()`] and [`Package::facts_revision()`], so the
+/// LSP requests sources and facts again if the package returns to a library
+/// root.
 ///
 /// Used when eviction or a library rescan removes packages from their root.
 /// The files become invisible to analysis unless another live container lists
 /// them. Public entry points keep open buffers visible with
 /// [`crate::inputs::keep_open_files_visible()`].
-pub(crate) fn clear_package_sources<DB: Db + DbInputs>(db: &mut DB, packages: &[Package]) {
+pub(crate) fn clear_package_contents<DB: Db + DbInputs>(db: &mut DB, packages: &[Package]) {
     for &pkg in packages {
-        // Reset even when the lists are already empty: a fetch can succeed
-        // with no files, and its revision must not survive the package.
+        // Empty lists can still have recorded coverage. Reset both revisions
+        // so a revived package is eligible for sources and facts again.
         if pkg.sources_revision(db).is_some() {
             pkg.set_sources_revision(db).to(None);
         }
+        if pkg.facts_revision(db).is_some() {
+            pkg.set_facts_revision(db).to(None);
+        }
+        pkg.set_lazy_data(db, Vec::new());
 
         let files: Vec<File> = pkg
             .files(db)

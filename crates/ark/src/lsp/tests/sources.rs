@@ -18,16 +18,14 @@ use oak_scan::DbScan;
 use serde_json::json;
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedReceiver;
-use tower_lsp_server::ls_types::DidChangeWatchedFilesParams;
 use tower_lsp_server::ls_types::FileChangeType;
-use tower_lsp_server::ls_types::FileEvent;
-use tower_lsp_server::ls_types::Uri;
 
 use super::source_handler::gate;
 use super::source_handler::wait_for_entries;
 use super::source_handler::TestBehavior;
 use super::source_handler::TestSourceHandler;
 use super::utils::did_change_configuration;
+use super::utils::did_change_watched_file;
 use super::utils::did_change_workspace_folders;
 use super::utils::did_open;
 use super::utils::initialize;
@@ -40,8 +38,6 @@ use super::utils::world_with_source_fetching;
 use super::utils::write_sources;
 use super::utils::DescriptionWriter;
 use super::utils::TestClient;
-use crate::lsp::backend::LspMessage;
-use crate::lsp::backend::LspNotification;
 use crate::lsp::backend::RequestResponse;
 use crate::lsp::config::env_settings;
 use crate::lsp::config::initialization_options;
@@ -1266,17 +1262,6 @@ fn write_donor(dir: &Path, version: &str, mtime_seconds: u64) {
         .unwrap()
         .set_modified(UNIX_EPOCH + Duration::from_secs(mtime_seconds))
         .unwrap();
-}
-
-fn did_change_watched_file(path: &Path, typ: FileChangeType) -> Event {
-    Event::Lsp(LspMessage::Notification(
-        LspNotification::DidChangeWatchedFiles(DidChangeWatchedFilesParams {
-            changes: vec![FileEvent {
-                uri: Uri::from_file_path(path).unwrap(),
-                typ,
-            }],
-        }),
-    ))
 }
 
 /// End to end against real `srcref` recovery: install {generics} from source into a

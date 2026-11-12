@@ -102,13 +102,34 @@ pub struct Package {
     #[default]
     #[returns(copy)]
     pub sources_revision: Option<FileRevision>,
+    /// The [`Self::description_revision()`] for which host-supplied facts were
+    /// ingested, or `None` if no ingestion has been recorded. Facts comprise
+    /// generated files in [`Self::files()`] and names in [`Self::lazy_data()`].
+    /// Coverage can be recorded even when both are empty.
+    ///
+    /// On an upgrade, this retains the ingested revision until replacement
+    /// facts arrive. The LSP sidecar scheduler uses a mismatch with
+    /// [`Self::description_revision()`] to identify packages needing facts,
+    /// except those with a pending or failed request at that revision.
+    ///
+    /// Keeping coverage in the database lets removal and eviction reset it
+    /// when they clear the facts. If [`IdentityMap`](crate::IdentityMap)
+    /// revives the same [`Package`], the scheduler can request facts again
+    /// without a removal notification.
+    ///
+    /// Written only by `oak_scan`, through `set_package_facts()` on ingestion
+    /// and `clear_package_contents()` on removal or eviction.
+    #[default]
+    #[returns(copy)]
+    pub facts_revision: Option<FileRevision>,
 }
 
 impl Package {
     /// Lazy data object names available through `pkg::name`, sorted and
     /// without duplicates. Names default to empty until the host reads the
     /// installed package's `data/Rdata.rds` with R and supplies them through
-    /// [`Package::set_lazy_data()`]. Hosts do not currently supply names for
+    /// `oak_scan`'s `set_package_facts()`, which also records
+    /// [`Package::facts_revision`]. Hosts do not currently supply names for
     /// workspace packages.
     pub fn lazy_data<Db: ?Sized + salsa::Database>(self, db: &Db) -> &[String] {
         self.lazy_data_names(db)

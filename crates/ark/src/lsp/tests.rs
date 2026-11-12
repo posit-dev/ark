@@ -9,6 +9,7 @@ mod namespace_completions;
 mod notebook;
 mod rename;
 mod settings;
+mod sidecar;
 mod sidecar_handler;
 mod source_handler;
 mod sources;

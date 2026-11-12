@@ -160,11 +160,11 @@ fn test_generated_files_follow_sources_in_either_order() {
 
     let (_lib, mut db, pkg) = library_with_base(None);
     db.set_package_sources(pkg, sources.path());
-    db.set_package_generated_files(pkg, stubs.path());
+    db.set_package_facts(pkg, Some(stubs.path()), Vec::new());
     let sources_first = paths(&db, pkg);
 
     let (_lib, mut db, pkg) = library_with_base(None);
-    db.set_package_generated_files(pkg, stubs.path());
+    db.set_package_facts(pkg, Some(stubs.path()), Vec::new());
     assert_eq!(basenames(&db, pkg.files(&db)), ["primitives.R"]);
     db.set_package_sources(pkg, sources.path());
 
@@ -188,11 +188,11 @@ fn test_redelivered_files_write_nothing() {
 
     let (_lib, mut db, pkg) = library_with_base(None);
     db.set_package_sources(pkg, sources.path());
-    db.set_package_generated_files(pkg, stubs.path());
+    db.set_package_facts(pkg, Some(stubs.path()), Vec::new());
 
     let before = salsa::plumbing::current_revision(&db);
     db.set_package_sources(pkg, sources.path());
-    db.set_package_generated_files(pkg, stubs.path());
+    db.set_package_facts(pkg, Some(stubs.path()), Vec::new());
     assert_eq!(salsa::plumbing::current_revision(&db), before);
 }
 
@@ -201,7 +201,7 @@ fn test_source_refetch_keeps_generated_files() {
     let stubs = primitive_stubs();
 
     let (_lib, mut db, pkg) = library_with_base(None);
-    db.set_package_generated_files(pkg, stubs.path());
+    db.set_package_facts(pkg, Some(stubs.path()), Vec::new());
     let stub = pkg.files(&db)[0];
 
     let sources = base_sources(&[("a.R", "a <- 1\n")]);
@@ -226,14 +226,14 @@ fn test_generated_files_leave_scripts_alone() {
     let (_lib, mut db, pkg) = library_with_base(Some(&["a.R"]));
     db.set_package_sources(pkg, sources.path());
     let scripts = pkg.scripts(&db).clone();
-    db.set_package_generated_files(pkg, stubs.path());
+    db.set_package_facts(pkg, Some(stubs.path()), Vec::new());
     assert_eq!(basenames(&db, pkg.files(&db)), ["a.R", "primitives.R"]);
     assert_eq!(pkg.scripts(&db), &scripts);
     assert_eq!(basenames(&db, pkg.scripts(&db)), ["c.R"]);
 
     let (_lib, mut db, pkg) = library_with_base(None);
     db.set_package_sources(pkg, sources.path());
-    db.set_package_generated_files(pkg, stubs.path());
+    db.set_package_facts(pkg, Some(stubs.path()), Vec::new());
     assert_eq!(basenames(&db, pkg.files(&db)), [
         "a.R",
         "c.R",
@@ -249,12 +249,16 @@ fn test_eviction_clears_generated_files() {
 
     let (lib, mut db, pkg) = library_with_base(None);
     db.set_package_sources(pkg, sources.path());
-    db.set_package_generated_files(pkg, stubs.path());
+    db.set_package_facts(pkg, Some(stubs.path()), vec![String::from("obj")]);
     let files = pkg.files(&db).to_vec();
+    assert!(pkg.facts_revision(&db).is_some());
+    assert_eq!(pkg.lazy_data(&db), ["obj"]);
 
     db.set_library_paths(&[]);
     assert!(db.package_by_name("base").is_none());
     assert!(pkg.files(&db).is_empty());
+    assert_eq!(pkg.facts_revision(&db), None);
+    assert!(pkg.lazy_data(&db).is_empty());
     for file in &files {
         assert_eq!(file.package(&db), None);
     }
@@ -262,8 +266,10 @@ fn test_eviction_clears_generated_files() {
     db.set_library_paths(&[lib.path().to_path_buf()]);
     assert_eq!(db.package_by_name("base"), Some(pkg));
     assert!(pkg.files(&db).is_empty());
+    assert_eq!(pkg.facts_revision(&db), None);
+    assert!(pkg.lazy_data(&db).is_empty());
 
-    db.set_package_generated_files(pkg, stubs.path());
+    db.set_package_facts(pkg, Some(stubs.path()), Vec::new());
     db.set_package_sources(pkg, sources.path());
     assert_eq!(pkg.files(&db), files);
     for file in &files {

@@ -4,6 +4,9 @@ use serde_json::Value;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tower_lsp_server::ls_types::CompletionParams;
 use tower_lsp_server::ls_types::DidChangeConfigurationParams;
+use tower_lsp_server::ls_types::DidChangeWatchedFilesParams;
+use tower_lsp_server::ls_types::FileChangeType;
+use tower_lsp_server::ls_types::FileEvent;
 use tower_lsp_server::ls_types::Position;
 use tower_lsp_server::ls_types::TextDocumentIdentifier;
 use tower_lsp_server::ls_types::TextDocumentPositionParams;
@@ -53,6 +56,18 @@ pub(crate) fn did_change_configuration() -> Event {
     Event::Lsp(LspMessage::Notification(
         LspNotification::DidChangeConfiguration(DidChangeConfigurationParams {
             settings: serde_json::Value::Null,
+        }),
+    ))
+}
+
+/// A `workspace/didChangeWatchedFiles` notification for one change at `path`.
+pub(crate) fn did_change_watched_file(path: &Path, typ: FileChangeType) -> Event {
+    Event::Lsp(LspMessage::Notification(
+        LspNotification::DidChangeWatchedFiles(DidChangeWatchedFilesParams {
+            changes: vec![FileEvent {
+                uri: Uri::from_file_path(path).unwrap(),
+                typ,
+            }],
         }),
     ))
 }

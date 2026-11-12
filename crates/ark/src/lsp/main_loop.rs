@@ -65,8 +65,8 @@ use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::handlers;
 use crate::lsp::io_pool::IoPool;
 use crate::lsp::sidecar::OakSidecarHandler;
+use crate::lsp::sidecar::SidecarCompleted;
 use crate::lsp::sidecar::SidecarHandler;
-use crate::lsp::sidecar::SidecarResponse;
 use crate::lsp::sidecar::SidecarScheduler;
 use crate::lsp::sources::source_fetching_disabled_by_ci;
 use crate::lsp::sources::OakSourceHandler;
@@ -141,7 +141,7 @@ pub(crate) enum Event {
     OakScanCompleted(ScanCompleted),
     OakScanFailed(Root),
     SourceCompleted(SourceCompleted),
-    SidecarCompleted(SidecarResponse),
+    SidecarCompleted(SidecarCompleted),
     DiagnosticsReady(DiagnosticsReady),
     #[cfg(feature = "testing")]
     TestPanicMainLoop,
@@ -383,7 +383,7 @@ impl LspState {
         !self
             .source_scheduler
             .sources_may_arrive(db, config, package) &&
-            !self.sidecar_scheduler.may_change(package)
+            !self.sidecar_scheduler.may_change(db, package)
     }
 }
 
@@ -649,14 +649,6 @@ impl GlobalState {
         // diagnostics could wait indefinitely for another event.
         self.refresh_if_due();
 
-        // The first event is `initialize`, so the job is running before any
-        // completion request can ask whether it can change a package.
-        self.lsp_state.sidecar_scheduler.start(
-            self.world.db(),
-            &self.lsp_state.sidecar_pool,
-            &self.events_tx,
-        );
-
         (result, timing)
     }
 
@@ -909,27 +901,36 @@ impl GlobalState {
                 }
             },
 
-            Event::SidecarCompleted(response) => {
-                self.lsp_state.sidecar_scheduler.finish();
+            Event::SidecarCompleted(completed) => {
+                let packages = self
+                    .lsp_state
+                    .sidecar_scheduler
+                    .finish(self.world.db(), completed);
 
                 let mut lazy_data_packages = 0;
 
-                for facts in response.packages {
-                    if let Some(directory) = facts.primitive_stubs {
+                for facts in packages {
+                    if facts.primitive_stubs.is_some() {
                         let name = facts.package.name(self.world.db());
                         lsp::log_info!("Ingesting primitive stubs for package {name}");
-                        self.world
-                            .db_mut()
-                            .set_package_generated_files(facts.package, &directory);
+                    }
+                    if facts.lazy_data.is_some() {
+                        lazy_data_packages += 1;
                     }
 
-                    if let Some(names) = facts.lazy_data {
-                        lazy_data_packages += 1;
-                        facts.package.set_lazy_data(self.world.db_mut(), names);
-                    }
+                    self.world.db_mut().set_package_facts(
+                        facts.package,
+                        facts.primitive_stubs.as_deref(),
+                        facts.lazy_data.unwrap_or_default(),
+                    );
                 }
 
                 lsp::log_info!("Ingested lazy data names for {lazy_data_packages} packages");
+
+                // If the revision was already refreshed, a completion with no
+                // facts does not trigger `refresh_if_due()`. Packages that
+                // changed during the batch still need another request.
+                self.schedule_sidecar();
             },
 
             Event::DiagnosticsReady(DiagnosticsReady { generation, publication }) => {
@@ -1000,8 +1001,14 @@ impl GlobalState {
         // profiles.
         let _span = tracing::info_span!("refresh_if_due").entered();
 
+        // `schedule_sidecar()` writes `Package::facts_revision()` for packages
+        // with no facts to compute. Record the revision and start diagnostics
+        // after those writes, so the refresh includes them rather than being
+        // cancelled by them.
+        self.schedule_sidecar();
+
         lsp::log_info!("World state revision advanced");
-        self.last_refreshed_revision = revision;
+        self.last_refreshed_revision = salsa::plumbing::current_revision(self.world.db());
         self.refresh_deferred_since = None;
 
         let tasks = self.lsp_state.diagnostics.refresh_all(
@@ -1050,6 +1057,22 @@ impl GlobalState {
             &self.lsp_state.source_pool,
             &self.events_tx,
         );
+    }
+
+    /// Submit a sidecar batch unless one is in flight, and record coverage for
+    /// packages with no facts to compute, even while a batch is in flight.
+    fn schedule_sidecar(&mut self) {
+        let covered = self.lsp_state.sidecar_scheduler.schedule(
+            self.world.db(),
+            &self.lsp_state.sidecar_pool,
+            &self.events_tx,
+        );
+
+        for package in covered {
+            self.world
+                .db_mut()
+                .set_package_facts(package, None, Vec::new());
+        }
     }
 
     fn log_source_completed(&self, package: Package, response: &SourceResponse) {
@@ -1237,7 +1260,8 @@ impl GlobalState {
         self.handle_event_once(event).await;
         while self.lsp_state.oak_scheduler.has_pending_scans() ||
             self.lsp_state.source_scheduler.has_pending() ||
-            self.lsp_state.sidecar_scheduler.has_pending()
+            self.lsp_state.sidecar_scheduler.has_pending() ||
+            self.refresh_owed()
         {
             let event = self.next_event_or_panic("quiescence").await;
             self.handle_event_once(event).await;
@@ -1247,10 +1271,18 @@ impl GlobalState {
     /// Pump events until no oak scan is pending, ignoring pending source
     /// requests.
     pub(crate) async fn pump_scans_to_quiescence(&mut self) {
-        while self.lsp_state.oak_scheduler.has_pending_scans() {
+        while self.lsp_state.oak_scheduler.has_pending_scans() || self.refresh_owed() {
             let event = self.next_event_or_panic("pending scans").await;
             self.handle_event_once(event).await;
         }
+    }
+
+    /// Whether `refresh_if_due()` deferred a refresh because events were
+    /// queued. Source and sidecar requests are scheduled from the refresh, so
+    /// a pump that stops here would miss work the scan made due. Pumping
+    /// can't stall: a deferral implies a queued event.
+    fn refresh_owed(&self) -> bool {
+        salsa::plumbing::current_revision(self.world.db()) != self.last_refreshed_revision
     }
 
     /// Pump events until no source request is pending, ignoring pending scans.

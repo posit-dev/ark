@@ -38,6 +38,7 @@ package.rs: struct Package [debug]
   scripts: Vec<File> [returns(ref)]
   lazy_data_names: Vec<String> [default, returns(ref)]
   sources_revision: Option<FileRevision> [default, returns(copy)]
+  facts_revision: Option<FileRevision> [default, returns(copy)]
 
 == interned ==
 name.rs: struct Name<'db> [debug]

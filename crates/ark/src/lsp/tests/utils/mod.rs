@@ -9,6 +9,7 @@ use aether_path::FilePath;
 pub(super) use description_writer::DescriptionWriter;
 pub(super) use events::completion;
 pub(super) use events::did_change_configuration;
+pub(super) use events::did_change_watched_file;
 pub(super) use events::initialize;
 pub(super) use events::initialize_with_options;
 pub(super) use events::initialize_without_configuration;

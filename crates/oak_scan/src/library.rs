@@ -25,7 +25,7 @@ use oak_db::RootKind;
 use salsa::Setter;
 use walkdir::WalkDir;
 
-use crate::eviction::clear_package_sources;
+use crate::eviction::clear_package_contents;
 use crate::inputs::replace_package_membership;
 use crate::inputs::upsert_package_metadata;
 use crate::inputs::RootExt;
@@ -176,7 +176,7 @@ fn read_installed_package(package_dir: &Path) -> Option<InstalledPackageEntry> {
 /// current revision.
 ///
 /// Removed packages leave `root.packages`. Their sources are cleared with
-/// [`clear_package_sources()`] unless another live root still holds the
+/// [`clear_package_contents()`] unless another live root still holds the
 /// package. The cleared files become invisible to analysis, and the caller
 /// keeps open buffers visible with
 /// [`crate::inputs::keep_open_files_visible()`].
@@ -228,11 +228,11 @@ pub(crate) fn set_installed_packages<DB: Db + DbInputs>(
         .into_iter()
         .filter(|package| db.root_by_package(*package).is_none())
         .collect();
-    clear_package_sources(db, &dropped);
+    clear_package_contents(db, &dropped);
 }
 
 /// Clear source files and scripts and reset [`Package::sources_revision()`],
-/// preserving generated files.
+/// preserving generated files and [`Package::facts_revision()`].
 ///
 /// Generated files have a separate writer, so a source revision mismatch does
 /// not invalidate them. Until sources are fetched,

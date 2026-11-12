@@ -734,7 +734,7 @@ fn library_with_stubbed_base(
     if let Some(sources) = sources {
         db.set_package_sources(pkg, sources);
     }
-    db.set_package_generated_files(pkg, stubs);
+    db.set_package_facts(pkg, Some(stubs), Vec::new());
     (lib, db, root, pkg)
 }
 
@@ -787,6 +787,78 @@ fn test_rescan_removal_clears_generated_files() {
     assert_eq!(pkg.sources_revision(&db), None);
     assert!(pkg.files(&db).is_empty());
     assert_eq!(stub.package(&db), None);
+}
+
+#[test]
+fn test_set_package_facts_records_revision_and_replaces_facts() {
+    let stubs = primitive_stubs();
+    let sources = tempfile::tempdir().unwrap();
+    fs::write(sources.path().join("f.R"), "f <- function() 1\n").unwrap();
+
+    // Not `library_with_stubbed_base()`, which already ingests facts and so
+    // records `facts_revision`.
+    let lib = tempfile::tempdir().unwrap();
+    write_installed_package(lib.path(), "base", "4.5.0");
+    set_mtime(&lib.path().join("base").join("DESCRIPTION"), 1_000);
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+    let pkg = db.package_by_name("base").unwrap();
+    db.set_package_sources(pkg, sources.path());
+    assert_eq!(pkg.facts_revision(&db), None);
+
+    db.set_package_facts(pkg, Some(stubs.path()), vec![String::from("obj")]);
+    let [file, stub] = pkg.files(&db)[..] else {
+        panic!("expected one source file and one stub");
+    };
+    assert_eq!(pkg.facts_revision(&db), Some(revision(1_000)));
+    assert_eq!(pkg.lazy_data(&db), ["obj"]);
+
+    db.set_package_facts(pkg, None, Vec::new());
+    assert_eq!(pkg.facts_revision(&db), Some(revision(1_000)));
+    assert_eq!(pkg.files(&db), &vec![file]);
+    assert_eq!(stub.package(&db), None);
+    assert!(pkg.lazy_data(&db).is_empty());
+}
+
+#[test]
+fn test_rescan_upgrade_keeps_facts_revision() {
+    let stubs = primitive_stubs();
+    let (lib, mut db, root, pkg) = library_with_stubbed_base(stubs.path(), None);
+    db.set_package_facts(pkg, Some(stubs.path()), Vec::new());
+    assert_eq!(pkg.facts_revision(&db), Some(revision(1_000)));
+
+    // A source revision mismatch must neither mark facts as current nor
+    // discard generated files from the ingested revision.
+    set_mtime(&lib.path().join("base").join("DESCRIPTION"), 2_000);
+    rescan(&mut db, root);
+
+    assert_eq!(pkg.description_revision(&db), revision(2_000));
+    assert_eq!(pkg.facts_revision(&db), Some(revision(1_000)));
+    assert_eq!(pkg.files(&db).len(), 1);
+}
+
+#[test]
+fn test_rescan_removal_resets_facts_revision() {
+    let stubs = primitive_stubs();
+    let (lib, mut db, root, pkg) = library_with_stubbed_base(stubs.path(), None);
+    db.set_package_facts(pkg, Some(stubs.path()), vec![String::from("obj")]);
+    assert_eq!(pkg.facts_revision(&db), Some(revision(1_000)));
+
+    fs::remove_dir_all(lib.path().join("base")).unwrap();
+    rescan(&mut db, root);
+    assert_eq!(pkg.facts_revision(&db), None);
+    assert!(pkg.lazy_data(&db).is_empty());
+
+    // A reinstall with the same `DESCRIPTION` revision revives the `Package`
+    // without its generated files, so it must not look covered.
+    write_installed_package(lib.path(), "base", "4.5.0");
+    set_mtime(&lib.path().join("base").join("DESCRIPTION"), 1_000);
+    rescan(&mut db, root);
+
+    assert_eq!(db.package_by_name("base"), Some(pkg));
+    assert_eq!(pkg.description_revision(&db), revision(1_000));
+    assert_eq!(pkg.facts_revision(&db), None);
+    assert!(pkg.files(&db).is_empty());
 }
 
 #[test]

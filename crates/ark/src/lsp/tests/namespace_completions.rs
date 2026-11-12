@@ -16,6 +16,7 @@ use tower_lsp_server::ls_types::CompletionList;
 use tower_lsp_server::ls_types::CompletionResponse;
 use tower_lsp_server::ls_types::Position;
 
+use super::sidecar_handler::sidecar_state;
 use super::sidecar_handler::TestSidecarHandler;
 use super::source_handler::gate;
 use super::source_handler::TestBehavior;
@@ -35,7 +36,6 @@ use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_SETTING;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
-use crate::lsp::sidecar::SidecarScheduler;
 use crate::lsp::sources::SourceScheduler;
 
 const FOO_SOURCES: &[(&str, &str)] = &[("foo.R", "foo <- function() 1\n")];
@@ -309,21 +309,9 @@ fn state_with_held_sidecar(
         "sum <- function(..., na.rm = FALSE) NULL\n",
     )]);
     for (name, names) in lazy_data {
-        let package = db.package_by_name(name).unwrap();
-        sidecar = sidecar.with_lazy_data(package, names);
+        sidecar = sidecar.with_lazy_data(name, names);
     }
-    let sidecar = Arc::new(sidecar);
-
-    let mut scheduler = SourceScheduler::new(None);
-    scheduler.config_arrived();
-    let state = GlobalState::from_parts(
-        test_client(),
-        world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(scheduler)
-            .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar))),
-    );
-    (state, release, entered_rx)
+    (sidecar_state(db, Arc::new(sidecar)), release, entered_rx)
 }
 
 /// `base::` is incomplete while the sidecar job, which can add its primitive
@@ -353,19 +341,38 @@ async fn test_base_answer_is_incomplete_while_sidecar_runs() {
     )]);
 }
 
-/// The running sidecar can change answers only for packages in its request.
-/// Other packages remain complete when source fetching is disabled.
+/// `donor` has neither primitive stubs nor a lazy data index. Scheduling the
+/// batch covers it with no facts instead of passing it to the job, so its
+/// answer is complete while the batch runs.
 #[tokio::test]
-async fn test_sidecar_job_leaves_other_packages_complete() {
+async fn test_package_without_rdata_is_covered_without_batch() {
     let _aux = init_aux_for_test();
 
     let (_lib, db) = library_with_base_donor_and_datasets();
-    let (mut state, release, entered_rx) = state_with_held_sidecar(db, &[]);
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (gate, release) = gate(entered_tx);
+    let sidecar = Arc::new(TestSidecarHandler::gated(gate, vec![]));
+    let mut state = sidecar_state(db, Arc::clone(&sidecar));
 
     let scratch = tempfile::tempdir().unwrap();
     let path = scratch.path().join("scratch.R");
     state.handle_event_once(did_open(&path, "donor::\n")).await;
     wait_entered(&entered_rx);
+
+    let db = state.world().db();
+    let names: Vec<String> = sidecar.calls().lock().unwrap()[0]
+        .packages()
+        .iter()
+        .map(|package| package.package().name(db).clone())
+        .collect();
+    assert_eq!(names, vec![String::from("base"), String::from("datasets")]);
+
+    let donor = db.package_by_name("donor").unwrap();
+    assert_eq!(
+        donor.facts_revision(db),
+        Some(donor.description_revision(db))
+    );
+    assert!(state.lsp_state().sidecar_scheduler.has_pending());
 
     let response = complete(&mut state, &path, Position::new(0, 7)).await;
     assert_eq!(complete_items(response), foo(CompletionItemKind::STRUCT));
