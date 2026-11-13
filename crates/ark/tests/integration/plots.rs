@@ -1632,9 +1632,11 @@ fn test_resize_replay_does_not_enter_browser() {
     let frontend = DummyArkFrontend::lock();
     let ui_comm_id = frontend.open_ui_comm();
 
-    // Draws nothing the first time, calls `browser()` and `readline()` on replay
+    // Draws nothing the first time, calls `browser()` and `readline()` on
+    // replay. `after_browser` is set only if the replay continues after the
+    // nested prompt closes.
     frontend.execute_request_collect(
-        "first <- TRUE; plot.new(); recordGraphics({ if (!first) { browser(); readline('x? ') }; first <<- FALSE }, list(), environment())",
+        "first <- TRUE; after_browser <- FALSE; plot.new(); recordGraphics({ if (!first) { browser(); readline('x? '); after_browser <<- TRUE }; first <<- FALSE }, list(), environment())",
     );
 
     frontend.send_plot_render_settings(&ui_comm_id, 900, 450);
@@ -1642,6 +1644,8 @@ fn test_resize_replay_does_not_enter_browser() {
     // A nested REPL would still hold the UI comm handler borrow, so this
     // second message would panic with a `BorrowMutError`
     frontend.send_plot_render_settings(&ui_comm_id, 950, 450);
+
+    frontend.execute_request_with_ui_comm("after_browser", |result| assert_eq!(result, "[1] TRUE"));
 
     frontend.execute_request_with_ui_comm("1 + 1", |result| assert_eq!(result, "[1] 2"));
 }
