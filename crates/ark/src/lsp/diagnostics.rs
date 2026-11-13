@@ -1391,9 +1391,11 @@ mod tests {
     use crate::lsp::state::WorldState;
     use crate::lsp::tests::state_handlers::set_workspace_paths;
     use crate::lsp::traits::url::UrlExt;
+    use crate::panic;
     use crate::r_task;
 
     fn generate_diagnostics(code: &str, state: &WorldState) -> Vec<lsp_types::Diagnostic> {
+        let _boundary = panic::test_boundary();
         let url = url::Url::parse("file:///test.R").unwrap();
         let uri = url.to_uri().unwrap();
         let file = oak_db::File::new(

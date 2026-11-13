@@ -94,8 +94,21 @@ macro_rules! assert_in_catch_boundary {
 /// instead of aborting in a hook that checks [`recovers_panic()`]. This guard
 /// does not catch panics. Dropping it restores the previous boundary state.
 ///
+/// Tests also enter it to satisfy [`assert_in_catch_boundary!()`] in code that
+/// production reaches only through a recovery boundary. Enter it in the function
+/// that reaches the asserting code: a test helper guards its own access, and a
+/// test body guards itself only where it reaches that code directly. Guards nest,
+/// so calling a guarded helper under a body guard is fine. Unit tests of the crate
+/// that calls the assertion are exempt, but can still enter it so they keep
+/// passing if the asserting code moves to another crate.
+///
+/// Keep the guard in a local variable. Each guard restores the state from when
+/// it was created, so guards must drop in reverse order of creation, which a
+/// guard stored in a fixture can't ensure.
+///
 /// Never hold this guard across `.await`: its state is thread-local, so unrelated
 /// tasks could inherit it and the guard could be dropped on a different thread.
+/// Async tests enter a separate guard for each synchronous section.
 #[cfg(any(test, feature = "testing"))]
 #[must_use]
 pub fn test_boundary() -> CatchBoundary {

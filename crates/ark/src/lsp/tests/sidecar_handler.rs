@@ -22,6 +22,7 @@ use crate::lsp::sidecar::SidecarRequest;
 use crate::lsp::sidecar::SidecarResponse;
 use crate::lsp::sidecar::SidecarScheduler;
 use crate::lsp::sources::SourceScheduler;
+use crate::panic;
 
 /// Supplies canned primitive stubs and lazy data names, and records requests.
 /// An optional [`Gate`] holds each response so tests can request completions
@@ -166,6 +167,7 @@ impl TestSidecarHandler {
 
 /// Disable source fetching so tests can isolate sidecar scheduling.
 pub(super) fn sidecar_state(db: OakDatabase, sidecar: Arc<TestSidecarHandler>) -> GlobalState {
+    let _boundary = panic::test_boundary();
     let mut scheduler = SourceScheduler::new(None);
     scheduler.config_arrived();
     GlobalState::from_parts(

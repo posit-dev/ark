@@ -168,6 +168,7 @@ mod tests {
     use crate::lsp::document_context::test_document_context;
     use crate::lsp::document_context::TestDocument;
     use crate::lsp::state::WorldState;
+    use crate::panic;
     use crate::r_task;
     use crate::treesitter::node_find_string;
     use crate::treesitter::NodeTypeExt;
@@ -177,6 +178,7 @@ mod tests {
         point: Point,
         trigger: Option<String>,
     ) -> Option<Recognized> {
+        let _boundary = panic::test_boundary();
         let context = doc.context_with_trigger(point, trigger);
         let completion_context = CompletionContext::new(&context, doc.file(), doc.state());
         recognize_string(&completion_context).unwrap()
@@ -185,6 +187,7 @@ mod tests {
     /// Opens `text` as `script.R` in `dir`, outside any workspace root, so
     /// relative paths resolve against `dir`.
     fn open_in_dir(state: &mut WorldState, dir: &Path, text: &str) -> File {
+        let _boundary = panic::test_boundary();
         let path = FilePath::from_path_buf(dir.join("script.R")).unwrap();
         state.db_mut().upsert_editor(path, text.to_string())
     }
@@ -216,6 +219,7 @@ mod tests {
 
     #[test]
     fn test_trigger() {
+        let _boundary = panic::test_boundary();
         let (text, point) = point_from_cursor("'~/@'");
         let doc = TestDocument::new(&text);
 
@@ -248,6 +252,7 @@ mod tests {
 
     #[test]
     fn test_file_paths_need_no_session() {
+        let _boundary = panic::test_boundary();
         let dir = tempfile::tempdir().unwrap();
         write_file(&dir.path().join("R/utils.R"));
         std::fs::create_dir_all(dir.path().join("R/sub")).unwrap();
@@ -268,6 +273,7 @@ mod tests {
     }
 
     fn file_path_labels(state: &WorldState, file: File, point: Point) -> Vec<String> {
+        let _boundary = panic::test_boundary();
         let context = test_document_context(state, file, point, None);
         let (completions, _) = static_completions(&context, file, state).unwrap();
         finish(completions, RCompletionReplies::default())
@@ -306,6 +312,7 @@ mod tests {
 
     #[test]
     fn test_console_input_resolves_against_working_directory() {
+        let _boundary = panic::test_boundary();
         // Nextest isolates the working directory change in a separate process.
         let dir = tempfile::tempdir().unwrap();
         write_file(&dir.path().join("R/utils.R"));
@@ -321,6 +328,7 @@ mod tests {
 
     #[test]
     fn test_untitled_document_resolves_against_first_workspace_root() {
+        let _boundary = panic::test_boundary();
         let dir = tempfile::tempdir().unwrap();
         write_file(&dir.path().join("R/utils.R"));
 
@@ -355,6 +363,7 @@ mod tests {
     #[test]
     fn test_file_paths_with_invalid_escape() {
         // https://github.com/posit-dev/positron/issues/6584
+        let _boundary = panic::test_boundary();
         let dir = tempfile::tempdir().unwrap();
         write_file(&dir.path().join("R/utils.R"));
 

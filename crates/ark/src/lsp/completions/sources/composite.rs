@@ -316,6 +316,7 @@ mod tests {
     use crate::lsp::completions::sources::composite::CompositeCompletions;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::document_context::TestDocument;
+    use crate::panic;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
 
@@ -474,6 +475,7 @@ mod tests {
         doc: &TestDocument,
         document_context: &DocumentContext,
     ) -> Vec<CompletionItem> {
+        let _boundary = panic::test_boundary();
         let context = CompletionContext::new(document_context, doc.file(), doc.state());
         let (completions, _) = get_completions(&context).unwrap();
 

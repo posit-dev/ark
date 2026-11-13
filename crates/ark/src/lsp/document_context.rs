@@ -22,6 +22,8 @@ use crate::lsp::db::FileArkExt;
 #[cfg(test)]
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
+#[cfg(test)]
+use crate::panic;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
@@ -162,6 +164,7 @@ impl TestDocument {
 /// files.
 #[cfg(test)]
 pub(crate) fn open_test_document(state: &mut WorldState, contents: &str) -> File {
+    let _boundary = panic::test_boundary();
     let path = FilePath::from_url(&Url::parse("file:///test.R").unwrap());
     state.db_mut().upsert_editor(path, contents.to_string())
 }
@@ -175,6 +178,7 @@ pub(crate) fn test_document_context(
     point: Point,
     trigger: Option<String>,
 ) -> DocumentContext<'_> {
+    let _boundary = panic::test_boundary();
     let db = state.db();
     DocumentContext::new(
         file.tree_sitter(db),

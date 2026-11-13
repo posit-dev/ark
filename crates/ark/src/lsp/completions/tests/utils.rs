@@ -28,6 +28,7 @@ use crate::lsp::completions::static_completions;
 use crate::lsp::document_context::open_test_document;
 use crate::lsp::document_context::test_document_context;
 use crate::lsp::state::WorldState;
+use crate::panic;
 
 /// Runs both completion passes. Requires the R thread.
 pub(crate) fn get_completions_at_cursor(cursor_text: &str) -> anyhow::Result<Vec<CompletionItem>> {
@@ -180,6 +181,7 @@ fn static_completions_in(
     text: &str,
     point: Point,
 ) -> anyhow::Result<(StaticCompletions, RCompletionRequest)> {
+    let _boundary = panic::test_boundary();
     let file = open_test_document(state, text);
     let document_context = test_document_context(state, file, point, None);
 

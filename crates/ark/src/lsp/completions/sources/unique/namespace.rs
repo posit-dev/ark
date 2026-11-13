@@ -189,11 +189,13 @@ mod tests {
     use crate::lsp::document_context::open_test_document;
     use crate::lsp::document_context::test_document_context;
     use crate::lsp::state::WorldState;
+    use crate::panic;
 
     fn recognize_namespace_at_cursor(
         cursor_text: &str,
         state: &mut WorldState,
     ) -> Option<Recognized> {
+        let _boundary = panic::test_boundary();
         let (text, point) = point_from_cursor(cursor_text);
         let file = open_test_document(state, &text);
         let document_context = test_document_context(state, file, point, None);
@@ -208,6 +210,7 @@ mod tests {
         state: &mut WorldState,
         package: &str,
     ) -> Vec<CompletionItem> {
+        let _boundary = panic::test_boundary();
         let Some(Recognized::Static(completions)) =
             recognize_namespace_at_cursor(cursor_text, state)
         else {
@@ -242,6 +245,7 @@ mod tests {
 
     #[test]
     fn test_namespace_completions_need_no_session() {
+        let _boundary = panic::test_boundary();
         let mut state = state_with_r_library();
 
         let (completions, request) = static_completions_with_state("utils::@", &mut state);
@@ -274,6 +278,7 @@ mod tests {
 
     #[test]
     fn test_lazy_data_object_resolves_to_topic() {
+        let _boundary = panic::test_boundary();
         let library = tempfile::TempDir::new().unwrap();
         let mut state = write_library_package(library.path(), "pkg", "", None);
         let package = state.db().package_by_name("pkg").unwrap();

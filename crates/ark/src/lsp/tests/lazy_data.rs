@@ -24,6 +24,7 @@ use crate::lsp::sidecar::OakSidecarHandler;
 use crate::lsp::sidecar::SidecarHandler;
 use crate::lsp::sidecar::SidecarRequest;
 use crate::lsp::state_handlers::ConsoleInputs;
+use crate::panic;
 
 #[test]
 fn test_sidecar_reads_lazy_data_like_read_rds() {
@@ -115,6 +116,9 @@ async fn test_packages_without_rdata_are_not_passed() {
     let (event, _response_rx) = initialize(workspace.path());
     state.handle_event_to_quiescence(event).await;
 
+    // A guard can't be held across `.await`, so each synchronous db section
+    // gets its own.
+    let _boundary = panic::test_boundary();
     let calls = sidecar.calls().lock().unwrap();
     assert_eq!(calls.len(), 1);
     let mut passed: Vec<(Package, bool, bool)> = calls[0]
@@ -177,6 +181,7 @@ async fn test_install_after_startup_gets_lazy_data_names() {
         ))
         .await;
 
+    let _boundary = panic::test_boundary();
     let db = state.world().db();
     let late = db.package_by_name("late").unwrap();
     assert_eq!(late.lazy_data(db), ["obj"]);
@@ -190,8 +195,12 @@ async fn test_install_after_startup_gets_lazy_data_names() {
 async fn test_in_place_upgrade_replaces_lazy_data_names() {
     let _aux = init_aux_for_test();
     let (lib, _workspace, mut state, sidecar) = session_with_withdata(&["old"]).await;
-    let withdata = state.world().db().package_by_name("withdata").unwrap();
-    assert_eq!(withdata.lazy_data(state.world().db()), ["old"]);
+    let withdata = {
+        let _boundary = panic::test_boundary();
+        let withdata = state.world().db().package_by_name("withdata").unwrap();
+        assert_eq!(withdata.lazy_data(state.world().db()), ["old"]);
+        withdata
+    };
 
     sidecar.set_lazy_data("withdata", &["new"]);
     install_package(lib.path(), "withdata", 2_000, true);
@@ -202,6 +211,7 @@ async fn test_in_place_upgrade_replaces_lazy_data_names() {
         ))
         .await;
 
+    let _boundary = panic::test_boundary();
     let db = state.world().db();
     assert_eq!(db.package_by_name("withdata"), Some(withdata));
     assert_eq!(withdata.lazy_data(db), ["new"]);
@@ -218,8 +228,12 @@ async fn test_in_place_upgrade_replaces_lazy_data_names() {
 async fn test_upgrade_without_rdata_clears_lazy_data_names() {
     let _aux = init_aux_for_test();
     let (lib, _workspace, mut state, sidecar) = session_with_withdata(&["old"]).await;
-    let withdata = state.world().db().package_by_name("withdata").unwrap();
-    assert_eq!(withdata.lazy_data(state.world().db()), ["old"]);
+    let withdata = {
+        let _boundary = panic::test_boundary();
+        let withdata = state.world().db().package_by_name("withdata").unwrap();
+        assert_eq!(withdata.lazy_data(state.world().db()), ["old"]);
+        withdata
+    };
 
     install_package(lib.path(), "withdata", 2_000, false);
     state
@@ -229,6 +243,7 @@ async fn test_upgrade_without_rdata_clears_lazy_data_names() {
         ))
         .await;
 
+    let _boundary = panic::test_boundary();
     let db = state.world().db();
     assert!(withdata.lazy_data(db).is_empty());
     assert_eq!(
@@ -271,6 +286,7 @@ async fn test_event_before_initialize_submits_nothing() {
         ))
         .await;
 
+    let _boundary = panic::test_boundary();
     let db = state.world().db();
     let withdata = db.package_by_name("withdata").unwrap();
     assert_eq!(withdata.lazy_data(db), ["obj"]);

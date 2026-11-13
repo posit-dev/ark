@@ -514,9 +514,11 @@ mod tests {
     use crate::lsp::signature_help::static_signature_help;
     use crate::lsp::signature_help::SignatureHelpReply;
     use crate::lsp::signature_help::StaticSignatureHelp;
+    use crate::panic;
 
     /// Runs only the static pass, as when R is busy.
     fn static_signature_help_at_cursor(code: &str) -> Option<StaticSignatureHelp> {
+        let _boundary = panic::test_boundary();
         let (text, point) = point_from_cursor(code);
         let doc = TestDocument::new(&text);
         let context = doc.context(point);

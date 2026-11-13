@@ -1337,6 +1337,7 @@ impl GlobalState {
     /// a pump that stops here would miss work the scan made due. Pumping
     /// can't stall: a deferral implies a queued event.
     fn refresh_owed(&self) -> bool {
+        let _boundary = panic::test_boundary();
         salsa::plumbing::current_revision(self.world.db()) != self.last_refreshed_revision
     }
 
