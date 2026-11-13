@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use aether_path::FilePath;
 use anyhow::anyhow;
-use oak_db::Db;
+use oak_db::Environment;
 use oak_db::OakDatabase;
 use oak_db::Package;
 use oak_db::Root;
@@ -45,7 +45,6 @@ use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::Client;
 
 use super::backend::RequestResponse;
-use crate::console::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::analysis;
 use crate::lsp::analysis::catch_cancellation;
@@ -60,7 +59,6 @@ use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
-use crate::lsp::config::OakConfig;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::environments::unresolved_database;
 use crate::lsp::environments::EnvironmentCompleted;
@@ -68,8 +66,9 @@ use crate::lsp::environments::EnvironmentResolver;
 use crate::lsp::environments::EnvironmentScheduler;
 use crate::lsp::environments::RProcessResolver;
 use crate::lsp::handlers;
-use crate::lsp::host;
-use crate::lsp::host::ConsoleInputs;
+use crate::lsp::handlers::EventContext;
+use crate::lsp::handlers::Handlers;
+use crate::lsp::handlers::RequestContext;
 use crate::lsp::io_pool::IoPool;
 use crate::lsp::sidecar::OakSidecarHandler;
 use crate::lsp::sidecar::SidecarCompleted;
@@ -142,9 +141,10 @@ impl LspServiceContext {
 
 #[derive(Debug)]
 #[expect(clippy::large_enum_variant)]
-pub(crate) enum Event {
-    Lsp(LspMessage),
-    Kernel(KernelNotification),
+pub(crate) enum Event<H: Handlers> {
+    Lsp(LspMessage<H>),
+    /// An event the host posts, handled by [`Handlers::event()`].
+    Host(H::Event),
     OakScanCompleted(ScanCompleted),
     OakScanFailed(Root),
     SourceCompleted(SourceCompleted),
@@ -155,14 +155,14 @@ pub(crate) enum Event {
     TestPanicMainLoop,
 }
 
-impl Event {
+impl<H: Handlers> Event<H> {
     /// Label for the `handle_event` tracing span. Coarse on purpose: LSP
     /// handlers are instrumented and name themselves as child spans, and the
     /// variants' payloads can carry document contents.
     fn kind(&self) -> &'static str {
         match self {
             Event::Lsp(_) => "lsp",
-            Event::Kernel(_) => "kernel",
+            Event::Host(_) => "host",
             Event::OakScanCompleted(_) => "oak_scan_completed",
             Event::OakScanFailed(_) => "oak_scan_failed",
             Event::SourceCompleted(_) => "source_completed",
@@ -173,30 +173,6 @@ impl Event {
             Event::TestPanicMainLoop => "test_panic_main_loop",
         }
     }
-}
-
-#[derive(Debug)]
-#[expect(clippy::enum_variant_names)]
-pub(crate) enum KernelNotification {
-    DidChangeConsoleInputs(ConsoleInputs),
-    DidOpenVirtualDocument(DidOpenVirtualDocumentParams),
-    DidCloseVirtualDocument(DidCloseVirtualDocumentParams),
-}
-
-/// A thin wrapper struct with a custom `Debug` method more appropriate for trace logs
-pub(crate) struct TraceKernelNotification<'a> {
-    inner: &'a KernelNotification,
-}
-
-#[derive(Debug)]
-pub(crate) struct DidOpenVirtualDocumentParams {
-    pub(crate) uri: String,
-    pub(crate) contents: String,
-}
-
-#[derive(Debug)]
-pub(crate) struct DidCloseVirtualDocumentParams {
-    pub(crate) uri: String,
 }
 
 #[derive(Debug)]
@@ -213,10 +189,10 @@ pub(crate) enum AuxiliaryEvent {
 ///
 /// This is a singleton that fully owns the source of truth for `WorldState`
 /// which contains the inputs of all LSP methods. The `main_loop()` method is
-/// the heart of the LSP. The tower-lsp backend and the Jupyter kernel
-/// communicate with the main loop through the `Event` channel that is passed on
-/// construction.
-pub(crate) struct GlobalState {
+/// the heart of the LSP. The tower-lsp backend and the host communicate with
+/// the main loop through the `Event` channel that is passed on construction.
+/// The host answers requests and handles its own events through `H`.
+pub(crate) struct GlobalState<H: Handlers> {
     /// The global world state containing all inputs for LSP analysis lives
     /// here. The dispatcher provides refs, exclusive refs, or snapshots to
     /// handlers.
@@ -226,18 +202,21 @@ pub(crate) struct GlobalState {
     /// handlers.
     lsp_state: LspState,
 
+    /// The host's request and event handlers.
+    handlers: H,
+
     /// LSP client shared with tower-lsp and the log loop
     client: Client,
 
     /// Request handlers whose panic has already been reported to the user.
-    reported_request_panics: HashSet<Discriminant<LspRequest>>,
+    reported_request_panics: HashSet<RequestKind<H>>,
 
     /// Event channels for the main loop. The tower-lsp methods forward
-    /// notifications and requests here via `Event::Lsp`. We also receive
-    /// messages from the kernel via `Event::Kernel`, and from ourselves via
-    /// `Event::Task`.
-    events_tx: TokioUnboundedSender<Event>,
-    events_rx: TokioUnboundedReceiver<Event>,
+    /// notifications and requests here via `Event::Lsp`. The host posts its
+    /// events via `Event::Host`, and background jobs send their results back
+    /// through the other variants.
+    events_tx: TokioUnboundedSender<Event<H>>,
+    events_rx: TokioUnboundedReceiver<Event<H>>,
 
     /// Diagnostics need a refresh whenever the current oak revision differs.
     last_refreshed_revision: salsa::plumbing::Revision,
@@ -277,9 +256,6 @@ pub(crate) const SOURCE_POOL_THREADS: usize = 2;
 pub(crate) struct LspState {
     /// Capabilities negotiated with the client
     pub(crate) capabilities: Capabilities,
-
-    /// Channel for sending notifications to Console (e.g., document changes for DAP)
-    pub(crate) console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
 
     /// Coordinator for asynchronous workspace scans. Mutated only from
     /// main-loop handlers. Must be out of [`WorldState`] because the scheduler
@@ -345,12 +321,11 @@ impl LspState {
     /// job or environment resolution runs until
     /// [`Self::with_source_scheduler()`], [`Self::with_sidecar_scheduler()`]
     /// or [`Self::with_environment_scheduler()`] installs one.
-    pub(crate) fn new(console_notification_tx: TokioUnboundedSender<ConsoleNotification>) -> Self {
+    pub(crate) fn new() -> Self {
         let service_context = Arc::new(LspServiceContext::new());
 
         Self {
             capabilities: Capabilities::default(),
-            console_notification_tx,
             oak_scheduler: ScanScheduler::new(),
             source_scheduler: SourceScheduler::new(None),
             sidecar_scheduler: SidecarScheduler::new(None),
@@ -413,18 +388,42 @@ impl LspState {
         self
     }
 
+    /// The schedulers' answers about pending work, for request handlers.
+    pub(crate) fn readiness<'a>(&'a self, world: &'a WorldState) -> Readiness<'a> {
+        Readiness {
+            world,
+            environment_scheduler: &self.environment_scheduler,
+            source_scheduler: &self.source_scheduler,
+            sidecar_scheduler: &self.sidecar_scheduler,
+        }
+    }
+}
+
+/// Reports whether library resolution, source fetching or sidecar jobs can
+/// still change a request's answer. Handlers can use this to mark an answer
+/// incomplete, but cannot schedule work through this interface.
+pub(crate) struct Readiness<'a> {
+    world: &'a WorldState,
+    environment_scheduler: &'a EnvironmentScheduler,
+    source_scheduler: &'a SourceScheduler,
+    sidecar_scheduler: &'a SidecarScheduler,
+}
+
+impl Readiness<'_> {
+    /// Whether library resolution is pending for `environment`, so its set of
+    /// available packages can still change.
+    pub(crate) fn libraries_pending(&self, environment: Environment) -> bool {
+        self.environment_scheduler.is_pending(environment)
+    }
+
     /// Whether neither the source fetch nor the sidecar job can still change
     /// `package`. A `pkg::` completion list stays incomplete until its package
     /// settles, since either job can add names or determine item kinds.
-    pub(crate) fn package_settled(
-        &self,
-        db: &dyn Db,
-        config: &OakConfig,
-        package: Package,
-    ) -> bool {
+    pub(crate) fn package_settled(&self, package: Package) -> bool {
+        let db = self.world.db();
         !self
             .source_scheduler
-            .sources_may_arrive(db, config, package) &&
+            .sources_may_arrive(db, &self.world.config.oak, package) &&
             !self.sidecar_scheduler.may_change(db, package)
     }
 }
@@ -447,37 +446,27 @@ struct AuxiliaryState {
     published_diagnostics: HashMap<FilePath, Vec<Diagnostic>>,
 }
 
-impl GlobalState {
+impl<H: Handlers> GlobalState<H> {
     /// Create a new global state
     ///
     /// # Arguments
     ///
+    /// * `handlers` supplies the host's request and event handlers.
     /// * `client`: The tower-lsp client shared with the tower-lsp backend
     ///   and auxiliary loop.
-    pub(crate) fn new(
-        client: Client,
-        r_home: PathBuf,
-        console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
-    ) -> Self {
-        // The embedded session's `.libPaths()` cannot describe every workspace
-        // environment. Resolution starts fresh R processes at `initialize`.
-        let r = oak_r_process::r_executable(&r_home);
-        if r.is_none() {
-            log::warn!(
-                "Can't locate an R executable under '{r_home}', source fetching, the sidecar job and R library resolution are disabled",
-                r_home = r_home.display()
-            );
-        }
-
-        let source_handler = r.as_deref().and_then(source_handler);
-        let sidecar_handler = r.as_deref().and_then(sidecar_handler);
-        let resolver =
-            r.map(|r| Arc::new(RProcessResolver::new(r)) as Arc<dyn EnvironmentResolver>);
+    /// * `r_executable` selects the R executable for source fetching, sidecar
+    ///   jobs and library resolution. Without it, all three are disabled.
+    pub(crate) fn new(handlers: H, client: Client, r_executable: Option<PathBuf>) -> Self {
+        let source_handler = r_executable.as_deref().and_then(source_handler);
+        let sidecar_handler = r_executable.as_deref().and_then(sidecar_handler);
+        let resolver = r_executable
+            .map(|r| Arc::new(RProcessResolver::new(r)) as Arc<dyn EnvironmentResolver>);
 
         Self::from_parts(
+            handlers,
             client,
             WorldState::new(unresolved_database()),
-            LspState::new(console_notification_tx)
+            LspState::new()
                 .with_source_scheduler(SourceScheduler::new(source_handler))
                 .with_sidecar_scheduler(SidecarScheduler::new(sidecar_handler))
                 .with_environment_scheduler(EnvironmentScheduler::new(resolver)),
@@ -486,15 +475,21 @@ impl GlobalState {
 
     /// Assemble preconfigured [`WorldState`] and [`LspState`] values so tests
     /// can supply their own database, source handler, and environment resolver.
-    pub(crate) fn from_parts(client: Client, world: WorldState, lsp_state: LspState) -> Self {
+    pub(crate) fn from_parts(
+        handlers: H,
+        client: Client,
+        world: WorldState,
+        lsp_state: LspState,
+    ) -> Self {
         // Transmission channel for the main loop events. Shared with the
-        // tower-lsp backend and the Jupyter kernel.
-        let (events_tx, events_rx) = tokio_unbounded_channel::<Event>();
+        // tower-lsp backend and the host.
+        let (events_tx, events_rx) = tokio_unbounded_channel::<Event<H>>();
         let last_refreshed_revision = world.revision();
 
         Self {
             world,
             lsp_state,
+            handlers,
             client,
             reported_request_panics: HashSet::new(),
             events_tx,
@@ -505,7 +500,7 @@ impl GlobalState {
     }
 
     /// Get `Event` transmission channel
-    pub(crate) fn events_tx(&self) -> TokioUnboundedSender<Event> {
+    pub(crate) fn events_tx(&self) -> TokioUnboundedSender<Event<H>> {
         self.events_tx.clone()
     }
 
@@ -632,7 +627,7 @@ impl GlobalState {
     /// pumps use this; the running loop selects on the channel directly so it
     /// can also watch for shutdown.
     #[cfg(any(test, feature = "testing"))]
-    pub(crate) async fn next_event(&mut self) -> Event {
+    pub(crate) async fn next_event(&mut self) -> Event<H> {
         self.events_rx.recv().await.unwrap()
     }
 
@@ -641,7 +636,7 @@ impl GlobalState {
     /// shuts down the LSP or fails a test.
     async fn handle_event_in_boundary(
         &mut self,
-        event: Event,
+        event: Event<H>,
     ) -> Result<(anyhow::Result<()>, DispatchTiming), panic::PanicPayload> {
         panic::catch_unwind_async_payload(Recovery::Always, self.handle_event(event)).await
     }
@@ -653,7 +648,7 @@ impl GlobalState {
     /// and refresh-eligibility checks. `DispatchTiming` is measured separately
     /// so harness timings don't depend on which tracing layers are installed.
     #[tracing::instrument(level = "info", skip_all, fields(kind = event.kind()))]
-    async fn handle_event(&mut self, event: Event) -> (anyhow::Result<()>, DispatchTiming) {
+    async fn handle_event(&mut self, event: Event<H>) -> (anyhow::Result<()>, DispatchTiming) {
         let _tick = self
             .lsp_state
             .watchdog
@@ -699,7 +694,7 @@ impl GlobalState {
     ///   of the main loop should be as fast as possible to increase throughput)
     ///   they run on the [`crate::lsp::analysis`] pool over a snapshot of the
     ///   state.
-    async fn dispatch_event(&mut self, event: Event) -> anyhow::Result<()> {
+    async fn dispatch_event(&mut self, event: Event<H>) -> anyhow::Result<()> {
         let loop_tick = std::time::Instant::now();
 
         match event {
@@ -728,7 +723,7 @@ impl GlobalState {
                             state_handlers::did_open(params, &mut self.world)?;
                         },
                         LspNotification::DidChangeTextDocument(params) => {
-                            state_handlers::did_change(params, &mut self.lsp_state, &mut self.world)?;
+                            state_handlers::did_change(params, &mut self.handlers, &mut self.world)?;
                         },
                         LspNotification::DidSaveTextDocument(_params) => {
                             // Currently ignored
@@ -740,7 +735,7 @@ impl GlobalState {
                             state_handlers::did_open_notebook(params, &mut self.world)?;
                         },
                         LspNotification::DidChangeNotebookDocument(params) => {
-                            state_handlers::did_change_notebook(params, &mut self.lsp_state, &mut self.world)?;
+                            state_handlers::did_change_notebook(params, &mut self.handlers, &mut self.world)?;
                         },
                         LspNotification::DidCloseNotebookDocument(params) => {
                             state_handlers::did_close_notebook(params, &mut self.world)?;
@@ -750,99 +745,73 @@ impl GlobalState {
                         LspNotification::TestPanic => {
                             panic!("Test panic in a notification handler");
                         },
-                        #[cfg(feature = "testing")]
-                        LspNotification::TestCancelRTask => {
-                            crate::r_task(|| {
-                                std::panic::resume_unwind(Box::new(
-                                    salsa::Cancelled::PendingWrite,
-                                ))
-                            });
-                        },
-                        #[cfg(feature = "testing")]
-                        LspNotification::TestPanicRTask => {
-                            crate::r_task(|| panic!("Test panic in an R task"));
-                        },
-                        #[cfg(feature = "testing")]
-                        LspNotification::TestRErrorRTask => {
-                            crate::r_task(|| -> () {
-                                unsafe { libr::Rf_error(c"Test R error in an R task".as_ptr()) }
-                            });
-                        },
                     }
                 },
 
                 LspMessage::Request(request, tx) => {
                     lsp::log_info!("{request:#?}");
 
-                    let request_kind = discriminant(&request);
+                    let request_kind = request_kind(&request);
+                    let host = &self.handlers;
                     let outcome = match request {
                         LspRequest::Initialize(params) => {
-                            respond_exclusive(tx, || state_handlers::initialize(params, &mut self.lsp_state, &mut self.world, &self.events_tx), LspResponse::Initialize)?
+                            respond_exclusive(tx, || state_handlers::initialize(params, host, &mut self.lsp_state, &mut self.world, &self.events_tx), LspResponse::Initialize)?
                         },
                         LspRequest::WorkspaceSymbol(params) => {
-                            respond(tx, || handlers::handle_symbol(params, &self.world), LspResponse::WorkspaceSymbol)?
+                            respond(tx, || host.workspace_symbol(params, &self.request_context()), LspResponse::WorkspaceSymbol)?
                         },
                         LspRequest::DocumentSymbol(params) => {
-                            respond(tx, || handlers::handle_document_symbol(params, &self.world), LspResponse::DocumentSymbol)?
+                            respond(tx, || host.document_symbol(params, &self.request_context()), LspResponse::DocumentSymbol)?
                         },
                         LspRequest::FoldingRange(params) => {
-                            respond(tx, || handlers::handle_folding_range(params, &self.world), LspResponse::FoldingRange)?
+                            respond(tx, || host.folding_range(params, &self.request_context()), LspResponse::FoldingRange)?
                         },
                         LspRequest::ExecuteCommand(_params) => {
                             let response = handlers::handle_execute_command(&self.client).await;
                             respond(tx, || response, LspResponse::ExecuteCommand)?
                         },
                         LspRequest::Completion(params) => {
-                            respond(tx, || handlers::handle_completion(params, &self.world, &self.lsp_state), LspResponse::Completion)?
+                            respond(tx, || host.completion(params, &self.request_context()), LspResponse::Completion)?
                         },
                         LspRequest::CompletionResolve(params) => {
-                            respond(tx, || handlers::handle_completion_resolve(params), LspResponse::CompletionResolve)?
+                            respond(tx, || host.completion_resolve(params, &self.request_context()), LspResponse::CompletionResolve)?
                         },
                         LspRequest::Hover(params) => {
-                            respond(tx, || handlers::handle_hover(params, &self.world), LspResponse::Hover)?
+                            respond(tx, || host.hover(params, &self.request_context()), LspResponse::Hover)?
                         },
                         LspRequest::SignatureHelp(params) => {
-                            respond(tx, || handlers::handle_signature_help(params, &self.world), LspResponse::SignatureHelp)?
+                            respond(tx, || host.signature_help(params, &self.request_context()), LspResponse::SignatureHelp)?
                         },
                         LspRequest::GotoDefinition(params) => {
-                            respond(tx, || handlers::handle_goto_definition(params, &self.world), LspResponse::GotoDefinition)?
+                            respond(tx, || host.goto_definition(params, &self.request_context()), LspResponse::GotoDefinition)?
                         },
                         LspRequest::GotoImplementation(_params) => {
                             // TODO
                             respond(tx, || Ok(None), LspResponse::GotoImplementation)?
                         },
                         LspRequest::SelectionRange(params) => {
-                            respond(tx, || handlers::handle_selection_range(params, &self.world), LspResponse::SelectionRange)?
+                            respond(tx, || host.selection_range(params, &self.request_context()), LspResponse::SelectionRange)?
                         },
                         LspRequest::References(params) => {
-                            respond(tx, || handlers::handle_references(params, &self.world), LspResponse::References)?
+                            respond(tx, || host.references(params, &self.request_context()), LspResponse::References)?
                         },
                         LspRequest::PrepareRename(params) => {
-                            respond(tx, || handlers::handle_prepare_rename(params, &self.world), LspResponse::PrepareRename)?
+                            respond(tx, || host.prepare_rename(params, &self.request_context()), LspResponse::PrepareRename)?
                         },
                         LspRequest::Rename(params) => {
-                            respond(tx, || handlers::handle_rename(params, &self.world), LspResponse::Rename)?
-                        },
-                        LspRequest::StatementRange(params) => {
-                            respond(tx, || handlers::handle_statement_range(params, &self.world), LspResponse::StatementRange)?
-                        },
-                        LspRequest::HelpTopic(params) => {
-                            respond(tx, || handlers::handle_help_topic(params, &self.world), LspResponse::HelpTopic)?
+                            respond(tx, || host.rename(params, &self.request_context()), LspResponse::Rename)?
                         },
                         LspRequest::OnTypeFormatting(params) => {
                             if let Some(path) = params.text_document_position.text_document.uri.to_document_path().log_err() {
                                 state_handlers::did_change_formatting_options(&path, &params.options, &mut self.world);
                             }
-                            respond(tx, || handlers::handle_indent(params, &self.world), LspResponse::OnTypeFormatting)?
+                            respond(tx, || host.on_type_formatting(params, &self.request_context()), LspResponse::OnTypeFormatting)?
                         },
                         LspRequest::CodeAction(params) => {
-                            respond(tx, || handlers::handle_code_action(params, &self.lsp_state, &self.world), LspResponse::CodeAction)?
+                            respond(tx, || host.code_action(params, &self.request_context()), LspResponse::CodeAction)?
                         },
-                        LspRequest::VirtualDocument(params) => {
-                            respond(tx, || handlers::handle_virtual_document(params, &self.world), LspResponse::VirtualDocument)?
-                        },
-                        LspRequest::InputBoundaries(params) => {
-                            respond(tx, || handlers::handle_input_boundaries(params), LspResponse::InputBoundaries)?
+                        LspRequest::Host(request) => {
+                            respond(tx, || host.request(request, &self.request_context()), LspResponse::Host)?
                         },
 
                         #[cfg(feature = "testing")]
@@ -859,20 +828,9 @@ impl GlobalState {
                 },
             },
 
-            Event::Kernel(notif) => {
-                lsp::log_info!("{notif:#?}", notif = notif.trace());
-
-                match notif {
-                    KernelNotification::DidChangeConsoleInputs(inputs) => {
-                        host::did_change_console_inputs(inputs, &mut self.world)?;
-                    },
-                    KernelNotification::DidOpenVirtualDocument(params) => {
-                        state_handlers::did_open_virtual_document(params, &mut self.world)?;
-                    },
-                    KernelNotification::DidCloseVirtualDocument(params) => {
-                        state_handlers::did_close_virtual_document(params, &mut self.world)?
-                    }
-                }
+            Event::Host(event) => {
+                let mut cx = EventContext { world: &mut self.world };
+                self.handlers.event(event, &mut cx)?;
             },
 
             Event::OakScanCompleted(scan) => {
@@ -1066,6 +1024,7 @@ impl GlobalState {
 
         let tasks = self.lsp_state.diagnostics.refresh_all(
             &self.world,
+            &self.handlers,
             &self.lsp_state.analysis_pool,
             &self.events_tx,
         );
@@ -1134,6 +1093,14 @@ impl GlobalState {
             self.world
                 .db_mut()
                 .set_package_facts(package, None, Vec::new());
+        }
+    }
+
+    fn request_context(&self) -> RequestContext<'_> {
+        RequestContext {
+            world: &self.world,
+            capabilities: &self.lsp_state.capabilities,
+            readiness: self.lsp_state.readiness(&self.world),
         }
     }
 
@@ -1248,14 +1215,14 @@ fn sidecar_handler(r: &Path) -> Option<Arc<dyn SidecarHandler>> {
 /// `handle_event()`. [`crate::lsp::harness::LspSession`] builds on them, so
 /// benchmarks built with the `testing` feature need them too.
 #[cfg(any(test, feature = "testing"))]
-impl GlobalState {
+impl<H: Handlers> GlobalState<H> {
     /// Run one `event` through `handle_event()` without pumping follow-up work.
     /// This allows callers to inspect or gate a subsystem before it settles.
     /// Panics unwind to the test runner rather than shutting down the LSP.
     ///
     /// `handle_event()` absorbs handler cancellation. Any other unwind fails the
     /// test, including a cancellation that `main_loop()` would ignore.
-    pub(crate) async fn handle_event_once(&mut self, event: Event) -> DispatchTiming {
+    pub(crate) async fn handle_event_once(&mut self, event: Event<H>) -> DispatchTiming {
         match self.handle_event_in_boundary(event).await {
             Ok((Ok(()), timing)) => timing,
             Ok((Err(err), _timing)) => panic!("Failure while handling event: {err:?}"),
@@ -1297,14 +1264,14 @@ impl GlobalState {
 
 /// Test-only pumps for driving the main loop to a chosen point.
 #[cfg(test)]
-impl GlobalState {
+impl<H: Handlers> GlobalState<H> {
     /// Run `event` through the real `handle_event`, then pump any pending
     /// events until we reach quiescence. This includes:
     /// - Pending oak scans
     /// - Pending source requests
     /// - The running sidecar job
     /// - Pending environment resolutions
-    pub(crate) async fn handle_event_to_quiescence(&mut self, event: Event) {
+    pub(crate) async fn handle_event_to_quiescence(&mut self, event: Event<H>) {
         self.handle_event_once(event).await;
         self.pump_to_quiescence().await;
     }
@@ -1360,7 +1327,7 @@ impl GlobalState {
     /// Pump events until one satisfies `wanted`, handling the others, and hand
     /// that one back unhandled. Lets a test slip its own events in front of a
     /// response that is already in flight.
-    pub(crate) async fn take_event(&mut self, wanted: impl Fn(&Event) -> bool) -> Event {
+    pub(crate) async fn take_event(&mut self, wanted: impl Fn(&Event<H>) -> bool) -> Event<H> {
         loop {
             let event = self.next_event_or_panic("a wanted event").await;
             if wanted(&event) {
@@ -1375,7 +1342,7 @@ impl GlobalState {
     /// fixture package the scanner didn't list, a lost wakeup) would otherwise
     /// block the test forever: the local nextest profile reports slow tests
     /// but never kills them.
-    async fn next_event_or_panic(&mut self, waiting_for: &str) -> Event {
+    async fn next_event_or_panic(&mut self, waiting_for: &str) -> Event<H> {
         const TIMEOUT: Duration = Duration::from_secs(30);
         match tokio::time::timeout(TIMEOUT, self.next_event()).await {
             Ok(event) => event,
@@ -1417,9 +1384,9 @@ fn classify_event_unwind(payload: panic::PanicPayload) -> EventUnwind {
 /// A scan that panics or never runs reports [`Event::OakScanFailed`]. Without
 /// that notification, the root would remain `Scanning`, preventing buffered
 /// watcher events under it from applying.
-pub(super) fn dispatch_scan_requests(
+pub(super) fn dispatch_scan_requests<H: Handlers>(
     pool: &IoPool,
-    events_tx: &TokioUnboundedSender<Event>,
+    events_tx: &TokioUnboundedSender<Event<H>>,
     requests: Vec<ScanRequest>,
 ) {
     for req in requests {
@@ -1428,6 +1395,21 @@ pub(super) fn dispatch_scan_requests(
             Event::OakScanCompleted(req.run())
         });
     }
+}
+
+/// Deduplication key for request panic reports. For [`LspRequest::Host`],
+/// include the host request's discriminant to distinguish its enum variants.
+type RequestKind<H> = (
+    Discriminant<LspRequest<H>>,
+    Option<Discriminant<<H as Handlers>::Request>>,
+);
+
+fn request_kind<H: Handlers>(request: &LspRequest<H>) -> RequestKind<H> {
+    let host_kind = match request {
+        LspRequest::Host(request) => Some(discriminant(request)),
+        _ => None,
+    };
+    (discriminant(request), host_kind)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1454,10 +1436,10 @@ enum RequestOutcome {
 /// * - `response_tx`: A response channel for the tower-lsp request handler.
 /// * - `response`: A closure producing a response wrapped in a `LspResult`. Errors are logged.
 /// * - `into_lsp_response`: A constructor for the relevant `LspResponse` variant.
-fn respond<T>(
-    response_tx: TokioUnboundedSender<RequestResponse>,
+fn respond<H: Handlers, T>(
+    response_tx: TokioUnboundedSender<RequestResponse<H>>,
     response: impl FnOnce() -> LspResult<T>,
-    into_lsp_response: impl FnOnce(T) -> LspResponse,
+    into_lsp_response: impl FnOnce(T) -> LspResponse<H>,
 ) -> anyhow::Result<RequestOutcome> {
     let (response, outcome) = match panic::catch_unwind(Recovery::Always, || {
         catch_cancellation(response)
@@ -1501,10 +1483,10 @@ fn respond<T>(
 /// We don't recover from panics in these handlers because they could leave
 /// leave the world state half-built. Let them reach `main_loop()`'s recovery
 /// boundary, which terminates the session.
-fn respond_exclusive<T>(
-    response_tx: TokioUnboundedSender<RequestResponse>,
+fn respond_exclusive<H: Handlers, T>(
+    response_tx: TokioUnboundedSender<RequestResponse<H>>,
     response: impl FnOnce() -> LspResult<T>,
-    into_lsp_response: impl FnOnce(T) -> LspResponse,
+    into_lsp_response: impl FnOnce(T) -> LspResponse<H>,
 ) -> anyhow::Result<RequestOutcome> {
     let response = match catch_cancellation(response) {
         Some(Ok(value)) => RequestResponse::Result(Ok(into_lsp_response(value))),
@@ -1516,9 +1498,9 @@ fn respond_exclusive<T>(
     Ok(RequestOutcome::Handled)
 }
 
-fn send_response(
-    response_tx: TokioUnboundedSender<RequestResponse>,
-    response: RequestResponse,
+fn send_response<H: Handlers>(
+    response_tx: TokioUnboundedSender<RequestResponse<H>>,
+    response: RequestResponse<H>,
 ) -> anyhow::Result<()> {
     let out = match response {
         RequestResponse::Result(Ok(_)) => Ok(()),
@@ -1745,29 +1727,6 @@ pub(crate) fn publish_diagnostics(publication: DiagnosticsPublication) {
     send_auxiliary(AuxiliaryEvent::PublishDiagnostics(publication));
 }
 
-impl KernelNotification {
-    pub(crate) fn trace(&self) -> TraceKernelNotification<'_> {
-        TraceKernelNotification { inner: self }
-    }
-}
-
-impl std::fmt::Debug for TraceKernelNotification<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.inner {
-            KernelNotification::DidChangeConsoleInputs(_) => f.write_str("DidChangeConsoleInputs"),
-            KernelNotification::DidOpenVirtualDocument(params) => f
-                .debug_struct("DidOpenVirtualDocument")
-                .field("uri", &params.uri)
-                .field("contents", &"<snip>")
-                .finish(),
-            KernelNotification::DidCloseVirtualDocument(params) => f
-                .debug_struct("DidCloseVirtualDocument")
-                .field("uri", &params.uri)
-                .finish(),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub(crate) struct DiagnosticsPublication {
     /// Identity for the dedup cache. Two spellings of the same document
@@ -1781,17 +1740,20 @@ pub(crate) struct DiagnosticsPublication {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::Infallible;
     use std::time::Instant;
 
     use aether_path::FilePath;
     use oak_scan::DbScan;
     use serde_json::Value;
     use tower_lsp_server::jsonrpc;
+    use tower_lsp_server::ls_types::ServerInfo;
     use url::Url;
 
     use super::classify_event_unwind;
     use super::init_aux_for_test;
     use super::register_auxiliary_tx;
+    use super::request_kind;
     use super::respond;
     use super::send_auxiliary;
     use super::tokio_unbounded_channel;
@@ -1806,14 +1768,18 @@ mod tests {
     use super::LspState;
     use super::MAX_REFRESH_DELAY;
     use crate::lsp::backend::LspError;
-    use crate::lsp::backend::LspMessage;
-    use crate::lsp::backend::LspNotification;
+    use crate::lsp::backend::LspRequest;
     use crate::lsp::backend::LspResponse;
+    use crate::lsp::backend::LspResult;
     use crate::lsp::backend::RequestResponse;
+    use crate::lsp::handlers::EventContext;
+    use crate::lsp::handlers::Handlers;
+    use crate::lsp::handlers::RequestContext;
     use crate::lsp::harness::editor::client::test_client;
     use crate::lsp::harness::editor::client::TestClient;
     use crate::lsp::harness::editor::notifications::did_change;
     use crate::lsp::harness::editor::notifications::did_open;
+    use crate::lsp::harness::TestHandlers;
     use crate::lsp::state::WorldState;
     use crate::lsp::traits::url::UrlExt;
 
@@ -1985,12 +1951,7 @@ mod tests {
         let mut state = global_state();
         let dir = tempfile::tempdir().unwrap();
 
-        state
-            .events_tx
-            .send(Event::Lsp(LspMessage::Notification(
-                LspNotification::TestCancelRTask,
-            )))
-            .unwrap();
+        state.events_tx.send(Event::Host(Cancel)).unwrap();
         state
             .handle_event(did_open(&dir.path().join("script.R"), "x <- 1\n"))
             .await
@@ -2003,12 +1964,85 @@ mod tests {
         assert_eq!(state.lsp_state.diagnostics_metrics.batches, 1);
     }
 
-    fn global_state() -> GlobalState {
+    fn global_state() -> GlobalState<CancellingHandlers> {
         GlobalState::from_parts(
+            CancellingHandlers,
             test_client(),
             WorldState::default(),
-            LspState::new(tokio_unbounded_channel().0),
+            LspState::new(),
         )
+    }
+
+    /// A host whose only event unwinds with a Salsa cancellation, as a handler
+    /// does when a database write cancels its query.
+    #[derive(Debug)]
+    struct CancellingHandlers;
+
+    #[derive(Debug)]
+    struct Cancel;
+
+    impl Handlers for CancellingHandlers {
+        type Request = Infallible;
+        type Response = Infallible;
+        type Event = Cancel;
+
+        fn server_info(&self) -> ServerInfo {
+            ServerInfo {
+                name: String::from("Cancelling test host"),
+                version: None,
+            }
+        }
+
+        fn request(&self, request: Infallible, _cx: &RequestContext<'_>) -> LspResult<Infallible> {
+            match request {}
+        }
+
+        fn event(&mut self, _event: Cancel, _cx: &mut EventContext<'_>) -> anyhow::Result<()> {
+            std::panic::resume_unwind(Box::new(salsa::Cancelled::PendingWrite))
+        }
+    }
+
+    /// A host with two request kinds, which panic reports must tell apart.
+    #[derive(Debug)]
+    struct TwoRequestHandlers;
+
+    #[derive(Debug)]
+    enum TwoRequests {
+        First,
+        Second,
+    }
+
+    impl Handlers for TwoRequestHandlers {
+        type Request = TwoRequests;
+        type Response = ();
+        type Event = Infallible;
+
+        fn server_info(&self) -> ServerInfo {
+            ServerInfo {
+                name: String::from("Two-request test host"),
+                version: None,
+            }
+        }
+
+        fn request(&self, _request: TwoRequests, _cx: &RequestContext<'_>) -> LspResult<()> {
+            Ok(())
+        }
+
+        fn event(&mut self, event: Infallible, _cx: &mut EventContext<'_>) -> anyhow::Result<()> {
+            match event {}
+        }
+    }
+
+    #[test]
+    fn test_request_kind_tells_host_requests_apart() {
+        let first = request_kind::<TwoRequestHandlers>(&LspRequest::Host(TwoRequests::First));
+        let second = request_kind::<TwoRequestHandlers>(&LspRequest::Host(TwoRequests::Second));
+
+        assert_eq!(
+            first,
+            request_kind::<TwoRequestHandlers>(&LspRequest::Host(TwoRequests::First))
+        );
+        assert_ne!(first, second);
     }
 
     #[test]
@@ -2047,7 +2081,8 @@ mod tests {
         let snapshot = state.snapshot();
         snapshot.cancellation_token().cancel();
 
-        let (response_tx, mut response_rx) = tokio_unbounded_channel::<RequestResponse>();
+        let (response_tx, mut response_rx) =
+            tokio_unbounded_channel::<RequestResponse<TestHandlers>>();
         respond(
             response_tx,
             || {

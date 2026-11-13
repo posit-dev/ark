@@ -5,14 +5,17 @@
 //
 //
 
-use anyhow::anyhow;
+//! Host request and event handling through [`Handlers`], with shared handlers
+//! for requests that do not require an R session.
+
+use std::fmt::Debug;
+
+use aether_path::FilePath;
 use serde_json::Value;
 use stdext::result::ResultExt;
-use stdext::unwrap;
 use tower_lsp_server::ls_types::CodeActionParams;
 use tower_lsp_server::ls_types::CodeActionResponse;
 use tower_lsp_server::ls_types::CompletionItem;
-use tower_lsp_server::ls_types::CompletionList;
 use tower_lsp_server::ls_types::CompletionParams;
 use tower_lsp_server::ls_types::CompletionResponse;
 use tower_lsp_server::ls_types::DocumentOnTypeFormattingParams;
@@ -24,7 +27,6 @@ use tower_lsp_server::ls_types::FoldingRangeParams;
 use tower_lsp_server::ls_types::GotoDefinitionParams;
 use tower_lsp_server::ls_types::GotoDefinitionResponse;
 use tower_lsp_server::ls_types::Hover;
-use tower_lsp_server::ls_types::HoverContents;
 use tower_lsp_server::ls_types::HoverParams;
 use tower_lsp_server::ls_types::Location;
 use tower_lsp_server::ls_types::MessageType;
@@ -33,6 +35,8 @@ use tower_lsp_server::ls_types::ReferenceParams;
 use tower_lsp_server::ls_types::RenameParams;
 use tower_lsp_server::ls_types::SelectionRange;
 use tower_lsp_server::ls_types::SelectionRangeParams;
+use tower_lsp_server::ls_types::ServerCapabilities;
+use tower_lsp_server::ls_types::ServerInfo;
 use tower_lsp_server::ls_types::SignatureHelp;
 use tower_lsp_server::ls_types::SignatureHelpParams;
 use tower_lsp_server::ls_types::SymbolInformation;
@@ -42,60 +46,189 @@ use tower_lsp_server::ls_types::WorkspaceEdit;
 use tower_lsp_server::ls_types::WorkspaceSymbolParams;
 use tower_lsp_server::Client;
 
-use crate::analysis::input_boundaries::input_boundaries;
 use crate::lsp;
-use crate::lsp::backend::LspError;
 use crate::lsp::backend::LspResult;
+use crate::lsp::capabilities::Capabilities;
 use crate::lsp::code_action::code_actions;
-use crate::lsp::completions::finish;
-use crate::lsp::completions::r_completions;
-use crate::lsp::completions::resolve_completion;
-use crate::lsp::completions::resolve_target;
-use crate::lsp::completions::static_completions;
-use crate::lsp::completions::RCompletionReplies;
 use crate::lsp::coordinates::lsp_range_from_tree_sitter_range;
 use crate::lsp::coordinates::tree_sitter_point_from_lsp_position;
 use crate::lsp::coordinates::tree_sitter_range_from_lsp_range;
 use crate::lsp::db::FileLegacyExt;
-use crate::lsp::document_context::DocumentContext;
 use crate::lsp::find_references::find_references;
 use crate::lsp::folding_range::folding_range;
 use crate::lsp::goto_definition::goto_definition;
-use crate::lsp::help_topic::help_topic;
-use crate::lsp::help_topic::HelpTopicParams;
-use crate::lsp::help_topic::HelpTopicResponse;
-use crate::lsp::hover::r_hover;
 use crate::lsp::indent::indent_edit;
-use crate::lsp::input_boundaries::InputBoundariesParams;
-use crate::lsp::input_boundaries::InputBoundariesResponse;
-use crate::lsp::main_loop::LspState;
+use crate::lsp::main_loop::Readiness;
 use crate::lsp::rename;
 use crate::lsp::selection_range::convert_selection_range_from_tree_sitter_to_lsp;
 use crate::lsp::selection_range::selection_range;
-use crate::lsp::signature_help::r_signature_help;
-use crate::lsp::signature_help::static_signature_help;
-use crate::lsp::signature_help::StaticSignatureHelp;
 use crate::lsp::state::WorldState;
-use crate::lsp::statement_range::statement_range;
-use crate::lsp::statement_range::StatementRangeParams;
-use crate::lsp::statement_range::StatementRangeResponse;
 use crate::lsp::symbols;
 use crate::lsp::traits::url::UriExt;
-use crate::r_task;
-use crate::r_task::try_r_task;
 
-pub static ARK_VDOC_REQUEST: &str = "ark/internal/virtualDocument";
+/// Host hooks for requests, events, initialization and diagnostics.
+/// Request handlers run inside `respond()`'s panic and cancellation recovery.
+/// A host can override individual handlers while keeping the shared defaults.
+///
+/// Completion, hover and signature help return no result by default.
+/// Completion resolve returns the item unchanged. Ark overrides these methods
+/// to consult its R session for documentation and session names. The other
+/// request methods with defaults call shared handlers.
+pub trait Handlers: Debug + Send + 'static {
+    /// Requests only this host serves, sent by the custom methods it registers
+    /// on the service builder.
+    type Request: Debug + Send;
+    type Response: Debug + Send;
 
-#[derive(Debug, Eq, PartialEq, Clone, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct VirtualDocumentParams {
-    pub path: String,
+    /// Events the host posts into the main loop, handled by [`Self::event()`].
+    type Event: Debug + Send;
+
+    fn server_info(&self) -> ServerInfo;
+
+    /// Adjust the capabilities advertised in the `initialize` response.
+    fn capabilities(&self, base: ServerCapabilities) -> ServerCapabilities {
+        base
+    }
+
+    fn workspace_symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+        cx: &RequestContext<'_>,
+    ) -> LspResult<Option<Vec<SymbolInformation>>> {
+        handle_symbol(params, cx.world)
+    }
+
+    fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+        cx: &RequestContext<'_>,
+    ) -> LspResult<Option<DocumentSymbolResponse>> {
+        handle_document_symbol(params, cx.world)
+    }
+
+    fn folding_range(
+        &self,
+        params: FoldingRangeParams,
+        cx: &RequestContext<'_>,
+    ) -> LspResult<Option<Vec<FoldingRange>>> {
+        handle_folding_range(params, cx.world)
+    }
+
+    fn completion(
+        &self,
+        _params: CompletionParams,
+        _cx: &RequestContext<'_>,
+    ) -> LspResult<Option<CompletionResponse>> {
+        Ok(None)
+    }
+
+    fn completion_resolve(
+        &self,
+        item: CompletionItem,
+        _cx: &RequestContext<'_>,
+    ) -> LspResult<CompletionItem> {
+        Ok(item)
+    }
+
+    fn hover(&self, _params: HoverParams, _cx: &RequestContext<'_>) -> LspResult<Option<Hover>> {
+        Ok(None)
+    }
+
+    fn signature_help(
+        &self,
+        _params: SignatureHelpParams,
+        _cx: &RequestContext<'_>,
+    ) -> LspResult<Option<SignatureHelp>> {
+        Ok(None)
+    }
+
+    fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+        cx: &RequestContext<'_>,
+    ) -> LspResult<Option<GotoDefinitionResponse>> {
+        handle_goto_definition(params, cx.world)
+    }
+
+    fn selection_range(
+        &self,
+        params: SelectionRangeParams,
+        cx: &RequestContext<'_>,
+    ) -> LspResult<Option<Vec<SelectionRange>>> {
+        handle_selection_range(params, cx.world)
+    }
+
+    fn references(
+        &self,
+        params: ReferenceParams,
+        cx: &RequestContext<'_>,
+    ) -> LspResult<Option<Vec<Location>>> {
+        handle_references(params, cx.world)
+    }
+
+    fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+        cx: &RequestContext<'_>,
+    ) -> LspResult<Option<PrepareRenameResponse>> {
+        handle_prepare_rename(params, cx.world)
+    }
+
+    fn rename(
+        &self,
+        params: RenameParams,
+        cx: &RequestContext<'_>,
+    ) -> LspResult<Option<WorkspaceEdit>> {
+        handle_rename(params, cx.world)
+    }
+
+    /// The main loop applies the request's indentation options before calling
+    /// this method, unless the document's indent size and tab width differ.
+    /// `cx` exposes the resulting document configuration.
+    fn on_type_formatting(
+        &self,
+        params: DocumentOnTypeFormattingParams,
+        cx: &RequestContext<'_>,
+    ) -> LspResult<Option<Vec<TextEdit>>> {
+        handle_indent(params, cx.world)
+    }
+
+    fn code_action(
+        &self,
+        params: CodeActionParams,
+        cx: &RequestContext<'_>,
+    ) -> LspResult<Option<CodeActionResponse>> {
+        handle_code_action(params, cx.capabilities, cx.world)
+    }
+
+    fn request(&self, request: Self::Request, cx: &RequestContext<'_>)
+        -> LspResult<Self::Response>;
+
+    /// Handle a host event inside the main loop's event boundary. This is the
+    /// only host method with write access to the world state.
+    fn event(&mut self, event: Self::Event, cx: &mut EventContext<'_>) -> anyhow::Result<()>;
+
+    /// Called after the main loop applies an editor change to the document at
+    /// `path`.
+    fn did_change_document(&mut self, _path: &FilePath) {}
+
+    /// Whether the open document at `path` gets diagnostics.
+    fn should_diagnose(&self, _path: &FilePath) -> bool {
+        true
+    }
 }
 
-pub(crate) type VirtualDocumentResponse = String;
+/// Read-only state for answering a request.
+pub struct RequestContext<'a> {
+    pub(crate) world: &'a WorldState,
+    pub(crate) capabilities: &'a Capabilities,
+    pub(crate) readiness: Readiness<'a>,
+}
 
-// Handlers that do not mutate the world state. They take a sharing reference or
-// a clone of the state.
+/// State that a host event may write.
+pub struct EventContext<'a> {
+    pub(crate) world: &'a mut WorldState,
+}
 
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn handle_symbol(
@@ -172,222 +305,6 @@ pub(crate) async fn handle_execute_command(client: &Client) -> LspResult<Option<
         Err(err) => client.log_message(MessageType::ERROR, err).await,
     }
     Ok(None)
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn handle_completion(
-    params: CompletionParams,
-    state: &WorldState,
-    lsp_state: &LspState,
-) -> LspResult<Option<CompletionResponse>> {
-    let path = params
-        .text_document_position
-        .text_document
-        .uri
-        .to_document_path()?;
-    let file = state.open_file(&path)?.file();
-    let db = state.db();
-    let encoding = state.config.position_encoding;
-
-    let position = params.text_document_position.position;
-    let point = tree_sitter_point_from_lsp_position(position, file.line_index(db), encoding)?;
-
-    let trigger = params.context.and_then(|ctxt| ctxt.trigger_character);
-
-    let context = DocumentContext::new(
-        file.tree_sitter(db),
-        file.source_text(db).as_str(),
-        file.line_index(db),
-        encoding,
-        point,
-        trigger,
-    );
-    lsp::log_info!("Completion context: {:#?}", context);
-
-    let (completions, request) = static_completions(&context, file, state)?;
-
-    // If the answer's R libraries, package sources or sidecar facts are still
-    // pending, the editor must request completions on the next keystroke rather
-    // than reuse a list with missing names or outdated kinds. While libraries
-    // resolve, `pkg::` can name a package the db doesn't list yet, and roxygen
-    // tags can need a `roxygen2` it doesn't list yet. Their empty answers would
-    // otherwise be final. Answers that don't depend on library packages, such
-    // as file paths, stay complete during resolution.
-    let incomplete = (completions.incomplete_while_libraries_resolve() &&
-        lsp_state
-            .environment_scheduler
-            .is_pending(file.environment(db))) ||
-        completions
-            .incomplete_until_packages_settle()
-            .iter()
-            .any(|package| !lsp_state.package_settled(db, &state.config.oak, *package));
-
-    // Without session slots the static items are the whole answer. Skipping
-    // the hop also avoids waiting up to `TRY_TASK_START_WITHIN` for an R event
-    // loop occupied by another task.
-    if !request.has_session_slots() {
-        let items = finish(completions, RCompletionReplies::default());
-        return Ok(completion_response(items, incomplete));
-    }
-
-    // Keep database handles out of the closure. An escaping R error skips
-    // destructors, and a leaked Salsa handle would block later writes.
-    let Some(replies) = try_r_task(|| r_completions(request)) else {
-        // Info level, like the per-source logs, so a kernel log shows why no
-        // session source ran
-        log::info!("Skipping session completions: R is busy");
-
-        // Every session slot keeps its static fallback. Marked incomplete so
-        // the editor requests again on the next keystroke instead of filtering
-        // this list, and gets the session items once R is idle.
-        let items = finish(completions, RCompletionReplies::default());
-        return Ok(completion_response(items, true));
-    };
-
-    let items = finish(completions, replies);
-    Ok(completion_response(items, incomplete))
-}
-
-/// An incomplete answer is a list even when empty, since `null` would end
-/// the editor's requests for the current word.
-fn completion_response(
-    completions: Vec<CompletionItem>,
-    is_incomplete: bool,
-) -> Option<CompletionResponse> {
-    if is_incomplete {
-        return Some(CompletionResponse::List(CompletionList {
-            is_incomplete,
-            items: completions,
-        }));
-    }
-
-    completion_array(completions)
-}
-
-fn completion_array(completions: Vec<CompletionItem>) -> Option<CompletionResponse> {
-    if completions.is_empty() {
-        None
-    } else {
-        Some(CompletionResponse::Array(completions))
-    }
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn handle_completion_resolve(mut item: CompletionItem) -> LspResult<CompletionItem> {
-    // Most item kinds have no documentation to add. Deciding that before the
-    // hop avoids waiting up to `TRY_TASK_START_WITHIN` for an R event loop
-    // occupied by another task.
-    let Some(target) = resolve_target(&item)? else {
-        return Ok(item);
-    };
-
-    // If R cannot accept the task, return the item unresolved rather than
-    // wait for R to become available and block the LSP main loop.
-    let Some(result) = try_r_task(|| resolve_completion(&mut item, &target)) else {
-        log::trace!("Skipping completion resolve: R is busy");
-        return Ok(item);
-    };
-    result?;
-    Ok(item)
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult<Option<Hover>> {
-    let path = params
-        .text_document_position_params
-        .text_document
-        .uri
-        .to_document_path()?;
-    let file = state.open_file(&path)?.file();
-    let db = state.db();
-    let encoding = state.config.position_encoding;
-
-    let position = params.text_document_position_params.position;
-    let point = tree_sitter_point_from_lsp_position(position, file.line_index(db), encoding)?;
-
-    let context = DocumentContext::new(
-        file.tree_sitter(db),
-        file.source_text(db).as_str(),
-        file.line_index(db),
-        encoding,
-        point,
-        None,
-    );
-
-    // Skip rather than block the LSP main loop while R is busy
-    let Some(result) = try_r_task(|| r_hover(&context)) else {
-        log::trace!("Skipping hover: R is busy");
-        return Ok(None);
-    };
-
-    // unwrap errors
-    let result = unwrap!(result, Err(err) => {
-        lsp::log_error!("{err:?}");
-        return Ok(None);
-    });
-
-    // unwrap empty options
-    let result = unwrap!(result, None => {
-        return Ok(None);
-    });
-
-    // we got a result; use it
-    Ok(Some(Hover {
-        contents: HoverContents::Markup(result),
-        range: None,
-    }))
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn handle_signature_help(
-    params: SignatureHelpParams,
-    state: &WorldState,
-) -> LspResult<Option<SignatureHelp>> {
-    let path = params
-        .text_document_position_params
-        .text_document
-        .uri
-        .to_document_path()?;
-    let file = state.open_file(&path)?.file();
-    let db = state.db();
-    let encoding = state.config.position_encoding;
-
-    let position = params.text_document_position_params.position;
-    let point = tree_sitter_point_from_lsp_position(position, file.line_index(db), encoding)?;
-
-    let context = DocumentContext::new(
-        file.tree_sitter(db),
-        file.source_text(db).as_str(),
-        file.line_index(db),
-        encoding,
-        point,
-        None,
-    );
-
-    let result = static_signature_help(&context, db, file);
-    let result = unwrap!(result, Err(err) => {
-        lsp::log_error!("{err:?}");
-        return Ok(None);
-    });
-    let Some(StaticSignatureHelp { help, request }) = result else {
-        return Ok(None);
-    };
-
-    // While R is busy, return static help without parameter documentation
-    // rather than wait for the session. The closure borrows only the request's
-    // plain data, so an escaping R error cannot leak a database handle.
-    let Some(reply) = try_r_task(|| r_signature_help(&request)) else {
-        log::trace!("Skipping session signature help: R is busy");
-        return Ok(help);
-    };
-
-    match reply {
-        Ok(reply) => Ok(reply.help_or(help)),
-        Err(err) => {
-            lsp::log_error!("{err:?}");
-            Ok(help)
-        },
-    }
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -470,34 +387,6 @@ pub(crate) fn handle_rename(
 }
 
 #[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn handle_statement_range(
-    params: StatementRangeParams,
-    state: &WorldState,
-) -> LspResult<Option<StatementRangeResponse>> {
-    let path = params.text_document.uri.to_document_path()?;
-    let file = state.open_file(&path)?.file();
-    let db = state.db();
-    let encoding = state.config.position_encoding;
-    let point =
-        tree_sitter_point_from_lsp_position(params.position, file.line_index(db), encoding)?;
-    statement_range(db, file, point, encoding)
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn handle_help_topic(
-    params: HelpTopicParams,
-    state: &WorldState,
-) -> LspResult<Option<HelpTopicResponse>> {
-    let path = params.text_document.uri.to_document_path()?;
-    let file = state.open_file(&path)?.file();
-    let db = state.db();
-    let encoding = state.config.position_encoding;
-    let point =
-        tree_sitter_point_from_lsp_position(params.position, file.line_index(db), encoding)?;
-    help_topic(db, file, point)
-}
-
-#[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn handle_indent(
     params: DocumentOnTypeFormattingParams,
     state: &WorldState,
@@ -531,7 +420,7 @@ pub(crate) fn handle_indent(
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn handle_code_action(
     params: CodeActionParams,
-    lsp_state: &LspState,
+    capabilities: &Capabilities,
     state: &WorldState,
 ) -> LspResult<Option<CodeActionResponse>> {
     let path = params.text_document.uri.to_document_path()?;
@@ -540,7 +429,6 @@ pub(crate) fn handle_code_action(
     let encoding = state.config.position_encoding;
     let range = tree_sitter_range_from_lsp_range(params.range, file.line_index(db), encoding)?;
 
-    let capabilities = &lsp_state.capabilities;
     let actions = code_actions(
         db,
         file.file(),
@@ -561,25 +449,4 @@ pub(crate) fn handle_code_action(
     } else {
         Ok(Some(response))
     }
-}
-
-pub(crate) fn handle_virtual_document(
-    params: VirtualDocumentParams,
-    state: &WorldState,
-) -> LspResult<VirtualDocumentResponse> {
-    if let Some(contents) = state.virtual_documents.get(&params.path) {
-        Ok(contents.clone())
-    } else {
-        Err(LspError::Anyhow(anyhow!(
-            "Can't find virtual document {}",
-            params.path
-        )))
-    }
-}
-
-pub(crate) fn handle_input_boundaries(
-    params: InputBoundariesParams,
-) -> LspResult<InputBoundariesResponse> {
-    let boundaries = r_task(|| input_boundaries(&params.text))?;
-    Ok(InputBoundariesResponse { boundaries })
 }

@@ -13,6 +13,8 @@ use super::utils::test_client;
 use super::utils::world_with_source_fetching;
 use super::utils::write_sources;
 use super::utils::DescriptionWriter;
+use crate::lsp::handlers::Handlers;
+use crate::lsp::harness::TestHandlers;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::sidecar::PackageFacts;
@@ -165,13 +167,27 @@ impl TestSidecarHandler {
 }
 
 /// Disable source fetching so tests can isolate sidecar scheduling.
-pub(super) fn sidecar_state(db: OakDatabase, sidecar: Arc<TestSidecarHandler>) -> GlobalState {
+pub(super) fn sidecar_state(
+    db: OakDatabase,
+    sidecar: Arc<TestSidecarHandler>,
+) -> GlobalState<TestHandlers> {
+    sidecar_state_with(TestHandlers, db, sidecar)
+}
+
+/// Disable source fetching to isolate sidecar scheduling, using `handlers`
+/// as the host.
+pub(super) fn sidecar_state_with<H: Handlers>(
+    handlers: H,
+    db: OakDatabase,
+    sidecar: Arc<TestSidecarHandler>,
+) -> GlobalState<H> {
     let mut scheduler = SourceScheduler::new(None);
     scheduler.config_arrived();
     GlobalState::from_parts(
+        handlers,
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(scheduler)
             .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar))),
     )

@@ -20,6 +20,7 @@ use oak_sidecar::lazy_data;
 use oak_sidecar::primitives::PrimitivesCache;
 use stdext::result::ResultExt;
 
+use crate::lsp::handlers::Handlers;
 use crate::lsp::io_pool::IoPool;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::TokioUnboundedSender;
@@ -209,11 +210,11 @@ impl SidecarScheduler {
     /// The job owns no database handle, so waiting for R cannot block a
     /// main-loop write that needs exclusive database access.
     #[must_use]
-    pub(crate) fn schedule(
+    pub(crate) fn schedule<H: Handlers>(
         &mut self,
         db: &dyn Db,
         pool: &IoPool,
-        events_tx: &TokioUnboundedSender<Event>,
+        events_tx: &TokioUnboundedSender<Event<H>>,
     ) -> Vec<Package> {
         let Some(handler) = &self.handler else {
             return Vec::new();

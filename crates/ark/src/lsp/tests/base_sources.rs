@@ -28,6 +28,7 @@ use super::utils::write_sources;
 use super::utils::DescriptionWriter;
 use super::utils::TestClient;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_SETTING;
+use crate::lsp::harness::TestHandlers;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
@@ -127,7 +128,7 @@ fn sidecar_with_stubs() -> Arc<TestSidecarHandler> {
     Arc::new(TestSidecarHandler::new(vec![("primitives.R", STUBS)]))
 }
 
-fn assert_base_is_stubs(state: &GlobalState) {
+fn assert_base_is_stubs(state: &GlobalState<TestHandlers>) {
     let _boundary = panic::test_boundary();
     let db = state.world().db();
     let base = db.package_by_name("base").unwrap();
@@ -170,9 +171,10 @@ async fn test_primitive_stubs_land_with_fetching_off() {
     let (_lib, db) = library_with_base();
     let client = TestClient::new(&[(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(false))]).await;
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
             .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar.clone()))),
     );
@@ -200,9 +202,10 @@ async fn test_primitive_stubs_land_when_base_fetch_fails() {
 
     let (_lib, db) = library_with_base();
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(source_scheduler_for_test(handler.clone()))
             .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar_with_stubs()))),
     );
@@ -238,9 +241,10 @@ async fn test_base_archive_and_stubs_both_land() {
 
     let (_lib, db) = library_with_base();
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(source_scheduler_for_test(handler))
             .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar_with_stubs()))),
     );

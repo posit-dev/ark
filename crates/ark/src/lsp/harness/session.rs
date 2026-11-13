@@ -44,6 +44,8 @@ use crate::lsp::backend::LspResponse;
 use crate::lsp::backend::RequestResponse;
 use crate::lsp::environments::EnvironmentScheduler;
 use crate::lsp::environments::FixedEnvironmentResolver;
+use crate::lsp::handlers::Handlers;
+use crate::lsp::harness::TestHandlers;
 use crate::lsp::main_loop::register_auxiliary_tx;
 use crate::lsp::main_loop::AuxiliaryEvent;
 use crate::lsp::main_loop::DiagnosticsPublication;
@@ -67,7 +69,7 @@ impl LspHarness {
     /// buffers from being prepared outside the main loop after the session
     /// starts.
     pub async fn start(self, settings: &[(&str, Value)]) -> LspSession {
-        self.start_with(settings, None).await
+        self.start_with(TestHandlers, settings, None).await
     }
 
     /// Serve source requests from prewritten `R/` directories, keyed by package
@@ -80,14 +82,15 @@ impl LspHarness {
         directories: HashMap<String, PathBuf>,
     ) -> LspSession {
         let handler = Arc::new(PackageSources::new(directories));
-        self.start_with(settings, Some(handler)).await
+        self.start_with(TestHandlers, settings, Some(handler)).await
     }
 
-    async fn start_with(
+    async fn start_with<H: Handlers>(
         self,
+        handlers: H,
         settings: &[(&str, Value)],
         source_handler: Option<Arc<dyn SourceHandler>>,
-    ) -> LspSession {
+    ) -> LspSession<H> {
         let client = TestClient::new(settings).await;
 
         // Register before constructing the session because the main loop may
@@ -123,9 +126,10 @@ impl LspHarness {
             let resolver = Arc::new(FixedEnvironmentResolver::new(library_paths));
 
             GlobalState::from_parts(
+                handlers,
                 client.client(),
                 self.state,
-                LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+                LspState::new()
                     .with_source_scheduler(SourceScheduler::new(source_handler))
                     .with_environment_scheduler(EnvironmentScheduler::new(Some(resolver))),
             )
@@ -155,15 +159,16 @@ const SETTLE_POLL: Duration = Duration::from_millis(1);
 /// several fields. Keep [`Event`] inline because boxing it would add an
 /// allocation to every main-loop event.
 #[expect(clippy::large_enum_variant)]
-enum Wakeup {
-    Event(Event),
+enum Wakeup<H: Handlers> {
+    Event(Event<H>),
     Auxiliary(AuxiliaryEvent),
     Tick,
 }
 
-/// A production main loop connected to a simulated editor.
-pub struct LspSession {
-    state: GlobalState,
+/// A production main loop connected to a simulated editor, using `H` as its
+/// host. Defaults to [`TestHandlers`], which requires no R session.
+pub struct LspSession<H: Handlers = TestHandlers> {
+    state: GlobalState<H>,
     client: TestClient,
 
     auxiliary_rx: TokioUnboundedReceiver<AuxiliaryEvent>,
@@ -171,7 +176,7 @@ pub struct LspSession {
     /// Main-loop publications before unchanged diagnostics are suppressed.
     raw_publications: Vec<DiagnosticsPublication>,
 
-    definitions: Requests<DefinitionResult>,
+    definitions: Requests<H, DefinitionResult>,
 
     peak_outstanding_holds: usize,
 
@@ -205,7 +210,7 @@ impl<'session> Publication<'session> {
     }
 }
 
-impl LspSession {
+impl<H: Handlers> LspSession<H> {
     /// Run the production startup handshake, then settle the work it
     /// schedules.
     ///
@@ -236,7 +241,7 @@ impl LspSession {
 
     /// The main loop only publishes diagnostics while handling an event, so
     /// collecting auxiliary events here records every publication.
-    pub(crate) async fn handle_once(&mut self, event: Event) {
+    pub(crate) async fn handle_once(&mut self, event: Event<H>) {
         let definition = response_tx(&event).and_then(|tx| self.definitions.find(tx));
 
         let timing = self.state.handle_event_once(event).await;
@@ -300,7 +305,7 @@ impl LspSession {
     }
 
     /// Queue an event without handling it, to model a busy main loop.
-    pub(crate) fn enqueue(&self, event: Event) {
+    pub(crate) fn enqueue(&self, event: Event<H>) {
         self.state.events_tx().send(event).unwrap();
     }
 
@@ -400,7 +405,7 @@ impl LspSession {
     /// Return the next unhandled main-loop event, or `None` once the loop
     /// settles. Auxiliary events are recorded while waiting, and settlement is
     /// re-checked every [`SETTLE_POLL`].
-    pub(crate) async fn next_event(&mut self) -> Option<Event> {
+    pub(crate) async fn next_event(&mut self) -> Option<Event<H>> {
         loop {
             // A panicking worker can leave its scheduler pending, so the loop
             // would never settle. Inspect failures after every wakeup.
@@ -523,14 +528,14 @@ impl LspSession {
 }
 
 /// The reply sender of a request event, which identifies the request.
-fn response_tx(event: &Event) -> Option<&TokioUnboundedSender<RequestResponse>> {
+fn response_tx<H: Handlers>(event: &Event<H>) -> Option<&TokioUnboundedSender<RequestResponse<H>>> {
     match event {
         Event::Lsp(LspMessage::Request(_request, response_tx)) => Some(response_tx),
         _ => None,
     }
 }
 
-fn definition_response(response: Option<RequestResponse>) -> DefinitionResult {
+fn definition_response<H: Handlers>(response: Option<RequestResponse<H>>) -> DefinitionResult {
     match response {
         Some(RequestResponse::Result(Ok(LspResponse::GotoDefinition(response)))) => Ok(response),
         Some(RequestResponse::Result(Ok(response))) => Err(anyhow!(
@@ -561,6 +566,7 @@ mod tests {
     use crate::lsp::analysis::DiagnosticsReady;
     use crate::lsp::config::R_DIAGNOSTICS_ENABLED_SETTING;
     use crate::lsp::harness::LspHarness;
+    use crate::lsp::harness::TestHandlers;
     use crate::lsp::main_loop::DiagnosticsPublication;
     use crate::lsp::main_loop::Event;
     use crate::lsp::traits::url::UrlExt;
@@ -586,7 +592,7 @@ mod tests {
         }
     }
 
-    fn ready(generation: u64, message: &str) -> Event {
+    fn ready(generation: u64, message: &str) -> Event<TestHandlers> {
         Event::DiagnosticsReady(DiagnosticsReady {
             generation,
             publication: publication(message),

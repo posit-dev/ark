@@ -14,12 +14,12 @@ use super::pool::AnalysisPool;
 use super::snapshot::WorldStateSnapshot;
 use crate::lsp;
 use crate::lsp::diagnostics::generate_diagnostics;
+use crate::lsp::handlers::Handlers;
 use crate::lsp::main_loop::DiagnosticsPublication;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::open_file::OpenFile;
 use crate::lsp::state::WorldState;
-use crate::url::FilePathExt;
 
 /// A diagnostics task's result on its way back to the main loop. The generation
 /// state enables [`DiagnosticsState::accept`] to distinguish a stale result
@@ -44,12 +44,14 @@ pub(crate) struct DiagnosticsState {
 }
 
 impl DiagnosticsState {
-    /// Queues diagnostics for every open file and tags them with a new generation.
-    pub(crate) fn refresh_all(
+    /// Queue diagnostics for open files accepted by [`Handlers::should_diagnose()`].
+    /// Tag the results with a new generation to distinguish stale results.
+    pub(crate) fn refresh_all<H: Handlers>(
         &mut self,
         state: &WorldState,
+        handlers: &H,
         pool: &AnalysisPool,
-        events_tx: &TokioUnboundedSender<Event>,
+        events_tx: &TokioUnboundedSender<Event<H>>,
     ) -> u64 {
         self.generation += 1;
         let generation = self.generation;
@@ -57,7 +59,7 @@ impl DiagnosticsState {
         let files: Vec<(&FilePath, &OpenFile)> = state
             .open_files
             .iter()
-            .filter(|(path, _open_file)| path.should_diagnose())
+            .filter(|(path, _open_file)| handlers.should_diagnose(path))
             .collect();
 
         tracing::trace!("Refreshing diagnostics for {n} documents", n = files.len());

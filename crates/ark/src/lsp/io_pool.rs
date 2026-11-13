@@ -5,6 +5,7 @@
 //
 //
 
+use std::fmt::Debug;
 use std::sync::Arc;
 
 use crossbeam::channel::Sender;
@@ -12,7 +13,6 @@ use stdext::result::ResultExt;
 use stdext::spawn_with_stack_size;
 
 use crate::lsp;
-use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::LspServiceContext;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::panic;
@@ -83,11 +83,11 @@ impl IoPool {
     ///
     /// Sending can race with main-loop shutdown. A failed send is only logged:
     /// once the receiver is gone, no scheduler remains to recover.
-    pub(crate) fn submit_reporting(
+    pub(crate) fn submit_reporting<E: Debug + Send + 'static>(
         &self,
-        events_tx: &TokioUnboundedSender<Event>,
-        on_abort: Event,
-        job: impl FnOnce() -> Event + Send + 'static,
+        events_tx: &TokioUnboundedSender<E>,
+        on_abort: E,
+        job: impl FnOnce() -> E + Send + 'static,
     ) {
         self.submit(reporting_job(
             Arc::clone(&self.service_context),
@@ -115,11 +115,11 @@ fn run_job(job: Job, service_context: &LspServiceContext) {
 /// The job that [`IoPool::submit_reporting()`] queues. Catches `job`'s panic
 /// itself rather than leaving it to [`run_job()`], so the panic is reported
 /// before `on_abort` is sent.
-fn reporting_job(
+fn reporting_job<E: Debug + Send + 'static>(
     service_context: Arc<LspServiceContext>,
-    events_tx: &TokioUnboundedSender<Event>,
-    on_abort: Event,
-    job: impl FnOnce() -> Event + Send + 'static,
+    events_tx: &TokioUnboundedSender<E>,
+    on_abort: E,
+    job: impl FnOnce() -> E + Send + 'static,
 ) -> impl FnOnce() + Send + 'static {
     let report = AbortReport {
         events_tx: events_tx.clone(),
@@ -139,19 +139,19 @@ fn reporting_job(
 /// Sends `on_abort` when dropped, unless [`Self::complete()`] sent the job's
 /// own event. Captured in the queued job, so dropping that job unrun sends
 /// `on_abort` too.
-struct AbortReport {
-    events_tx: TokioUnboundedSender<Event>,
-    on_abort: Option<Event>,
+struct AbortReport<E: Debug> {
+    events_tx: TokioUnboundedSender<E>,
+    on_abort: Option<E>,
 }
 
-impl AbortReport {
-    fn complete(mut self, event: Event) {
+impl<E: Debug> AbortReport<E> {
+    fn complete(mut self, event: E) {
         self.on_abort = None;
         self.events_tx.send(event).log_err();
     }
 }
 
-impl Drop for AbortReport {
+impl<E: Debug> Drop for AbortReport<E> {
     fn drop(&mut self) {
         let Some(on_abort) = self.on_abort.take() else {
             return;
@@ -167,10 +167,8 @@ impl Drop for AbortReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::host::ConsoleInputs;
     use crate::lsp::main_loop::init_aux_for_test;
     use crate::lsp::main_loop::AuxiliaryEvent;
-    use crate::lsp::main_loop::KernelNotification;
 
     /// The aborting hook makes a panic outside all recovery boundaries fail the
     /// test process instead of only ending the worker thread.
@@ -234,11 +232,9 @@ mod tests {
     fn test_reporting_job_sends_only_its_event_when_run() {
         let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        reporting_job(context(), &events_tx, named("aborted"), || {
-            named("completed")
-        })();
+        reporting_job(context(), &events_tx, "aborted", || "completed")();
 
-        assert_eq!(name(events_rx.try_recv().unwrap()), "completed");
+        assert_eq!(events_rx.try_recv().unwrap(), "completed");
         assert!(events_rx.try_recv().is_err());
     }
 
@@ -246,14 +242,11 @@ mod tests {
     fn test_reporting_job_sends_abort_event_when_dropped() {
         let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        drop(reporting_job(
-            context(),
-            &events_tx,
-            named("aborted"),
-            || named("completed"),
-        ));
+        drop(reporting_job(context(), &events_tx, "aborted", || {
+            "completed"
+        }));
 
-        assert_eq!(name(events_rx.try_recv().unwrap()), "aborted");
+        assert_eq!(events_rx.try_recv().unwrap(), "aborted");
         assert!(events_rx.try_recv().is_err());
     }
 
@@ -265,7 +258,7 @@ mod tests {
         let mut auxiliary_rx = init_aux_for_test();
         let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        reporting_job(context(), &events_tx, named("aborted"), || {
+        reporting_job(context(), &events_tx, "aborted", || {
             panic!("Test panic in a reporting job")
         })();
 
@@ -273,7 +266,7 @@ mod tests {
             auxiliary_rx.try_recv(),
             Ok(AuxiliaryEvent::ReportBackgroundPanic)
         ));
-        assert_eq!(name(events_rx.try_recv().unwrap()), "aborted");
+        assert_eq!(events_rx.try_recv().unwrap(), "aborted");
         assert!(events_rx.try_recv().is_err());
     }
 
@@ -284,27 +277,13 @@ mod tests {
         let pool = IoPool::new("test-io-pool", 0, stdext::DEFAULT_STACK_SIZE, context());
         let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        pool.submit_reporting(&events_tx, named("aborted"), || named("completed"));
+        pool.submit_reporting(&events_tx, "aborted", || "completed");
 
-        assert_eq!(name(events_rx.try_recv().unwrap()), "aborted");
+        assert_eq!(events_rx.try_recv().unwrap(), "aborted");
         assert!(events_rx.try_recv().is_err());
     }
 
     fn context() -> Arc<LspServiceContext> {
         Arc::new(LspServiceContext::new())
-    }
-
-    /// An event that carries `name`, so tests can tell which event was sent.
-    fn named(name: &str) -> Event {
-        Event::Kernel(KernelNotification::DidChangeConsoleInputs(ConsoleInputs {
-            console_scopes: vec![vec![String::from(name)]],
-        }))
-    }
-
-    fn name(event: Event) -> String {
-        let Event::Kernel(KernelNotification::DidChangeConsoleInputs(inputs)) = event else {
-            panic!("Expected a test event, got {event:?}");
-        };
-        inputs.console_scopes[0][0].clone()
     }
 }

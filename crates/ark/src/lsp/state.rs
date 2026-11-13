@@ -44,10 +44,6 @@ pub(crate) struct WorldState {
     /// Watched folders
     pub(crate) workspace: Workspace,
 
-    /// Virtual documents that the LSP serves as a text document content provider for
-    /// Maps a `String` uri to the contents of the document
-    pub(crate) virtual_documents: HashMap<String, String>,
-
     /// Names from the host's R session, with one inner vector per environment
     /// in search-path order, from the global environment to the base package.
     /// Empty for a host without a session. Selected debug-frame scopes are not

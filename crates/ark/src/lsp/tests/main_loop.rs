@@ -16,7 +16,14 @@ use oak_db::DbInputs;
 use oak_db::OakDatabase;
 use oak_db::SourceDb;
 use oak_scan::DbScan;
+use tower_lsp_server::ls_types::CompletionItem;
+use tower_lsp_server::ls_types::CompletionParams;
 use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
+use tower_lsp_server::ls_types::HoverParams;
+use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::SignatureHelpParams;
+use tower_lsp_server::ls_types::TextDocumentIdentifier;
+use tower_lsp_server::ls_types::TextDocumentPositionParams;
 use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::ls_types::WorkspaceFolder;
 use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
@@ -34,7 +41,11 @@ use super::utils::write_sources;
 use super::utils::DescriptionWriter;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
+use crate::lsp::backend::LspRequest;
+use crate::lsp::backend::LspResponse;
+use crate::lsp::backend::RequestResponse;
 use crate::lsp::harness::LspHarness;
+use crate::lsp::harness::TestHandlers;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
@@ -48,10 +59,10 @@ use crate::lsp::state::WorldState;
 async fn test_workspace_folder_scan_drives_through_main_loop() {
     let _aux = init_aux_for_test();
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         WorldState::new(OakDatabase::new()),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_environment_scheduler(fixed_environments(&[])),
+        LspState::new().with_environment_scheduler(fixed_environments(&[])),
     );
 
     let tmp = tempfile::tempdir().unwrap();
@@ -261,4 +272,89 @@ async fn test_settle_reports_a_panicking_source_worker() {
     tokio::time::timeout(Duration::from_secs(30), session.settle())
         .await
         .unwrap();
+}
+
+/// A host that overrides no request handler answers completion, hover and
+/// signature help with no result, and returns a completion item unresolved.
+#[tokio::test]
+async fn test_host_without_overrides_answers_session_requests_with_no_result() {
+    let _aux = init_aux_for_test();
+    let mut state = GlobalState::from_parts(
+        TestHandlers,
+        test_client(),
+        WorldState::new(OakDatabase::new()),
+        LspState::new(),
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("script.R");
+    state.handle_event_once(did_open(&path, "mean(x)\n")).await;
+
+    let position = TextDocumentPositionParams {
+        text_document: TextDocumentIdentifier {
+            uri: Uri::from_file_path(&path).unwrap(),
+        },
+        position: Position::new(0, 5),
+    };
+
+    let completion = answer(
+        &mut state,
+        LspRequest::Completion(CompletionParams {
+            text_document_position: position.clone(),
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            context: None,
+        }),
+    )
+    .await;
+    assert!(matches!(completion, LspResponse::Completion(None)));
+
+    let hover = answer(
+        &mut state,
+        LspRequest::Hover(HoverParams {
+            text_document_position_params: position.clone(),
+            work_done_progress_params: Default::default(),
+        }),
+    )
+    .await;
+    assert!(matches!(hover, LspResponse::Hover(None)));
+
+    let signature_help = answer(
+        &mut state,
+        LspRequest::SignatureHelp(SignatureHelpParams {
+            context: None,
+            text_document_position_params: position,
+            work_done_progress_params: Default::default(),
+        }),
+    )
+    .await;
+    assert!(matches!(signature_help, LspResponse::SignatureHelp(None)));
+
+    let item = CompletionItem {
+        label: String::from("mean"),
+        data: Some(serde_json::json!({ "topic": "mean" })),
+        ..Default::default()
+    };
+    let resolved = answer(&mut state, LspRequest::CompletionResolve(item.clone())).await;
+    let LspResponse::CompletionResolve(resolved) = resolved else {
+        panic!("Expected a completion resolve response, got {resolved:?}");
+    };
+    assert_eq!(resolved, item);
+}
+
+async fn answer(
+    state: &mut GlobalState<TestHandlers>,
+    request: LspRequest<TestHandlers>,
+) -> LspResponse<TestHandlers> {
+    let (response_tx, mut response_rx) = tokio::sync::mpsc::unbounded_channel();
+    state
+        .handle_event_once(Event::Lsp(LspMessage::Request(request, response_tx)))
+        .await;
+
+    match response_rx.try_recv() {
+        Ok(RequestResponse::Result(Ok(response))) => response,
+        Ok(RequestResponse::Result(Err(err))) => panic!("The request failed: {err:?}"),
+        Ok(RequestResponse::Disabled) => panic!("The request is disabled"),
+        Err(err) => panic!("No response: {err:?}"),
+    }
 }

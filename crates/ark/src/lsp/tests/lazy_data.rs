@@ -16,11 +16,11 @@ use super::sidecar_handler::TestSidecarHandler;
 use super::utils::did_change_watched_file;
 use super::utils::initialize;
 use super::utils::DescriptionWriter;
-use crate::lsp::host::ConsoleInputs;
+use crate::lsp::harness::TestEvent;
+use crate::lsp::harness::TestHandlers;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
-use crate::lsp::main_loop::KernelNotification;
 use crate::lsp::sidecar::OakSidecarHandler;
 use crate::lsp::sidecar::SidecarHandler;
 use crate::lsp::sidecar::SidecarRequest;
@@ -148,7 +148,7 @@ async fn session_with_withdata(
 ) -> (
     tempfile::TempDir,
     tempfile::TempDir,
-    GlobalState,
+    GlobalState<TestHandlers>,
     Arc<TestSidecarHandler>,
 ) {
     let lib = tempfile::tempdir().unwrap();
@@ -266,9 +266,7 @@ async fn test_event_before_initialize_submits_nothing() {
         Arc::new(TestSidecarHandler::new(Vec::new()).with_lazy_data("withdata", &["obj"]));
     let mut state = sidecar_state(db, Arc::clone(&sidecar));
 
-    let console_inputs = Event::Kernel(KernelNotification::DidChangeConsoleInputs(ConsoleInputs {
-        console_scopes: vec![],
-    }));
+    let console_inputs = Event::Host(TestEvent::SessionScopes(vec![]));
     state.handle_event_once(console_inputs).await;
     assert!(sidecar.calls().lock().unwrap().is_empty());
     assert!(!state.lsp_state().sidecar_scheduler.has_pending());

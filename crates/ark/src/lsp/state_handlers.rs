@@ -49,7 +49,6 @@ use tower_lsp_server::ls_types::RelativePattern;
 use tower_lsp_server::ls_types::RenameOptions;
 use tower_lsp_server::ls_types::SelectionRangeProviderCapability;
 use tower_lsp_server::ls_types::ServerCapabilities;
-use tower_lsp_server::ls_types::ServerInfo;
 use tower_lsp_server::ls_types::SignatureHelpOptions;
 use tower_lsp_server::ls_types::TextDocumentIdentifier;
 use tower_lsp_server::ls_types::TextDocumentSyncCapability;
@@ -60,7 +59,6 @@ use tower_lsp_server::ls_types::WorkDoneProgressOptions;
 use tower_lsp_server::ls_types::WorkspaceFoldersServerCapabilities;
 use tower_lsp_server::ls_types::WorkspaceServerCapabilities;
 
-use crate::console::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
@@ -73,10 +71,9 @@ use crate::lsp::config::GLOBAL_SETTINGS;
 use crate::lsp::config::LEGACY_R_DIAGNOSTICS_ENABLE_SETTING;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::content_changes::apply_content_changes;
+use crate::lsp::handlers::Handlers;
 use crate::lsp::main_loop::dispatch_scan_requests;
 use crate::lsp::main_loop::DiagnosticsPublication;
-use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
-use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedSender;
@@ -93,11 +90,12 @@ const DID_CHANGE_WATCHED_FILES: &str = "workspace/didChangeWatchedFiles";
 // Handlers taking exclusive references to global state
 
 #[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn initialize(
+pub(crate) fn initialize<H: Handlers>(
     params: InitializeParams,
+    handlers: &H,
     lsp_state: &mut LspState,
     state: &mut WorldState,
-    events_tx: &TokioUnboundedSender<Event>,
+    events_tx: &TokioUnboundedSender<Event<H>>,
 ) -> LspResult<InitializeResult> {
     let workspace_paths = effective_workspace_paths(&params);
     lsp_state.capabilities = Capabilities::new(params.capabilities);
@@ -121,11 +119,8 @@ pub(crate) fn initialize(
     dispatch_workspace_scan(state, lsp_state, events_tx);
 
     let result = InitializeResult {
-        server_info: Some(ServerInfo {
-            name: "Ark R Kernel".to_string(),
-            version: Some(crate::BUILD_VERSION.to_string()),
-        }),
-        capabilities: ServerCapabilities {
+        server_info: Some(handlers.server_info()),
+        capabilities: handlers.capabilities(ServerCapabilities {
             // Currently hard-coded to UTF-16, but we might want to allow UTF-8 frontends
             // once/if Ark becomes an independent LSP
             position_encoding: Some(lsp_types::PositionEncodingKind::UTF16),
@@ -191,7 +186,7 @@ pub(crate) fn initialize(
                 more_trigger_character: None,
             }),
             ..ServerCapabilities::default()
-        },
+        }),
         offset_encoding: None,
     };
 
@@ -224,11 +219,11 @@ pub(super) fn effective_workspace_paths(params: &InitializeParams) -> Vec<AbsPat
 }
 
 #[tracing::instrument(level = "info", skip_all)]
-pub(crate) async fn handle_initialized(
+pub(crate) async fn handle_initialized<H: Handlers>(
     client: &tower_lsp_server::Client,
     lsp_state: &mut LspState,
     state: &mut WorldState,
-    events_tx: &TokioUnboundedSender<Event>,
+    events_tx: &TokioUnboundedSender<Event<H>>,
 ) {
     // Register capabilities to the client
     let mut regs: Vec<Registration> = vec![];
@@ -483,9 +478,9 @@ pub(crate) fn did_open(
 }
 
 #[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_change(
+pub(crate) fn did_change<H: Handlers>(
     params: DidChangeTextDocumentParams,
-    lsp_state: &mut LspState,
+    handlers: &mut H,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let path = params.text_document.uri.to_document_path()?;
@@ -517,11 +512,7 @@ pub(crate) fn did_change(
 
     state.open_file_mut(&path)?.set_version(Some(new_version));
 
-    // Notify console about document change to invalidate breakpoints.
-    lsp_state
-        .console_notification_tx
-        .send(ConsoleNotification::DidChangeDocument(path))
-        .log_err();
+    handlers.did_change_document(&path);
 
     Ok(())
 }
@@ -595,9 +586,9 @@ fn push_notebook_cells(state: &mut WorldState, path: &FilePath) -> anyhow::Resul
 }
 
 #[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_change_notebook(
+pub(crate) fn did_change_notebook<H: Handlers>(
     params: DidChangeNotebookDocumentParams,
-    lsp_state: &mut LspState,
+    handlers: &mut H,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let path = params.notebook_document.uri.to_document_path()?;
@@ -632,7 +623,7 @@ pub(crate) fn did_change_notebook(
             text_document: content.document,
             content_changes: content.changes,
         };
-        did_change(params, lsp_state, state)?;
+        did_change(params, handlers, state)?;
     }
 
     Ok(())
@@ -703,11 +694,11 @@ pub(crate) fn did_close_notebook(
 }
 
 #[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_change_watched_files(
+pub(crate) fn did_change_watched_files<H: Handlers>(
     params: DidChangeWatchedFilesParams,
     state: &mut WorldState,
     lsp_state: &mut LspState,
-    events_tx: &TokioUnboundedSender<Event>,
+    events_tx: &TokioUnboundedSender<Event<H>>,
 ) -> anyhow::Result<()> {
     // The change type is dropped: the scheduler reconciles each path against
     // the disk when it applies.
@@ -736,11 +727,11 @@ pub(crate) fn did_change_watched_files(
 }
 
 #[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_change_workspace_folders(
+pub(crate) fn did_change_workspace_folders<H: Handlers>(
     params: DidChangeWorkspaceFoldersParams,
     state: &mut WorldState,
     lsp_state: &mut LspState,
-    events_tx: &TokioUnboundedSender<Event>,
+    events_tx: &TokioUnboundedSender<Event<H>>,
 ) -> anyhow::Result<()> {
     let removed: HashSet<AbsPathBuf> = params
         .event
@@ -773,10 +764,10 @@ pub(crate) fn did_change_workspace_folders(
 /// Update scan roots from `state.workspace.folders`. Dispatch scans for files
 /// entering or leaving workspace scope, and resolve the environments of new
 /// roots.
-fn dispatch_workspace_scan(
+fn dispatch_workspace_scan<H: Handlers>(
     state: &mut WorldState,
     lsp_state: &mut LspState,
-    events_tx: &TokioUnboundedSender<Event>,
+    events_tx: &TokioUnboundedSender<Event<H>>,
 ) {
     let folders = to_std_paths(&state.workspace.folders);
     let requests = lsp_state
@@ -989,23 +980,4 @@ async fn pull_config(
     }
 
     Ok(global_options)
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_open_virtual_document(
-    params: DidOpenVirtualDocumentParams,
-    state: &mut WorldState,
-) -> anyhow::Result<()> {
-    // Insert new document, replacing any old one
-    state.virtual_documents.insert(params.uri, params.contents);
-    Ok(())
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_close_virtual_document(
-    params: DidCloseVirtualDocumentParams,
-    state: &mut WorldState,
-) -> anyhow::Result<()> {
-    state.virtual_documents.remove(&params.uri);
-    Ok(())
 }

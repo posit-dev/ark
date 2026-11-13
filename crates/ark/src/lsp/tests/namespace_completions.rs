@@ -19,7 +19,7 @@ use tower_lsp_server::ls_types::Position;
 
 use super::environment_resolver::TestBehavior as EnvironmentBehavior;
 use super::environment_resolver::TestEnvironmentResolver;
-use super::sidecar_handler::sidecar_state;
+use super::sidecar_handler::sidecar_state_with;
 use super::sidecar_handler::TestSidecarHandler;
 use super::source_handler::gate;
 use super::source_handler::TestBehavior;
@@ -40,15 +40,18 @@ use crate::lsp::environments::unresolved_database;
 use crate::lsp::environments::EnvironmentRequest;
 use crate::lsp::environments::EnvironmentResolver;
 use crate::lsp::environments::EnvironmentScheduler;
+use crate::lsp::host::ArkEvent;
+use crate::lsp::host::ArkHandlers;
 use crate::lsp::host::ConsoleInputs;
+use crate::lsp::host::KernelNotification;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
-use crate::lsp::main_loop::KernelNotification;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::sidecar::SidecarScheduler;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
+use crate::panic;
 
 const FOO_SOURCES: &[(&str, &str)] = &[("foo.R", "foo <- function() 1\n")];
 
@@ -92,11 +95,17 @@ fn library_with_base_and_donor() -> (tempfile::TempDir, OakDatabase) {
     (lib, db)
 }
 
-fn state_with_scheduler(db: OakDatabase, scheduler: SourceScheduler) -> GlobalState {
+/// Completions are Ark's overrides, so these tests answer through Ark's host.
+fn ark_handlers() -> ArkHandlers {
+    ArkHandlers::new(tokio::sync::mpsc::unbounded_channel().0)
+}
+
+fn state_with_scheduler(db: OakDatabase, scheduler: SourceScheduler) -> GlobalState<ArkHandlers> {
     GlobalState::from_parts(
+        ark_handlers(),
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0).with_source_scheduler(scheduler),
+        LspState::new().with_source_scheduler(scheduler),
     )
 }
 
@@ -104,7 +113,11 @@ fn wait_entered(entered_rx: &Receiver<()>) {
     entered_rx.recv_timeout(Duration::from_secs(30)).unwrap();
 }
 
-async fn complete(state: &mut GlobalState, path: &Path, position: Position) -> CompletionResponse {
+async fn complete(
+    state: &mut GlobalState<ArkHandlers>,
+    path: &Path,
+    position: Position,
+) -> CompletionResponse {
     let (event, mut response_rx) = completion(path, position);
     state.handle_event_once(event).await;
 
@@ -153,7 +166,7 @@ fn foo(kind: CompletionItemKind) -> Vec<(String, Option<CompletionItemKind>)> {
 async fn test_namespace_answer_is_incomplete_until_environment_resolves() {
     let _aux = init_aux_for_test();
     let (lib, _db) = library_with_donor("export(foo)\n");
-    let lsp_state = LspState::new(tokio::sync::mpsc::unbounded_channel().0);
+    let lsp_state = LspState::new();
     let (mut state, _workspace, release) =
         initialized_with_held_default(lib.path(), lsp_state, None).await;
 
@@ -186,7 +199,7 @@ async fn test_roxygen_tags_are_incomplete_until_environment_resolves() {
         .write_installed(&roxygen2);
     std::fs::write(roxygen2.join("roxygen2-tags.yml"), "- name: aliases\n").unwrap();
 
-    let lsp_state = LspState::new(tokio::sync::mpsc::unbounded_channel().0);
+    let lsp_state = LspState::new();
     let (mut state, _workspace, release) =
         initialized_with_held_default(lib.path(), lsp_state, None).await;
 
@@ -214,7 +227,7 @@ async fn test_roxygen_tags_are_incomplete_until_environment_resolves() {
 async fn test_answer_without_package_is_complete_while_environment_resolves() {
     let _aux = init_aux_for_test();
     let (lib, _db) = library_with_donor("export(foo)\n");
-    let lsp_state = LspState::new(tokio::sync::mpsc::unbounded_channel().0);
+    let lsp_state = LspState::new();
     let (mut state, _workspace, release) =
         initialized_with_held_default(lib.path(), lsp_state, None).await;
 
@@ -243,11 +256,13 @@ async fn test_sidecar_batch_follows_environment_resolution() {
     let _aux = init_aux_for_test();
     let (lib, _db) = library_with_base_donor_and_datasets();
     let sidecar = Arc::new(TestSidecarHandler::new(vec![]));
-    let lsp_state = LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+    let lsp_state = LspState::new()
         .with_sidecar_scheduler(SidecarScheduler::new(Some(Arc::clone(&sidecar) as _)));
-    let console_inputs = Event::Kernel(KernelNotification::DidChangeConsoleInputs(ConsoleInputs {
-        console_scopes: vec![],
-    }));
+    let console_inputs = Event::Host(ArkEvent::Kernel(
+        KernelNotification::DidChangeConsoleInputs(ConsoleInputs {
+            console_scopes: vec![],
+        }),
+    ));
     let (mut state, _workspace, release) =
         initialized_with_held_default(lib.path(), lsp_state, Some(console_inputs)).await;
 
@@ -256,6 +271,8 @@ async fn test_sidecar_batch_follows_environment_resolution() {
     drop(release);
     state.pump_to_quiescence().await;
 
+    // A guard can't be held across `.await`, so it's entered after the last one
+    let _boundary = panic::test_boundary();
     let calls = sidecar.calls().lock().unwrap();
     let [request] = calls.as_slice() else {
         panic!("Expected one sidecar request, got {}", calls.len());
@@ -276,8 +293,12 @@ async fn test_sidecar_batch_follows_environment_resolution() {
 async fn initialized_with_held_default(
     library: &Path,
     lsp_state: LspState,
-    before: Option<Event>,
-) -> (GlobalState, tempfile::TempDir, std::sync::mpsc::Sender<()>) {
+    before: Option<Event<ArkHandlers>>,
+) -> (
+    GlobalState<ArkHandlers>,
+    tempfile::TempDir,
+    std::sync::mpsc::Sender<()>,
+) {
     let workspace = tempfile::tempdir().unwrap();
 
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
@@ -294,6 +315,7 @@ async fn initialized_with_held_default(
     ]));
     let resolver = resolver as Arc<dyn EnvironmentResolver>;
     let mut state = GlobalState::from_parts(
+        ark_handlers(),
         test_client(),
         WorldState::new(unresolved_database()),
         lsp_state.with_environment_scheduler(EnvironmentScheduler::new(Some(resolver))),
@@ -431,10 +453,10 @@ async fn test_namespace_answer_is_complete_with_fetching_off() {
     let (_lib, db) = library_with_donor("export(foo)\n");
     let client = TestClient::new(&[(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(false))]).await;
     let mut state = GlobalState::from_parts(
+        ark_handlers(),
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
+        LspState::new().with_source_scheduler(SourceScheduler::new(Some(handler.clone()))),
     );
 
     let workspace = tempfile::tempdir().unwrap();
@@ -477,7 +499,11 @@ async fn test_namespace_answer_is_complete_without_handler() {
 fn state_with_held_sidecar(
     db: OakDatabase,
     lazy_data: &[(&str, &[&str])],
-) -> (GlobalState, std::sync::mpsc::Sender<()>, Receiver<()>) {
+) -> (
+    GlobalState<ArkHandlers>,
+    std::sync::mpsc::Sender<()>,
+    Receiver<()>,
+) {
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
     let (gate, release) = gate(entered_tx);
     let mut sidecar = TestSidecarHandler::gated(gate, vec![(
@@ -487,7 +513,11 @@ fn state_with_held_sidecar(
     for (name, names) in lazy_data {
         sidecar = sidecar.with_lazy_data(name, names);
     }
-    (sidecar_state(db, Arc::new(sidecar)), release, entered_rx)
+    (
+        sidecar_state_with(ark_handlers(), db, Arc::new(sidecar)),
+        release,
+        entered_rx,
+    )
 }
 
 /// `base::` is incomplete while the sidecar job, which can add its primitive
@@ -528,26 +558,30 @@ async fn test_package_without_rdata_is_covered_without_batch() {
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
     let (gate, release) = gate(entered_tx);
     let sidecar = Arc::new(TestSidecarHandler::gated(gate, vec![]));
-    let mut state = sidecar_state(db, Arc::clone(&sidecar));
+    let mut state = sidecar_state_with(ark_handlers(), db, Arc::clone(&sidecar));
 
     let scratch = tempfile::tempdir().unwrap();
     let path = scratch.path().join("scratch.R");
     state.handle_event_once(did_open(&path, "donor::\n")).await;
     wait_entered(&entered_rx);
 
-    let db = state.world().db();
-    let names: Vec<String> = sidecar.calls().lock().unwrap()[0]
-        .packages()
-        .iter()
-        .map(|package| package.package().name(db).clone())
-        .collect();
-    assert_eq!(names, vec![String::from("base"), String::from("datasets")]);
+    // A guard can't be held across `.await`, so this section gets its own
+    {
+        let _boundary = panic::test_boundary();
+        let db = state.world().db();
+        let names: Vec<String> = sidecar.calls().lock().unwrap()[0]
+            .packages()
+            .iter()
+            .map(|package| package.package().name(db).clone())
+            .collect();
+        assert_eq!(names, vec![String::from("base"), String::from("datasets")]);
 
-    let donor = db.package_by_name("donor").unwrap();
-    assert_eq!(
-        donor.facts_revision(db),
-        Some(donor.description_revision(db))
-    );
+        let donor = db.package_by_name("donor").unwrap();
+        assert_eq!(
+            donor.facts_revision(db),
+            Some(donor.description_revision(db))
+        );
+    }
     assert!(state.lsp_state().sidecar_scheduler.has_pending());
 
     let response = complete(&mut state, &path, Position::new(0, 7)).await;

@@ -38,6 +38,7 @@ use oak_scan::LibraryListing;
 
 use crate::lsp;
 use crate::lsp::diagnostics::NO_R_EXECUTABLE;
+use crate::lsp::handlers::Handlers;
 use crate::lsp::io_pool::IoPool;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::TokioUnboundedSender;
@@ -272,11 +273,11 @@ impl EnvironmentScheduler {
         }
     }
 
-    pub(crate) fn request_default(
+    pub(crate) fn request_default<H: Handlers>(
         &mut self,
         db: &OakDatabase,
         pool: &IoPool,
-        events_tx: &TokioUnboundedSender<Event>,
+        events_tx: &TokioUnboundedSender<Event<H>>,
     ) {
         let default = db.default_environment();
         self.request(db, [default], pool, events_tx);
@@ -285,11 +286,11 @@ impl EnvironmentScheduler {
     /// Resolve newly added workspace environments. The writer removes
     /// environments whose directories are no longer wanted and evicts libraries
     /// that no remaining environment lists.
-    pub(crate) fn reconcile(
+    pub(crate) fn reconcile<H: Handlers>(
         &mut self,
         db: &mut OakDatabase,
         pool: &IoPool,
-        events_tx: &TokioUnboundedSender<Event>,
+        events_tx: &TokioUnboundedSender<Event<H>>,
     ) {
         let added = db.reconcile_environments();
         self.request(db, added, pool, events_tx);
@@ -300,12 +301,12 @@ impl EnvironmentScheduler {
     ///
     /// Directories without a live environment must first be discovered by a
     /// workspace scan, then added through [`Self::reconcile()`].
-    pub(crate) fn rerun_for_sentinels(
+    pub(crate) fn rerun_for_sentinels<H: Handlers>(
         &mut self,
         db: &OakDatabase,
         paths: &[FilePath],
         pool: &IoPool,
-        events_tx: &TokioUnboundedSender<Event>,
+        events_tx: &TokioUnboundedSender<Event<H>>,
     ) {
         let sentinel_dirs: Vec<&Utf8Path> = paths
             .iter()
@@ -336,12 +337,12 @@ impl EnvironmentScheduler {
     /// Coalesce requests while a job is queued or running. Discard that job
     /// result and submit one more run on completion, regardless of how many
     /// requests arrive in the meantime.
-    fn request(
+    fn request<H: Handlers>(
         &mut self,
         db: &OakDatabase,
         environments: impl IntoIterator<Item = Environment>,
         pool: &IoPool,
-        events_tx: &TokioUnboundedSender<Event>,
+        events_tx: &TokioUnboundedSender<Event<H>>,
     ) {
         for environment in environments {
             match self.jobs.get_mut(&environment) {
@@ -351,12 +352,12 @@ impl EnvironmentScheduler {
         }
     }
 
-    fn submit(
+    fn submit<H: Handlers>(
         &mut self,
         db: &OakDatabase,
         environment: Environment,
         pool: &IoPool,
-        events_tx: &TokioUnboundedSender<Event>,
+        events_tx: &TokioUnboundedSender<Event<H>>,
     ) {
         // A directory that isn't a file path fails through the job, so the
         // failure is recorded and explained like any other.
@@ -398,12 +399,12 @@ impl EnvironmentScheduler {
     ///
     /// A success replaces the environment's libraries. A failure records its
     /// error, preserving the libraries from its last successful run, if any.
-    pub(crate) fn finish(
+    pub(crate) fn finish<H: Handlers>(
         &mut self,
         db: &mut OakDatabase,
         completed: EnvironmentCompleted,
         pool: &IoPool,
-        events_tx: &TokioUnboundedSender<Event>,
+        events_tx: &TokioUnboundedSender<Event<H>>,
     ) {
         let EnvironmentCompleted {
             environment,

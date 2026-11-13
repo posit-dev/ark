@@ -20,6 +20,7 @@ use super::source_handler::gate;
 use super::utils::did_change_watched_file;
 use super::utils::did_open;
 use super::utils::DescriptionWriter;
+use crate::lsp::harness::TestHandlers;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
@@ -39,7 +40,10 @@ fn library(packages: &[(&str, bool)]) -> (tempfile::TempDir, OakDatabase) {
 
 /// Each batch's packages with their requested `DESCRIPTION` revisions, in call
 /// order.
-fn batches(state: &GlobalState, sidecar: &TestSidecarHandler) -> Vec<Vec<(String, FileRevision)>> {
+fn batches(
+    state: &GlobalState<TestHandlers>,
+    sidecar: &TestSidecarHandler,
+) -> Vec<Vec<(String, FileRevision)>> {
     let db = state.world().db();
     sidecar
         .calls()
@@ -59,15 +63,15 @@ fn batches(state: &GlobalState, sidecar: &TestSidecarHandler) -> Vec<Vec<(String
         .collect()
 }
 
-fn package(state: &GlobalState, name: &str) -> Package {
+fn package(state: &GlobalState<TestHandlers>, name: &str) -> Package {
     state.world().db().package_by_name(name).unwrap()
 }
 
-fn revision(state: &GlobalState, name: &str) -> FileRevision {
+fn revision(state: &GlobalState<TestHandlers>, name: &str) -> FileRevision {
     package(state, name).description_revision(state.world().db())
 }
 
-fn may_change(state: &GlobalState, name: &str) -> bool {
+fn may_change(state: &GlobalState<TestHandlers>, name: &str) -> bool {
     let db = state.world().db();
     let package = db.package_by_name(name).unwrap();
     state.lsp_state().sidecar_scheduler.may_change(db, package)
@@ -78,13 +82,13 @@ fn wait_entered(entered_rx: &Receiver<()>) {
 }
 
 /// Open a new file so the tick ends with a refresh, which schedules a batch.
-fn open_scratch(scratch: &Path, name: &str) -> Event {
+fn open_scratch(scratch: &Path, name: &str) -> Event<TestHandlers> {
     did_open(&scratch.join(name), "1\n")
 }
 
 /// Report a change to `dir`, a package directory, and apply the library
 /// rescan it starts without handling a sidecar completion.
-async fn rescan(state: &mut GlobalState, dir: &Path, typ: FileChangeType) {
+async fn rescan(state: &mut GlobalState<TestHandlers>, dir: &Path, typ: FileChangeType) {
     state
         .handle_event_once(did_change_watched_file(dir, typ))
         .await;
@@ -92,7 +96,7 @@ async fn rescan(state: &mut GlobalState, dir: &Path, typ: FileChangeType) {
 }
 
 /// Handle one sidecar completion without waiting for any batch it schedules.
-async fn finish_batch(state: &mut GlobalState) {
+async fn finish_batch(state: &mut GlobalState<TestHandlers>) {
     let completed = state
         .take_event(|event| matches!(event, Event::SidecarCompleted(_)))
         .await;

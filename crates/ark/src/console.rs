@@ -152,11 +152,13 @@ use crate::help::message::HelpEvent;
 use crate::help::r_help::HelpPorts;
 use crate::help::r_help::RHelp;
 use crate::lsp::events::EVENTS;
+use crate::lsp::host::ArkEvent;
+use crate::lsp::host::ArkHandlers;
 use crate::lsp::host::ConsoleInputs;
-use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
-use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
+use crate::lsp::host::DidCloseVirtualDocumentParams;
+use crate::lsp::host::DidOpenVirtualDocumentParams;
+use crate::lsp::host::KernelNotification;
 use crate::lsp::main_loop::Event;
-use crate::lsp::main_loop::KernelNotification;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::modules;
 use crate::modules::ARK_ENVS;
@@ -260,7 +262,7 @@ pub struct Console {
     help_ports: Cell<Option<HelpPorts>>,
 
     /// Event channel for notifying the LSP. In principle, could be a Jupyter comm.
-    lsp_events_tx: Option<TokioUnboundedSender<Event>>,
+    lsp_events_tx: Option<TokioUnboundedSender<Event<ArkHandlers>>>,
 
     /// The kernel's copy of virtual documents to notify the LSP about when the LSP
     /// initially connects and after an LSP restart.

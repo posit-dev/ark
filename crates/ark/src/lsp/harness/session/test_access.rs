@@ -8,7 +8,9 @@ use serde_json::Value;
 
 use super::LspSession;
 use crate::lsp::analysis::WorldStateSnapshot;
+use crate::lsp::handlers::Handlers;
 use crate::lsp::harness::LspHarness;
+use crate::lsp::harness::TestHandlers;
 use crate::lsp::main_loop::DiagnosticsPublication;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::TokioUnboundedSender;
@@ -21,11 +23,21 @@ impl LspHarness {
         settings: &[(&str, Value)],
         source_handler: Arc<dyn SourceHandler>,
     ) -> LspSession {
-        self.start_with(settings, Some(source_handler)).await
+        self.start_with(TestHandlers, settings, Some(source_handler))
+            .await
+    }
+
+    /// [`Self::start()`] with a host's `handlers` in place of [`TestHandlers`].
+    pub(crate) async fn start_with_handlers<H: Handlers>(
+        self,
+        handlers: H,
+        settings: &[(&str, Value)],
+    ) -> LspSession<H> {
+        self.start_with(handlers, settings, None).await
     }
 }
 
-impl LspSession {
+impl<H: Handlers> LspSession<H> {
     pub(crate) async fn pump_scans_to_quiescence(&mut self) {
         self.state.pump_scans_to_quiescence().await;
         self.collect_auxiliary();
@@ -39,7 +51,7 @@ impl LspSession {
         &self.raw_publications
     }
 
-    pub(crate) fn events_tx(&self) -> TokioUnboundedSender<Event> {
+    pub(crate) fn events_tx(&self) -> TokioUnboundedSender<Event<H>> {
         self.state.events_tx()
     }
 

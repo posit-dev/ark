@@ -46,6 +46,7 @@ use crate::lsp::config::initialization_options;
 use crate::lsp::config::LspSettings;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_SETTING;
+use crate::lsp::harness::TestHandlers;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
@@ -93,9 +94,10 @@ async fn test_source_pipeline_ingests_package_sources() {
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(source_scheduler_for_test(handler.clone()))
             .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
@@ -155,9 +157,10 @@ async fn test_disabled_source_fetching_dispatches_nothing() {
     let client = TestClient::new(&[(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(false))]).await;
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
             .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
@@ -210,9 +213,10 @@ async fn test_configuration_not_pulled_without_capability() {
     let client = TestClient::new(&[(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(false))]).await;
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
             .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
@@ -272,9 +276,10 @@ async fn check_initialization_options(options: Option<Value>) -> Arc<TestSourceH
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
             .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
@@ -316,9 +321,10 @@ async fn test_initialization_options_survive_a_silent_pull() {
     let client = TestClient::new(&[]).await;
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
             .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
@@ -449,9 +455,10 @@ async fn test_reenabling_fetches_packages_seen_while_off() {
     let client = TestClient::new(&[(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(false))]).await;
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
             .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
@@ -525,9 +532,10 @@ async fn test_disabling_stops_fetching_new_packages() {
     let client = TestClient::new(&[(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(true))]).await;
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
             .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
@@ -647,7 +655,7 @@ async fn test_reenabling_before_a_skip_lands_still_fetches() {
 /// last one waits. Dropping [`Self::releases`] lets the parked fetches return,
 /// which is when the queued job starts and reads the setting.
 struct QueuedFetchSession {
-    state: GlobalState,
+    state: GlobalState<TestHandlers>,
     client: TestClient,
     handler: Arc<TestSourceHandler>,
     donors: Vec<String>,
@@ -658,7 +666,7 @@ struct QueuedFetchSession {
     /// fail.
     _lib: tempfile::TempDir,
     _workspace: tempfile::TempDir,
-    _response_rx: UnboundedReceiver<RequestResponse>,
+    _response_rx: UnboundedReceiver<RequestResponse<TestHandlers>>,
     _entered_rx: Receiver<()>,
 }
 
@@ -694,9 +702,10 @@ async fn queued_fetch_session() -> QueuedFetchSession {
     let client = TestClient::new(&[(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(true))]).await;
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         client.client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
             .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
@@ -753,9 +762,15 @@ async fn test_fetching_waits_for_initialized_without_configuration() {
     check_fetching_waits_for_initialized(|path| initialize_without_configuration(path, None)).await;
 }
 
-async fn check_fetching_waits_for_initialized(
-    initialize: fn(&Path) -> (Event, UnboundedReceiver<RequestResponse>),
-) {
+/// Builds an `initialize` request event and the receiver for its answer.
+type InitializeRequest = fn(
+    &Path,
+) -> (
+    Event<TestHandlers>,
+    UnboundedReceiver<RequestResponse<TestHandlers>>,
+);
+
+async fn check_fetching_waits_for_initialized(initialize: InitializeRequest) {
     let _aux = init_aux_for_test();
 
     let handler = Arc::new(TestSourceHandler::new(HashMap::from([(
@@ -773,9 +788,10 @@ async fn check_fetching_waits_for_initialized(
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
             .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
@@ -882,9 +898,10 @@ async fn test_failed_source_is_not_retried() {
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(source_scheduler_for_test(handler.clone()))
             .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
@@ -938,9 +955,10 @@ async fn test_panicking_fetch_settles_as_failed() {
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(source_scheduler_for_test(handler.clone()))
             .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
@@ -991,9 +1009,10 @@ async fn test_late_sources_for_removed_package_are_not_ingested() {
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(source_scheduler_for_test(handler.clone()))
             .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
@@ -1006,7 +1025,8 @@ async fn test_late_sources_for_removed_package_are_not_ingested() {
         .write(&myproj);
     write_sources(&myproj.join("R"), &[("use.R", "donor::foo()\n")]);
 
-    let is_source_completed = |event: &Event| matches!(event, Event::SourceCompleted(_));
+    let is_source_completed =
+        |event: &Event<TestHandlers>| matches!(event, Event::SourceCompleted(_));
 
     state
         .handle_event_once(did_change_workspace_folders(workspace.path()))
@@ -1151,7 +1171,8 @@ async fn test_completion_for_replaced_version_is_ignored() {
     let _aux = init_aux_for_test();
     let mut session = upgrade_session();
 
-    let is_source_completed = |event: &Event| matches!(event, Event::SourceCompleted(_));
+    let is_source_completed =
+        |event: &Event<TestHandlers>| matches!(event, Event::SourceCompleted(_));
 
     session
         .state
@@ -1242,7 +1263,7 @@ async fn test_completion_queued_behind_upgrade_is_ignored() {
 /// The workspace uses `donor` via `::` but is not registered until the test
 /// adds it, allowing the test to control when the first fetch starts.
 struct UpgradeSession {
-    state: GlobalState,
+    state: GlobalState<TestHandlers>,
     handler: Arc<TestSourceHandler>,
     lib: tempfile::TempDir,
     workspace: tempfile::TempDir,
@@ -1260,9 +1281,10 @@ fn upgrade_session() -> UpgradeSession {
     db.set_library_paths(&[lib.path().to_path_buf()]);
 
     let state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(source_scheduler_for_test(handler.clone()))
             .with_environment_scheduler(fixed_environments(&[lib.path()])),
     );
@@ -1352,9 +1374,10 @@ async fn test_source_pipeline_ingests_real_srcref_sources() {
     db.set_library_paths(&[library.path().to_path_buf()]);
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(source_scheduler_for_test(handler))
             .with_environment_scheduler(fixed_environments(&[library.path()])),
     );

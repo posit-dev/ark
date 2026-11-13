@@ -16,6 +16,7 @@ use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
 use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::RequestResponse;
+use crate::lsp::handlers::Handlers;
 use crate::lsp::harness::editor::notifications::initialize_with;
 use crate::lsp::main_loop::Event;
 
@@ -25,24 +26,26 @@ use crate::lsp::main_loop::Event;
 /// Hand back the response receiver along with the event. The caller has to hold
 /// it for the duration of the test: dropping it early makes `respond()`'s send
 /// fail, which nextest then reports as a leak.
-pub(crate) fn initialize(path: &Path) -> (Event, UnboundedReceiver<RequestResponse>) {
+pub(crate) fn initialize<H: Handlers>(
+    path: &Path,
+) -> (Event<H>, UnboundedReceiver<RequestResponse<H>>) {
     initialize_with(folders(path), true, None)
 }
 
 /// A pull-capable [`initialize()`] request with `initialization_options`.
-pub(crate) fn initialize_with_options(
+pub(crate) fn initialize_with_options<H: Handlers>(
     path: &Path,
     initialization_options: Value,
-) -> (Event, UnboundedReceiver<RequestResponse>) {
+) -> (Event<H>, UnboundedReceiver<RequestResponse<H>>) {
     initialize_with(folders(path), true, Some(initialization_options))
 }
 
 /// An [`initialize()`] request from a client without `workspace/configuration`
 /// support, using `initialization_options` for its global settings.
-pub(crate) fn initialize_without_configuration(
+pub(crate) fn initialize_without_configuration<H: Handlers>(
     path: &Path,
     initialization_options: Option<Value>,
-) -> (Event, UnboundedReceiver<RequestResponse>) {
+) -> (Event<H>, UnboundedReceiver<RequestResponse<H>>) {
     initialize_with(folders(path), false, initialization_options)
 }
 
@@ -52,7 +55,7 @@ fn folders(path: &Path) -> Vec<Uri> {
 
 /// A `didChangeConfiguration` notification. The server ignores its `settings`
 /// payload and pulls the registered settings again.
-pub(crate) fn did_change_configuration() -> Event {
+pub(crate) fn did_change_configuration<H: Handlers>() -> Event<H> {
     Event::Lsp(LspMessage::Notification(
         LspNotification::DidChangeConfiguration(DidChangeConfigurationParams {
             settings: serde_json::Value::Null,
@@ -61,7 +64,7 @@ pub(crate) fn did_change_configuration() -> Event {
 }
 
 /// A `workspace/didChangeWatchedFiles` notification for one change at `path`.
-pub(crate) fn did_change_watched_file(path: &Path, typ: FileChangeType) -> Event {
+pub(crate) fn did_change_watched_file<H: Handlers>(path: &Path, typ: FileChangeType) -> Event<H> {
     Event::Lsp(LspMessage::Notification(
         LspNotification::DidChangeWatchedFiles(DidChangeWatchedFilesParams {
             changes: vec![FileEvent {
@@ -74,10 +77,10 @@ pub(crate) fn did_change_watched_file(path: &Path, typ: FileChangeType) -> Event
 
 /// A `textDocument/completion` request at `position` in the open document at
 /// `path`, invoked without a trigger character.
-pub(crate) fn completion(
+pub(crate) fn completion<H: Handlers>(
     path: &Path,
     position: Position,
-) -> (Event, UnboundedReceiver<RequestResponse>) {
+) -> (Event<H>, UnboundedReceiver<RequestResponse<H>>) {
     let params = CompletionParams {
         text_document_position: TextDocumentPositionParams {
             text_document: TextDocumentIdentifier {

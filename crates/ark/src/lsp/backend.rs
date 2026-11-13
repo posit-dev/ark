@@ -15,16 +15,10 @@ use std::sync::OnceLock;
 use std::task::Context as TaskContext;
 use std::task::Poll;
 
-use amalthea::comm::server_comm::ServerStartMessage;
-use amalthea::comm::server_comm::ServerStartedMessage;
-use anyhow::Context;
-use crossbeam::channel::Sender;
 use serde_json::Value;
-use stdext::result::ResultExt;
-use tokio::net::TcpListener;
-use tokio::runtime::Runtime;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncWrite;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
-use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 use tower::Service;
 use tower_lsp_server::jsonrpc;
 use tower_lsp_server::jsonrpc::Result;
@@ -36,20 +30,11 @@ use tower_lsp_server::ls_types::*;
 use tower_lsp_server::Client;
 use tower_lsp_server::LanguageServer;
 use tower_lsp_server::LspService;
+use tower_lsp_server::LspServiceBuilder;
 use tower_lsp_server::Server;
 
 use super::main_loop::LspServiceContext;
-use crate::console::Console;
-use crate::console::ConsoleNotification;
-use crate::lsp::handlers::VirtualDocumentParams;
-use crate::lsp::handlers::VirtualDocumentResponse;
-use crate::lsp::handlers::ARK_VDOC_REQUEST;
-use crate::lsp::help_topic;
-use crate::lsp::help_topic::HelpTopicParams;
-use crate::lsp::help_topic::HelpTopicResponse;
-use crate::lsp::input_boundaries;
-use crate::lsp::input_boundaries::InputBoundariesParams;
-use crate::lsp::input_boundaries::InputBoundariesResponse;
+use crate::lsp::handlers::Handlers;
 #[cfg(feature = "testing")]
 use crate::lsp::main_loop::panic_auxiliary_loop;
 use crate::lsp::main_loop::report_crash;
@@ -57,12 +42,8 @@ use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LoopHandles;
 use crate::lsp::main_loop::TokioUnboundedSender;
-use crate::lsp::statement_range;
-use crate::lsp::statement_range::StatementRangeParams;
-use crate::lsp::statement_range::StatementRangeResponse;
 use crate::panic;
 use crate::panic::Recovery;
-use crate::r_task;
 
 // Once the LSP has crashed all requests respond with an error. This prevents
 // any handler from running while we process the message to shut down the
@@ -70,9 +51,9 @@ use crate::r_task;
 // have just created an anyhow error passed through the `Result` variant but that
 // would flood the LSP logs with irrelevant backtraces.
 #[expect(clippy::large_enum_variant)]
-pub(crate) enum RequestResponse {
+pub(crate) enum RequestResponse<H: Handlers> {
     Disabled,
-    Result(LspResult<LspResponse>),
+    Result(LspResult<LspResponse<H>>),
 }
 
 // Based on https://stackoverflow.com/a/69324393/1725177
@@ -101,9 +82,9 @@ macro_rules! cast_response {
 
 #[derive(Debug)]
 #[expect(clippy::large_enum_variant)]
-pub(crate) enum LspMessage {
+pub(crate) enum LspMessage<H: Handlers> {
     Notification(LspNotification),
-    Request(LspRequest, TokioUnboundedSender<RequestResponse>),
+    Request(LspRequest<H>, TokioUnboundedSender<RequestResponse<H>>),
 }
 
 #[derive(Debug)]
@@ -121,17 +102,11 @@ pub(crate) enum LspNotification {
     DidCloseNotebookDocument(DidCloseNotebookDocumentParams),
     #[cfg(feature = "testing")]
     TestPanic,
-    #[cfg(feature = "testing")]
-    TestCancelRTask,
-    #[cfg(feature = "testing")]
-    TestPanicRTask,
-    #[cfg(feature = "testing")]
-    TestRErrorRTask,
 }
 
 #[derive(Debug)]
 #[expect(clippy::large_enum_variant)]
-pub(crate) enum LspRequest {
+pub(crate) enum LspRequest<H: Handlers> {
     Initialize(InitializeParams),
     WorkspaceSymbol(WorkspaceSymbolParams),
     DocumentSymbol(DocumentSymbolParams),
@@ -147,19 +122,17 @@ pub(crate) enum LspRequest {
     References(ReferenceParams),
     PrepareRename(TextDocumentPositionParams),
     Rename(RenameParams),
-    StatementRange(StatementRangeParams),
-    HelpTopic(HelpTopicParams),
     OnTypeFormatting(DocumentOnTypeFormattingParams),
     CodeAction(CodeActionParams),
-    VirtualDocument(VirtualDocumentParams),
-    InputBoundaries(InputBoundariesParams),
+    /// A request only the host serves, sent by one of its custom methods.
+    Host(H::Request),
     #[cfg(feature = "testing")]
     TestPanic,
 }
 
 #[derive(Debug)]
 #[expect(clippy::large_enum_variant)]
-pub(crate) enum LspResponse {
+pub(crate) enum LspResponse<H: Handlers> {
     Initialize(InitializeResult),
     WorkspaceSymbol(Option<Vec<SymbolInformation>>),
     DocumentSymbol(Option<DocumentSymbolResponse>),
@@ -175,20 +148,17 @@ pub(crate) enum LspResponse {
     References(Option<Vec<Location>>),
     PrepareRename(Option<PrepareRenameResponse>),
     Rename(Option<WorkspaceEdit>),
-    StatementRange(Option<StatementRangeResponse>),
-    HelpTopic(Option<HelpTopicResponse>),
     OnTypeFormatting(Option<Vec<TextEdit>>),
     CodeAction(Option<CodeActionResponse>),
-    VirtualDocument(VirtualDocumentResponse),
-    InputBoundaries(InputBoundariesResponse),
+    Host(H::Response),
     #[cfg(feature = "testing")]
     TestPanic(()),
 }
 
-pub(crate) type LspResult<T> = std::result::Result<T, LspError>;
+pub type LspResult<T> = std::result::Result<T, LspError>;
 
 #[derive(Debug)]
-pub(crate) enum LspError {
+pub enum LspError {
     JsonRpc(jsonrpc::Error),
     Anyhow(anyhow::Error),
 }
@@ -218,10 +188,13 @@ impl From<anyhow::Error> for LspError {
     }
 }
 
+/// The `tower-lsp` service that relays analysis requests and editor notifications
+/// to the main loop. Host custom methods use [`Self::host_request()`] and
+/// [`Self::notify_host()`] to reach the same loop.
 #[derive(Debug)]
-struct Backend {
+pub(crate) struct Backend<H: Handlers> {
     /// Channel for communication with the main loop.
-    events_tx: TokioUnboundedSender<Event>,
+    events_tx: TokioUnboundedSender<Event<H>>,
 
     /// State shared with the main loop and its background pools.
     service_context: Arc<LspServiceContext>,
@@ -231,13 +204,32 @@ struct Backend {
     _main_loop: LoopHandles,
 }
 
-impl Backend {
-    async fn request(&self, request: LspRequest) -> RequestResponse {
+impl<H: Handlers> Backend<H> {
+    /// Relay a host-only request to the main loop, which answers it through
+    /// [`Handlers::request()`].
+    pub(crate) async fn host_request(&self, request: H::Request) -> Result<H::Response> {
+        cast_response!(
+            self.request(LspRequest::Host(request)).await,
+            LspResponse::Host
+        )
+    }
+
+    /// Relay a host event through the same channel as client requests and
+    /// notifications. The main loop handles events serially in channel order.
+    #[cfg_attr(
+        not(feature = "testing"),
+        expect(dead_code, reason = "Ark's only host notifications are test methods")
+    )]
+    pub(crate) fn notify_host(&self, event: H::Event) {
+        self.send(Event::Host(event));
+    }
+
+    async fn request(&self, request: LspRequest<H>) -> RequestResponse<H> {
         if self.service_context.has_crashed() {
             return RequestResponse::Disabled;
         }
 
-        let (response_tx, mut response_rx) = tokio_unbounded_channel::<RequestResponse>();
+        let (response_tx, mut response_rx) = tokio_unbounded_channel::<RequestResponse<H>>();
 
         // Relay request to main loop
         if self
@@ -256,16 +248,16 @@ impl Backend {
     }
 
     fn notify(&self, notif: LspNotification) {
+        self.send(Event::Lsp(LspMessage::Notification(notif)));
+    }
+
+    fn send(&self, event: Event<H>) {
         if self.service_context.has_crashed() {
             return;
         }
 
         // Relay notification to main loop
-        if self
-            .events_tx
-            .send(Event::Lsp(LspMessage::Notification(notif)))
-            .is_err()
-        {
+        if self.events_tx.send(event).is_err() {
             log::error!("Can't relay notification, the main loop is gone");
         }
     }
@@ -333,7 +325,7 @@ async fn report_and_resume_service_panic(
     std::panic::resume_unwind(payload);
 }
 
-impl LanguageServer for Backend {
+impl<H: Handlers> LanguageServer for Backend<H> {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         cast_response!(
             self.request(LspRequest::Initialize(params)).await,
@@ -529,10 +521,11 @@ impl LanguageServer for Backend {
     }
 }
 
-// Custom methods for the backend.
+// Custom test methods that exercise the core's recovery boundaries.
 //
 // NOTE: Request / notification methods _must_ accept a params object,
-// even for notifications that don't include any auxiliary data.
+// even for notifications that don't include any auxiliary data. This holds
+// for the host's custom methods too.
 //
 // I'm not positive, but I think this is related to the way VSCode
 // serializes parameters for notifications / requests when no data
@@ -544,52 +537,8 @@ impl LanguageServer for Backend {
 //
 // https://github.com/Microsoft/vscode-languageserver-node/blob/18fad46b0e8085bb72e1b76f9ea23a379569231a/client/src/common/client.ts#L802-L838
 // https://github.com/Microsoft/vscode-languageserver-node/blob/18fad46b0e8085bb72e1b76f9ea23a379569231a/client/src/common/client.ts#L701-L752
-impl Backend {
-    async fn statement_range(
-        &self,
-        params: StatementRangeParams,
-    ) -> jsonrpc::Result<Option<StatementRangeResponse>> {
-        cast_response!(
-            self.request(LspRequest::StatementRange(params)).await,
-            LspResponse::StatementRange
-        )
-    }
-
-    async fn help_topic(
-        &self,
-        params: HelpTopicParams,
-    ) -> jsonrpc::Result<Option<HelpTopicResponse>> {
-        cast_response!(
-            self.request(LspRequest::HelpTopic(params)).await,
-            LspResponse::HelpTopic
-        )
-    }
-
-    async fn virtual_document(
-        &self,
-        params: VirtualDocumentParams,
-    ) -> tower_lsp_server::jsonrpc::Result<VirtualDocumentResponse> {
-        cast_response!(
-            self.request(LspRequest::VirtualDocument(params)).await,
-            LspResponse::VirtualDocument
-        )
-    }
-
-    async fn input_boundaries(
-        &self,
-        params: InputBoundariesParams,
-    ) -> tower_lsp_server::jsonrpc::Result<InputBoundariesResponse> {
-        cast_response!(
-            self.request(LspRequest::InputBoundaries(params)).await,
-            LspResponse::InputBoundaries
-        )
-    }
-
-    async fn notification(&self, params: Option<Value>) {
-        log::info!("Received Positron notification: {:?}", params);
-    }
-
-    #[cfg(feature = "testing")]
+#[cfg(feature = "testing")]
+impl<H: Handlers> Backend<H> {
     async fn test_panic(&self, _params: Option<Value>) -> jsonrpc::Result<()> {
         cast_response!(
             self.request(LspRequest::TestPanic).await,
@@ -597,39 +546,20 @@ impl Backend {
         )
     }
 
-    #[cfg(feature = "testing")]
     async fn test_panic_notification(&self, _params: Option<Value>) {
         self.notify(LspNotification::TestPanic);
     }
 
-    #[cfg(feature = "testing")]
-    async fn test_cancel_r_task(&self, _params: Option<Value>) {
-        self.notify(LspNotification::TestCancelRTask);
-    }
-
-    #[cfg(feature = "testing")]
-    async fn test_panic_r_task(&self, _params: Option<Value>) {
-        self.notify(LspNotification::TestPanicRTask);
-    }
-
-    #[cfg(feature = "testing")]
-    async fn test_r_error_r_task(&self, _params: Option<Value>) {
-        self.notify(LspNotification::TestRErrorRTask);
-    }
-
-    #[cfg(feature = "testing")]
     async fn test_panic_main_loop(&self, _params: Option<Value>) {
         let _ = self.events_tx.send(Event::TestPanicMainLoop);
     }
 
     // Bypass the main loop so the test event panics in the auxiliary loop.
-    #[cfg(feature = "testing")]
     async fn test_panic_auxiliary(&self, _params: Option<Value>) {
         panic_auxiliary_loop();
     }
 
     // Bypass the main loop and panic directly in a `tower-lsp` service future.
-    #[cfg(feature = "testing")]
     async fn test_panic_service(&self, _params: Option<Value>) {
         panic!("Test panic in the LSP service");
     }
@@ -642,181 +572,97 @@ pub(crate) static ARK_TEST_PANIC_NOTIFICATION: &str = "ark/testPanicNotification
 #[cfg(feature = "testing")]
 pub(crate) static ARK_TEST_PANIC_MAIN_LOOP: &str = "ark/testPanicMainLoop";
 #[cfg(feature = "testing")]
-pub(crate) static ARK_TEST_CANCEL_R_TASK: &str = "ark/testCancelRTask";
-#[cfg(feature = "testing")]
-pub(crate) static ARK_TEST_PANIC_R_TASK: &str = "ark/testPanicRTask";
-#[cfg(feature = "testing")]
-pub(crate) static ARK_TEST_R_ERROR_R_TASK: &str = "ark/testRErrorRTask";
-#[cfg(feature = "testing")]
 pub(crate) static ARK_TEST_PANIC_AUXILIARY: &str = "ark/testPanicAuxiliary";
 #[cfg(feature = "testing")]
 pub(crate) static ARK_TEST_PANIC_SERVICE: &str = "ark/testPanicService";
 
-pub(crate) fn start_lsp(
-    r_home: PathBuf,
-    runtime: Arc<Runtime>,
-    server_start: ServerStartMessage,
-    server_started_tx: Sender<ServerStartedMessage>,
-    console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
+/// Serve the LSP over `read` and `write` until the connection closes or the
+/// main loop shuts the server down after a crash.
+///
+/// `handlers` handles requests and host events. Supplying `r_executable`
+/// enables source fetching, the sidecar job and R library resolution.
+/// `on_start()` receives the event channel after the main loop is started,
+/// so the host can post events. `custom_methods()` registers host methods
+/// that can use [`Backend::host_request()`] and [`Backend::notify_host()`].
+pub(crate) async fn serve<H: Handlers>(
+    read: impl AsyncRead + Unpin,
+    write: impl AsyncWrite,
+    handlers: H,
+    r_executable: Option<PathBuf>,
+    on_start: impl FnOnce(&TokioUnboundedSender<Event<H>>),
+    custom_methods: impl FnOnce(LspServiceBuilder<Backend<H>>) -> LspServiceBuilder<Backend<H>>,
 ) {
-    let lifecycle = async {
-        let ip_address = server_start.ip_address();
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let crash_client = OnceLock::<Client>::new();
+    let crash_service_context = OnceLock::<Arc<LspServiceContext>>::new();
 
-        // Binding to port `0` to allow the OS to allocate a port for us to bind to
-        let listener = match TcpListener::bind(format!("{ip_address}:0")).await {
-            Ok(listener) => listener,
-            Err(err) => {
-                log::error!("LSP: Failed to bind to {ip_address}:0: {err:?}");
-                return;
-            },
-        };
+    let init = |client: Client| {
+        let _ = crash_client.set(client.clone());
+        let state = GlobalState::new(handlers, client, r_executable);
+        let events_tx = state.events_tx();
+        let service_context = Arc::clone(state.service_context());
+        let _ = crash_service_context.set(Arc::clone(&service_context));
 
-        let address = match listener.local_addr() {
-            Ok(address) => address,
-            Err(error) => {
-                log::error!("LSP: Failed to get local address for {ip_address}:0: {error}");
-                return;
-            },
-        };
+        // Start main loop and hold onto the handle that keeps it alive
+        let main_loop = state.start(shutdown_tx);
 
-        // Get the OS allocated port
-        let port = address.port();
+        on_start(&events_tx);
 
-        log::trace!("LSP: Thread starting at address {ip_address}:{port}.");
-
-        // Send the port back to `Shell` and eventually out to the frontend so it can connect
-        server_started_tx
-            .send(ServerStartedMessage::new(port))
-            .context("LSP: Can't send server started notification")
-            .log_err();
-
-        log::trace!("LSP: Waiting for client");
-        let (stream, address) = match listener.accept().await {
-            Ok(connection) => connection,
-            Err(err) => {
-                log::error!("LSP: Failed to accept a client connection: {err:?}");
-                return;
-            },
-        };
-        log::trace!("LSP: Connected to client: '{address}'");
-        let (read, write) = tokio::io::split(stream);
-
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
-        let crash_client = OnceLock::<Client>::new();
-        let crash_service_context = OnceLock::<Arc<LspServiceContext>>::new();
-
-        let init = |client: Client| {
-            let _ = crash_client.set(client.clone());
-            let state = GlobalState::new(client, r_home, console_notification_tx);
-            let events_tx = state.events_tx();
-            let service_context = Arc::clone(state.service_context());
-            let _ = crash_service_context.set(Arc::clone(&service_context));
-
-            // Start main loop and hold onto the handle that keeps it alive
-            let main_loop = state.start(shutdown_tx);
-
-            // Forward event channel along to `Console`.
-            // This also updates an outdated channel after a reconnect.
-            // `Console` should be initialized by now, since the caller of this
-            // function waits to receive the init notification sent on
-            // `kernel_init_rx`. Even if it isn't, this should be okay because
-            // `r_task()` defensively blocks until its sender is initialized.
-            r_task({
-                let events_tx = events_tx.clone();
-                move || {
-                    Console::get_mut().set_lsp_channel(events_tx);
-                }
-            });
-
-            Backend {
-                events_tx,
-                service_context,
-                _main_loop: main_loop,
-            }
-        };
-
-        let builder = LspService::build(init)
-            .custom_method(
-                statement_range::POSITRON_STATEMENT_RANGE_REQUEST,
-                Backend::statement_range,
-            )
-            .custom_method(help_topic::POSITRON_HELP_TOPIC_REQUEST, Backend::help_topic)
-            .custom_method(ARK_VDOC_REQUEST, Backend::virtual_document)
-            // In principle this should probably be a Jupyter request
-            .custom_method(
-                input_boundaries::POSITRON_INPUT_BOUNDARIES_REQUEST,
-                Backend::input_boundaries,
-            )
-            .custom_method("positron/notification", Backend::notification);
-
-        #[cfg(feature = "testing")]
-        let builder = builder
-            .custom_method(ARK_TEST_PANIC_REQUEST, Backend::test_panic)
-            .custom_method(
-                ARK_TEST_PANIC_NOTIFICATION,
-                Backend::test_panic_notification,
-            )
-            .custom_method(ARK_TEST_PANIC_MAIN_LOOP, Backend::test_panic_main_loop)
-            .custom_method(ARK_TEST_CANCEL_R_TASK, Backend::test_cancel_r_task)
-            .custom_method(ARK_TEST_PANIC_R_TASK, Backend::test_panic_r_task)
-            .custom_method(ARK_TEST_R_ERROR_R_TASK, Backend::test_r_error_r_task)
-            .custom_method(ARK_TEST_PANIC_AUXILIARY, Backend::test_panic_auxiliary)
-            .custom_method(ARK_TEST_PANIC_SERVICE, Backend::test_panic_service);
-
-        let (service, socket) = builder.finish();
-        let Some(client) = crash_client.into_inner() else {
-            log::error!("LSP: Service did not initialize its client");
-            return;
-        };
-        let Some(service_context) = crash_service_context.into_inner() else {
-            log::error!("LSP: Service did not initialize its context");
-            return;
-        };
-        let service = CatchServicePanics::new(service, client.clone(), service_context);
-
-        // Finite transport concurrency and its pending queue can stop the socket reader while
-        // handlers await the serial Ark main loop, which can await a client configuration response.
-        // Unlimited admission keeps the reader progressing without parallelizing main-loop handlers.
-        let server = Server::new(read, write, socket).concurrency_level(usize::MAX);
-
-        let serving = async {
-            tokio::select! {
-                _ = server.serve(service) => {
-                    log::trace!(
-                        "LSP: Thread exiting gracefully after connection closed ({:?}).",
-                        address
-                    );
-                },
-                _ = shutdown_rx.recv() => {
-                    log::trace!(
-                        "LSP: Thread exiting after receiving a shutdown request ({:?}).",
-                        address
-                    );
-                }
-            }
-        };
-
-        // Catch handler panics around `server.serve()`, which polls every `tower-lsp`
-        // handler. Cleanup still removes the LSP channel so the client can reconnect.
-        if let Err(msg) = panic::catch_unwind_async(Recovery::Always, serving).await {
-            log::error!("LSP: Panic in the service: {msg}");
+        Backend {
+            events_tx,
+            service_context,
+            _main_loop: main_loop,
         }
-
-        // Remove the LSP channel on the way out, we can no longer handle any LSP updates
-        // from `Console`, at least until someone starts the LSP up again.
-        r_task({
-            move || {
-                Console::get_mut().remove_lsp_channel();
-            }
-        });
     };
 
-    if let Err(err) = runtime.block_on(panic::catch_unwind_async(Recovery::Always, lifecycle)) {
-        log::error!("LSP: Panic in the server lifecycle: {err:?}");
+    let builder = custom_methods(LspService::build(init));
+
+    #[cfg(feature = "testing")]
+    let builder = builder
+        .custom_method(ARK_TEST_PANIC_REQUEST, Backend::test_panic)
+        .custom_method(
+            ARK_TEST_PANIC_NOTIFICATION,
+            Backend::test_panic_notification,
+        )
+        .custom_method(ARK_TEST_PANIC_MAIN_LOOP, Backend::test_panic_main_loop)
+        .custom_method(ARK_TEST_PANIC_AUXILIARY, Backend::test_panic_auxiliary)
+        .custom_method(ARK_TEST_PANIC_SERVICE, Backend::test_panic_service);
+
+    let (service, socket) = builder.finish();
+    let Some(client) = crash_client.into_inner() else {
+        log::error!("LSP: Service did not initialize its client");
+        return;
+    };
+    let Some(service_context) = crash_service_context.into_inner() else {
+        log::error!("LSP: Service did not initialize its context");
+        return;
+    };
+    let service = CatchServicePanics::new(service, client.clone(), service_context);
+
+    // Finite transport concurrency and its pending queue can stop the socket reader while
+    // handlers await the serial main loop, which can await a client configuration response.
+    // Unlimited admission keeps the reader progressing without parallelizing main-loop handlers.
+    let server = Server::new(read, write, socket).concurrency_level(usize::MAX);
+
+    let serving = async {
+        tokio::select! {
+            _ = server.serve(service) => {
+                log::trace!("LSP: Thread exiting gracefully after connection closed.");
+            },
+            _ = shutdown_rx.recv() => {
+                log::trace!("LSP: Thread exiting after receiving a shutdown request.");
+            }
+        }
+    };
+
+    // Catch handler panics around `server.serve()`, which polls every `tower-lsp`
+    // handler.
+    if let Err(msg) = panic::catch_unwind_async(Recovery::Always, serving).await {
+        log::error!("LSP: Panic in the service: {msg}");
     }
 }
 
-fn new_jsonrpc_error(message: String) -> jsonrpc::Error {
+pub(crate) fn new_jsonrpc_error(message: String) -> jsonrpc::Error {
     jsonrpc::Error {
         code: jsonrpc::ErrorCode::ServerError(-1),
         message: message.into(),

@@ -60,6 +60,7 @@ use crate::lsp::environments::EnvironmentRequest;
 use crate::lsp::environments::EnvironmentResolver;
 use crate::lsp::environments::EnvironmentScheduler;
 use crate::lsp::environments::RProcessResolver;
+use crate::lsp::harness::TestHandlers;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::AuxiliaryEvent;
 use crate::lsp::main_loop::Event;
@@ -68,15 +69,13 @@ use crate::lsp::main_loop::LspState;
 use crate::lsp::state::WorldState;
 
 /// The production constructor starts the default unresolved, so a failed
-/// first run reads as a first failure rather than a failed rerun. An `r_home`
-/// without R is enough, since construction runs nothing.
+/// first run reads as a first failure rather than a failed rerun. No R
+/// executable is needed, since construction runs nothing.
 #[tokio::test]
 async fn test_global_state_starts_with_default_unresolved() {
     let _aux = init_aux_for_test();
-    let r_home = tempfile::tempdir().unwrap();
-    let (console_tx, _console_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let state = GlobalState::new(test_client(), r_home.path().to_path_buf(), console_tx);
+    let state = GlobalState::new(TestHandlers, test_client(), None);
 
     let db = state.world().db();
     assert_eq!(
@@ -534,6 +533,7 @@ async fn test_library_change_replaces_watcher_registration() {
     ]));
     let client = TestClient::new(&[]).await;
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         client.client(),
         WorldState::new(unresolved_database()),
         lsp_state(Some(resolver.clone())),
@@ -608,6 +608,7 @@ async fn test_library_watchers_follow_results_after_initialized() {
     ]));
     let client = TestClient::new(&[]).await;
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         client.client(),
         WorldState::new(unresolved_database()),
         lsp_state(Some(resolver.clone())),
@@ -1007,13 +1008,13 @@ fn isolate_r_startup(home: &Path) {
     }
 }
 
-fn r_process_global_state() -> GlobalState {
+fn r_process_global_state() -> GlobalState<TestHandlers> {
     let resolver: Arc<dyn EnvironmentResolver> = Arc::new(RProcessResolver::new(find_r()));
     GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         WorldState::new(unresolved_database()),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_environment_scheduler(EnvironmentScheduler::new(Some(resolver))),
+        LspState::new().with_environment_scheduler(EnvironmentScheduler::new(Some(resolver))),
     )
 }
 
@@ -1035,7 +1036,7 @@ fn canonical(path: &Path) -> PathBuf {
 
 /// Generate diagnostics for the open buffer directly, without waiting for
 /// background publication.
-fn open_file_diagnostics(state: &GlobalState, path: &Path) -> Vec<Diagnostic> {
+fn open_file_diagnostics(state: &GlobalState<TestHandlers>, path: &Path) -> Vec<Diagnostic> {
     let world = state.world();
     let file_path = FilePath::from_path_buf(path.to_path_buf()).unwrap();
     let open_file = world.open_file(&file_path).unwrap();
@@ -1050,7 +1051,7 @@ fn open_file_diagnostics(state: &GlobalState, path: &Path) -> Vec<Diagnostic> {
     )
 }
 
-fn open_file_diagnostic_messages(state: &GlobalState, path: &Path) -> Vec<String> {
+fn open_file_diagnostic_messages(state: &GlobalState<TestHandlers>, path: &Path) -> Vec<String> {
     open_file_diagnostics(state, path)
         .into_iter()
         .map(|diagnostic| diagnostic.message)
@@ -1064,10 +1065,10 @@ fn open_file_diagnostic_messages(state: &GlobalState, path: &Path) -> Vec<String
 /// The analysis pool can go idle without sending an event, so `done` is
 /// re-checked every millisecond rather than only after events.
 async fn pump_publications(
-    state: &mut GlobalState,
+    state: &mut GlobalState<TestHandlers>,
     aux_rx: &mut UnboundedReceiver<AuxiliaryEvent>,
     path: &Path,
-    done: impl Fn(&GlobalState, &[Vec<Diagnostic>]) -> bool,
+    done: impl Fn(&GlobalState<TestHandlers>, &[Vec<Diagnostic>]) -> bool,
 ) -> Vec<Vec<Diagnostic>> {
     const POLL: Duration = Duration::from_millis(1);
     const TIMEOUT: Duration = Duration::from_secs(30);
@@ -1099,8 +1100,9 @@ async fn pump_publications(
     }
 }
 
-fn global_state(resolver: Option<Arc<TestEnvironmentResolver>>) -> GlobalState {
+fn global_state(resolver: Option<Arc<TestEnvironmentResolver>>) -> GlobalState<TestHandlers> {
     GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         WorldState::new(unresolved_database()),
         lsp_state(resolver),
@@ -1109,8 +1111,7 @@ fn global_state(resolver: Option<Arc<TestEnvironmentResolver>>) -> GlobalState {
 
 fn lsp_state(resolver: Option<Arc<TestEnvironmentResolver>>) -> LspState {
     let resolver = resolver.map(|resolver| resolver as Arc<dyn EnvironmentResolver>);
-    LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-        .with_environment_scheduler(EnvironmentScheduler::new(resolver))
+    LspState::new().with_environment_scheduler(EnvironmentScheduler::new(resolver))
 }
 
 /// Empty directories suffice because these tests check library paths, not
@@ -1131,7 +1132,7 @@ fn directory(dir: &Path) -> EnvironmentRequest {
     EnvironmentRequest::Directory(dir.to_path_buf())
 }
 
-fn library_paths(state: &GlobalState) -> Vec<PathBuf> {
+fn library_paths(state: &GlobalState<TestHandlers>) -> Vec<PathBuf> {
     let db = state.world().db();
     db.library_roots()
         .roots(db)
@@ -1140,7 +1141,7 @@ fn library_paths(state: &GlobalState) -> Vec<PathBuf> {
         .collect()
 }
 
-fn workspace_environment_dirs(state: &GlobalState) -> Vec<PathBuf> {
+fn workspace_environment_dirs(state: &GlobalState<TestHandlers>) -> Vec<PathBuf> {
     let db = state.world().db();
     db.workspace_environments()
         .environments(db)
@@ -1152,7 +1153,7 @@ fn workspace_environment_dirs(state: &GlobalState) -> Vec<PathBuf> {
         .collect()
 }
 
-fn workspace_environment(state: &GlobalState, dir: &Path) -> Environment {
+fn workspace_environment(state: &GlobalState<TestHandlers>, dir: &Path) -> Environment {
     let db = state.world().db();
     let found = db
         .workspace_environments()
@@ -1172,7 +1173,10 @@ fn workspace_environment(state: &GlobalState, dir: &Path) -> Environment {
     }
 }
 
-fn resolved_paths(state: &GlobalState, environment: Environment) -> Option<Vec<PathBuf>> {
+fn resolved_paths(
+    state: &GlobalState<TestHandlers>,
+    environment: Environment,
+) -> Option<Vec<PathBuf>> {
     let db = state.world().db();
     match environment.status(db) {
         EnvironmentStatus::Unresolved => None,
@@ -1185,16 +1189,16 @@ fn resolved_paths(state: &GlobalState, environment: Environment) -> Option<Vec<P
     }
 }
 
-fn last_error(state: &GlobalState, environment: Environment) -> Option<String> {
+fn last_error(state: &GlobalState<TestHandlers>, environment: Environment) -> Option<String> {
     let db = state.world().db();
     environment.last_error(db).clone()
 }
 
-fn is_environment_resolved(event: &Event) -> bool {
+fn is_environment_resolved(event: &Event<TestHandlers>) -> bool {
     matches!(event, Event::EnvironmentResolved(_))
 }
 
-fn sentinel_changed(paths: &[&Path]) -> Event {
+fn sentinel_changed(paths: &[&Path]) -> Event<TestHandlers> {
     let changes = paths
         .iter()
         .map(|path| FileEvent {
@@ -1207,7 +1211,7 @@ fn sentinel_changed(paths: &[&Path]) -> Event {
     ))
 }
 
-fn folder_removed(path: &Path) -> Event {
+fn folder_removed(path: &Path) -> Event<TestHandlers> {
     Event::Lsp(LspMessage::Notification(
         LspNotification::DidChangeWorkspaceFolders(DidChangeWorkspaceFoldersParams {
             event: WorkspaceFoldersChangeEvent {
@@ -1223,7 +1227,12 @@ fn folder_removed(path: &Path) -> Event {
 
 /// An `initialize` request from a client that can watch libraries outside the
 /// workspace through relative patterns.
-fn initialize_with_relative_patterns(path: &Path) -> (Event, UnboundedReceiver<RequestResponse>) {
+fn initialize_with_relative_patterns(
+    path: &Path,
+) -> (
+    Event<TestHandlers>,
+    UnboundedReceiver<RequestResponse<TestHandlers>>,
+) {
     let params = InitializeParams {
         capabilities: ClientCapabilities {
             workspace: Some(WorkspaceClientCapabilities {

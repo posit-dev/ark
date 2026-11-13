@@ -29,6 +29,7 @@ use super::utils::write_sources;
 use super::utils::DescriptionWriter;
 use super::utils::NamespaceWriter;
 use crate::lsp::goto_definition::goto_definition;
+use crate::lsp::harness::TestHandlers;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
@@ -285,9 +286,10 @@ async fn test_goto_definition_resolves_unqualified_import_into_package() {
     db.set_library_paths(&[library.path().to_path_buf()]);
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(source_scheduler_for_test(handler))
             .with_environment_scheduler(fixed_environments(&[library.path()])),
     );
@@ -354,9 +356,10 @@ async fn test_goto_definition_resolves_unqualified_import_from_into_package() {
     db.set_library_paths(&[library.path().to_path_buf()]);
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(source_scheduler_for_test(handler))
             .with_environment_scheduler(fixed_environments(&[library.path()])),
     );
@@ -427,9 +430,10 @@ async fn test_goto_definition_resolves_namespace_accesses() {
     db.set_library_paths(&[library.path().to_path_buf()]);
 
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         world_with_source_fetching(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(source_scheduler_for_test(handler))
             .with_environment_scheduler(fixed_environments(&[library.path()])),
     );
@@ -554,15 +558,15 @@ async fn test_goto_definition_through_tar_source_from_renv_library() {
 
 /// Resolving `tar_source` needs only the `targets` `NAMESPACE`, not its
 /// sources, so the tests run without a source handler.
-fn state_without_source_fetching(library: &Path) -> GlobalState {
+fn state_without_source_fetching(library: &Path) -> GlobalState<TestHandlers> {
     let mut db = OakDatabase::new();
     db.set_library_paths(&[library.to_path_buf()]);
 
     GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         WorldState::new(db),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_environment_scheduler(fixed_environments(&[library])),
+        LspState::new().with_environment_scheduler(fixed_environments(&[library])),
     )
 }
 
@@ -708,9 +712,10 @@ async fn test_goto_definition_through_source_from_environment_dir() {
 
     let handler = Arc::new(TestSourceHandler::new(HashMap::new()));
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         test_client(),
         world_with_source_fetching(OakDatabase::new()),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+        LspState::new()
             .with_source_scheduler(source_scheduler_for_test(handler))
             .with_environment_scheduler(fixed_environments(&[])),
     );

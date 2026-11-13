@@ -8,6 +8,7 @@ use super::utils::TestClient;
 use crate::lsp::config::initialization_options;
 use crate::lsp::config::LEGACY_R_DIAGNOSTICS_ENABLE_SETTING;
 use crate::lsp::config::R_DIAGNOSTICS_ENABLED_SETTING;
+use crate::lsp::harness::TestHandlers;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::LspState;
@@ -41,10 +42,10 @@ async fn test_legacy_diagnostics_setting_can_disable_new_default() {
     ])
     .await;
     let mut state = GlobalState::from_parts(
+        TestHandlers,
         client.client(),
         WorldState::new(OakDatabase::new()),
-        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-            .with_environment_scheduler(fixed_environments(&[])),
+        LspState::new().with_environment_scheduler(fixed_environments(&[])),
     );
     let workspace = tempfile::tempdir().unwrap();
     let (event, _response_rx) = initialize(workspace.path());

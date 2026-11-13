@@ -17,6 +17,7 @@ use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::WeakUnboundedSender;
 
 use crate::lsp::backend::RequestResponse;
+use crate::lsp::handlers::Handlers;
 use crate::lsp::main_loop::DispatchTiming;
 use crate::lsp::main_loop::TokioUnboundedReceiver;
 use crate::lsp::main_loop::TokioUnboundedSender;
@@ -69,11 +70,11 @@ pub struct RequestAnswer<T> {
     pub handled: Duration,
 }
 
-pub(super) struct Requests<T> {
+pub(super) struct Requests<H: Handlers, T> {
     /// Tags this tracker's handles so another tracker can reject them.
     id: u64,
 
-    decode: fn(Option<RequestResponse>) -> T,
+    decode: fn(Option<RequestResponse<H>>) -> T,
 
     /// Answers indexed by [`RequestHandle`], `None` until the request is
     /// handled.
@@ -82,27 +83,27 @@ pub(super) struct Requests<T> {
     /// Requests not yet handled, in send order. The session enqueues them on
     /// the main loop's FIFO channel, so the next one the loop handles is always
     /// at the front and matching an event is O(1).
-    pending: VecDeque<Pending>,
+    pending: VecDeque<Pending<H>>,
 }
 
 /// A tracked request whose event is about to be handled, returned by
 /// [`Requests::find()`].
-pub(super) struct Tracked(Pending);
+pub(super) struct Tracked<H: Handlers>(Pending<H>);
 
-struct Pending {
+struct Pending<H: Handlers> {
     index: usize,
     sent_at: Instant,
-    response_rx: TokioUnboundedReceiver<RequestResponse>,
+    response_rx: TokioUnboundedReceiver<RequestResponse<H>>,
 
     /// Identifies the request's event by its reply channel. Weak so that a
     /// request the server drops still disconnects `response_rx`.
-    response_tx: WeakUnboundedSender<RequestResponse>,
+    response_tx: WeakUnboundedSender<RequestResponse<H>>,
 }
 
-impl<T> Requests<T> {
+impl<H: Handlers, T> Requests<H, T> {
     /// `decode` receives `None` when the server dropped the request without
     /// answering.
-    pub(super) fn new(decode: fn(Option<RequestResponse>) -> T) -> Self {
+    pub(super) fn new(decode: fn(Option<RequestResponse<H>>) -> T) -> Self {
         Self {
             id: NEXT_TRACKER_ID.fetch_add(1, Ordering::Relaxed),
             decode,
@@ -115,8 +116,8 @@ impl<T> Requests<T> {
     /// is the reply sender carried by that event.
     pub(super) fn track(
         &mut self,
-        response_tx: &TokioUnboundedSender<RequestResponse>,
-        response_rx: TokioUnboundedReceiver<RequestResponse>,
+        response_tx: &TokioUnboundedSender<RequestResponse<H>>,
+        response_rx: TokioUnboundedReceiver<RequestResponse<H>>,
     ) -> RequestHandle<T> {
         let index = self.answers.len();
         self.answers.push(None);
@@ -152,8 +153,8 @@ impl<T> Requests<T> {
     /// Call before handling the event, which consumes the sender.
     pub(super) fn find(
         &mut self,
-        response_tx: &TokioUnboundedSender<RequestResponse>,
-    ) -> Option<Tracked> {
+        response_tx: &TokioUnboundedSender<RequestResponse<H>>,
+    ) -> Option<Tracked<H>> {
         let front = self.pending.front()?;
         let is_front = front
             .response_tx
@@ -167,7 +168,7 @@ impl<T> Requests<T> {
 
     /// Read the answer to `tracked` after its event was dispatched as measured
     /// by `timing`.
-    pub(super) fn collect(&mut self, tracked: Tracked, timing: DispatchTiming) {
+    pub(super) fn collect(&mut self, tracked: Tracked<H>, timing: DispatchTiming) {
         let Tracked(mut pending) = tracked;
 
         let response = match pending.response_rx.try_recv() {
@@ -189,13 +190,14 @@ impl<T> Requests<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lsp::harness::TestHandlers;
 
     /// Timings derive from the supplied dispatch timing, not from when the
     /// answer is collected. Dispatch ends in the future, so a timing measured
     /// at collection would come out shorter than expected.
     #[test]
     fn test_collect_measures_timings_from_the_dispatch_timing() {
-        let mut requests = Requests::new(|response| response.is_some());
+        let mut requests = Requests::<TestHandlers, _>::new(|response| response.is_some());
         let (response_tx, response_rx) = tokio::sync::mpsc::unbounded_channel();
         let handle = requests.track(&response_tx, response_rx);
 

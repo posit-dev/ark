@@ -298,9 +298,8 @@ foo()
         .unwrap(),
     );
 
-    // Send a full-document change. The LSP `did_change` handler forwards a
-    // `ConsoleNotification::DidChangeDocument` to the console, which the DAP
-    // turns into a `BreakpointState{verified:false}` event.
+    // Ark's `did_change_document()` notifies the console so the DAP removes
+    // breakpoints in the edited document and reports them with `verified: false`.
     lsp.send_notification(
         "textDocument/didChange",
         serde_json::to_value(lsp_types::DidChangeTextDocumentParams {

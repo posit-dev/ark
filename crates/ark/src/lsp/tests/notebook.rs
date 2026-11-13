@@ -24,11 +24,10 @@ use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::ls_types::VersionedNotebookDocumentIdentifier;
 use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
 
-use super::utils::fixed_environments;
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::goto_definition::goto_definition;
+use crate::lsp::harness::TestHandlers;
 use crate::lsp::main_loop::init_aux_for_test;
-use crate::lsp::main_loop::LspState;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers::did_change_notebook;
 use crate::lsp::state_handlers::did_close_notebook;
@@ -281,11 +280,6 @@ fn test_notebook_did_open_registers_cells_as_open_files() {
     assert_eq!(state.notebooks.len(), 1);
 }
 
-fn test_lsp_state() -> LspState {
-    LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-        .with_environment_scheduler(fixed_environments(&[]))
-}
-
 fn change(state: &mut WorldState, cells: NotebookDocumentCellChange) -> anyhow::Result<()> {
     let params = DidChangeNotebookDocumentParams {
         notebook_document: VersionedNotebookDocumentIdentifier {
@@ -297,7 +291,7 @@ fn change(state: &mut WorldState, cells: NotebookDocumentCellChange) -> anyhow::
             cells: Some(cells),
         },
     };
-    did_change_notebook(params, &mut test_lsp_state(), state)
+    did_change_notebook(params, &mut TestHandlers, state)
 }
 
 fn splice(start: u32, delete_count: u32, inserted: &[(usize, &str)]) -> NotebookDocumentCellChange {

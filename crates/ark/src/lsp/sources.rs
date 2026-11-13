@@ -17,6 +17,7 @@ use tokio::sync::watch;
 
 use crate::lsp::config::OakConfig;
 use crate::lsp::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
+use crate::lsp::handlers::Handlers;
 use crate::lsp::io_pool::IoPool;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::TokioUnboundedSender;
@@ -235,12 +236,12 @@ impl SourceScheduler {
     /// The job owns no db handle. A download can't be interrupted by a Salsa
     /// cancellation, so a handle in `pool`'s queue would hold up the next
     /// main-loop write for the whole fetch.
-    pub(crate) fn schedule(
+    pub(crate) fn schedule<H: Handlers>(
         &mut self,
         db: &dyn Db,
         config: &OakConfig,
         pool: &IoPool,
-        events_tx: &TokioUnboundedSender<Event>,
+        events_tx: &TokioUnboundedSender<Event<H>>,
     ) {
         // Publish before returning to inform queued jobs of new setting value.
         self.enabled_tx.send_replace(config.source_fetching_enabled);

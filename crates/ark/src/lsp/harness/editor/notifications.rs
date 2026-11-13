@@ -31,22 +31,25 @@ use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
 use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::RequestResponse;
+use crate::lsp::handlers::Handlers;
 use crate::lsp::main_loop::Event;
 
 /// An `initialize` request opening `folders` as the workspace, from a client
 /// that answers `workspace/configuration` like Positron does.
-pub(crate) fn initialize(folders: Vec<Uri>) -> (Event, UnboundedReceiver<RequestResponse>) {
+pub(crate) fn initialize<H: Handlers>(
+    folders: Vec<Uri>,
+) -> (Event<H>, UnboundedReceiver<RequestResponse<H>>) {
     initialize_with(folders, true, None)
 }
 
 /// Hand back the response receiver along with the event. The caller has to
 /// hold it until the main loop answers: dropping it early makes `respond()`'s
 /// send fail, which nextest then reports as a leak.
-pub(crate) fn initialize_with(
+pub(crate) fn initialize_with<H: Handlers>(
     folders: Vec<Uri>,
     configuration: bool,
     initialization_options: Option<Value>,
-) -> (Event, UnboundedReceiver<RequestResponse>) {
+) -> (Event<H>, UnboundedReceiver<RequestResponse<H>>) {
     let params = InitializeParams {
         capabilities: ClientCapabilities {
             workspace: Some(WorkspaceClientCapabilities {
@@ -73,7 +76,7 @@ pub(crate) fn initialize_with(
 }
 
 /// Load client configuration before releasing deferred source requests.
-pub(crate) fn initialized() -> Event {
+pub(crate) fn initialized<H: Handlers>() -> Event<H> {
     Event::Lsp(LspMessage::Notification(LspNotification::Initialized(
         InitializedParams {},
     )))
@@ -81,7 +84,7 @@ pub(crate) fn initialized() -> Event {
 
 /// A whole-document change at `version`, which must be greater than the version the
 /// file was opened at.
-pub(crate) fn did_change(path: &Path, contents: &str, version: i32) -> Event {
+pub(crate) fn did_change<H: Handlers>(path: &Path, contents: &str, version: i32) -> Event<H> {
     Event::Lsp(LspMessage::Notification(
         LspNotification::DidChangeTextDocument(DidChangeTextDocumentParams {
             text_document: VersionedTextDocumentIdentifier {
@@ -97,7 +100,7 @@ pub(crate) fn did_change(path: &Path, contents: &str, version: i32) -> Event {
     ))
 }
 
-pub(crate) fn did_change_workspace_folders(path: &Path) -> Event {
+pub(crate) fn did_change_workspace_folders<H: Handlers>(path: &Path) -> Event<H> {
     Event::Lsp(LspMessage::Notification(
         LspNotification::DidChangeWorkspaceFolders(DidChangeWorkspaceFoldersParams {
             event: WorkspaceFoldersChangeEvent {
@@ -111,10 +114,10 @@ pub(crate) fn did_change_workspace_folders(path: &Path) -> Event {
     ))
 }
 
-pub(crate) fn goto_definition(
+pub(crate) fn goto_definition<H: Handlers>(
     path: &Path,
     position: Position,
-) -> (Event, UnboundedReceiver<RequestResponse>) {
+) -> (Event<H>, UnboundedReceiver<RequestResponse<H>>) {
     let params = GotoDefinitionParams {
         text_document_position_params: TextDocumentPositionParams {
             text_document: TextDocumentIdentifier {
@@ -130,7 +133,7 @@ pub(crate) fn goto_definition(
     (event, rx)
 }
 
-pub(crate) fn did_close(path: &Path) -> Event {
+pub(crate) fn did_close<H: Handlers>(path: &Path) -> Event<H> {
     Event::Lsp(LspMessage::Notification(
         LspNotification::DidCloseTextDocument(DidCloseTextDocumentParams {
             text_document: TextDocumentIdentifier {
@@ -140,7 +143,7 @@ pub(crate) fn did_close(path: &Path) -> Event {
     ))
 }
 
-pub(crate) fn did_open(path: &Path, contents: &str) -> Event {
+pub(crate) fn did_open<H: Handlers>(path: &Path, contents: &str) -> Event<H> {
     Event::Lsp(LspMessage::Notification(
         LspNotification::DidOpenTextDocument(DidOpenTextDocumentParams {
             text_document: TextDocumentItem {

@@ -87,7 +87,7 @@ impl Console {
             return;
         };
 
-        if let Err(err) = tx.send(Event::Kernel(event)) {
+        if let Err(err) = tx.send(Event::Host(ArkEvent::Kernel(event))) {
             log::error!(
                 "Failed to send LSP notification. Removing LSP events channel. Error: {err:?}"
             );
@@ -95,7 +95,10 @@ impl Console {
         }
     }
 
-    pub(crate) fn set_lsp_channel(&mut self, lsp_events_tx: TokioUnboundedSender<Event>) {
+    pub(crate) fn set_lsp_channel(
+        &mut self,
+        lsp_events_tx: TokioUnboundedSender<Event<ArkHandlers>>,
+    ) {
         self.lsp_events_tx = Some(lsp_events_tx.clone());
 
         // Refresh LSP state now since we probably have missed some updates

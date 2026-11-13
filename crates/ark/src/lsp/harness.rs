@@ -45,11 +45,14 @@
 
 mod control;
 pub(crate) mod editor;
+mod handlers;
 mod session;
 
 use aether_path::AbsPathBuf;
 use aether_path::FilePath;
 pub use control::HarnessSnapshot;
+pub use handlers::TestEvent;
+pub use handlers::TestHandlers;
 use oak_db::OakDatabase;
 use oak_scan::DbScan;
 pub use session::DefinitionAnswer;

@@ -38,6 +38,7 @@ use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
 use url::Url;
 
 use super::utils::fixed_environments;
+use crate::lsp::harness::TestHandlers;
 use crate::lsp::main_loop::dispatch_scan_requests;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::AuxiliaryEvent;
@@ -103,13 +104,17 @@ fn run_handler_to_quiescence<F>(
     handler: F,
 ) -> anyhow::Result<()>
 where
-    F: FnOnce(&mut WorldState, &mut LspState, &TokioUnboundedSender<Event>) -> anyhow::Result<()>,
+    F: FnOnce(
+        &mut WorldState,
+        &mut LspState,
+        &TokioUnboundedSender<Event<TestHandlers>>,
+    ) -> anyhow::Result<()>,
 {
     let _aux = init_aux_for_test();
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel::<Event<TestHandlers>>();
 
     rt.block_on(async {
         handler(state, lsp_state, &events_tx)?;
@@ -139,8 +144,7 @@ where
 }
 
 fn test_lsp_state() -> LspState {
-    LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-        .with_environment_scheduler(fixed_environments(&[]))
+    LspState::new().with_environment_scheduler(fixed_environments(&[]))
 }
 
 /// Inline drain loop: oak_scan keeps its equivalent crate-private so
@@ -708,7 +712,6 @@ fn rescan_without_open_file(state: &mut WorldState, workspace: &Path, r_path: &P
 /// Applying it to the original text would insert `z` after the space rather
 /// than after `yy`.
 fn assert_incremental_edits_apply(state: &mut WorldState, uri: &Uri) {
-    let mut lsp_state = test_lsp_state();
     let edits = [
         (
             Range::new(Position::new(0, 0), Position::new(0, 1)),
@@ -733,7 +736,7 @@ fn assert_incremental_edits_apply(state: &mut WorldState, uri: &Uri) {
                 text: text.to_string(),
             }],
         };
-        did_change(params, &mut lsp_state, state).unwrap();
+        did_change(params, &mut TestHandlers, state).unwrap();
 
         let path = uri.to_document_path().unwrap();
         let file = state.open_file(&path).unwrap().file();
