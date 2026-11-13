@@ -1293,6 +1293,145 @@ impl DummyArkFrontend {
         comm_id
     }
 
+    /// Send a `did_change_plots_render_settings` event on the UI comm and
+    /// wait for the kernel to go idle.
+    ///
+    /// Panics if the kernel sends anything other than UI comm messages in the
+    /// busy/idle window, so a resize that opens or updates a plot comm, or that
+    /// writes to a stream, fails the test.
+    #[track_caller]
+    pub fn send_plot_render_settings(&self, ui_comm_id: &str, width: i64, height: i64) {
+        let data = serde_json::json!({
+            "method": "did_change_plots_render_settings",
+            "params": { "settings": {
+                "size": { "width": width, "height": height },
+                "pixel_ratio": 2.0,
+                "format": "png"
+            }}
+        });
+        self.send_shell_comm_msg(String::from(ui_comm_id), data);
+        self.recv_iopub_busy();
+
+        let messages = self.recv_iopub_until_idle();
+        for msg in messages {
+            match msg {
+                Message::CommMsg(ref data) if self.is_ui_comm(&data.content.comm_id) => {},
+                other => panic!("Unexpected message while applying render settings: {other:?}"),
+            }
+        }
+    }
+
+    /// Execute `code` with a UI comm open and pass the `text/plain` result to
+    /// `result_check`.
+    ///
+    /// Like [Self::execute_request], but skips UI comm events (such as
+    /// `prompt_state`) that the kernel sends between the execute input and
+    /// idle while a UI comm is open. Panics on any other message, in particular
+    /// a `CommOpen`, so a test cannot open a plot comm without noticing.
+    #[track_caller]
+    pub fn execute_request_with_ui_comm<F>(&self, code: &str, result_check: F)
+    where
+        F: FnOnce(String),
+    {
+        let mut result = None;
+        for msg in self.execute_request_collect(code) {
+            match msg {
+                Message::CommMsg(ref data) if self.is_ui_comm(&data.content.comm_id) => {},
+                Message::ExecuteResult(data) if result.is_none() => {
+                    let text = match &data.content.data["text/plain"] {
+                        serde_json::Value::String(text) => text.clone(),
+                        other => panic!("Expected text/plain to be String, got {other:?}"),
+                    };
+                    result = Some(text);
+                },
+                other => panic!("Unexpected message while executing `{code}`: {other:?}"),
+            }
+        }
+
+        let Some(result) = result else {
+            panic!("Expected an ExecuteResult while executing `{code}`");
+        };
+        result_check(result);
+    }
+
+    /// Execute `code` with a UI comm open and return its stdout.
+    ///
+    /// Use this at a browser prompt, where R prints results to stdout instead
+    /// of sending an execute result. Skips UI comm events and panics on any
+    /// other message.
+    #[track_caller]
+    pub fn execute_request_with_ui_comm_stdout(&self, code: &str) -> String {
+        self.send_execute_request(code, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+
+        let input = self.recv_iopub_execute_input();
+        assert_eq!(input.code, code);
+
+        let messages = self.recv_iopub_until_idle_impl();
+        for msg in messages {
+            match msg {
+                Message::CommMsg(ref data) if self.is_ui_comm(&data.content.comm_id) => {},
+                other => panic!("Unexpected message while executing `{code}`: {other:?}"),
+            }
+        }
+
+        let stdout = self.stream_stdout.borrow().clone();
+        self.streams_handled.set(true);
+        self.flush_streams_at_boundary();
+
+        let execution_count = self.recv_shell_execute_reply();
+        assert_eq!(execution_count, input.execution_count);
+
+        stdout
+    }
+
+    /// Execute `code` and return every non-stream IOPub message between the
+    /// execute input and idle. Use this to inspect plot comm messages.
+    ///
+    /// Panics if the code writes to stdout or stderr.
+    #[track_caller]
+    pub fn execute_request_collect(&self, code: &str) -> Vec<Message> {
+        self.send_execute_request(code, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+
+        let input = self.recv_iopub_execute_input();
+        assert_eq!(input.code, code);
+
+        let messages = self.recv_iopub_until_idle();
+
+        let execution_count = self.recv_shell_execute_reply();
+        assert_eq!(execution_count, input.execution_count);
+
+        messages
+    }
+
+    /// Receive IOPub messages until Idle and return the non-stream ones seen
+    /// before it.
+    ///
+    /// Panics if any stream output was received in that window.
+    #[track_caller]
+    fn recv_iopub_until_idle(&self) -> Vec<Message> {
+        let messages = self.recv_iopub_until_idle_impl();
+        self.flush_streams_at_boundary();
+        messages
+    }
+
+    /// Like [Self::recv_iopub_until_idle], but leaves the stream buffers for
+    /// the caller to check and flush.
+    fn recv_iopub_until_idle_impl(&self) -> Vec<Message> {
+        let mut messages = Vec::new();
+        loop {
+            let msg = self.recv_iopub_next();
+            if let Message::Status(ref data) = msg {
+                if data.content.execution_state == amalthea::wire::status::ExecutionState::Idle {
+                    break;
+                }
+            }
+            messages.push(msg);
+        }
+        messages
+    }
+
     /// Receive a UI comm event from IOPub and assert it is a `busy` event
     /// with the expected value.
     #[track_caller]

@@ -46,6 +46,42 @@ pub struct GEDevDesc {
 }
 pub type pGEDevDesc = *mut GEDevDesc;
 
+/// The device bounds at the start of every `DevDesc` version
+///
+/// `left`, `right`, `bottom`, and `top` are the first four fields of every
+/// `DevDescVersion*` struct below, so a `pDevDesc` can be cast to this type to
+/// read or write the bounds without dispatching on `R_GE_getVersion()`. When
+/// you add a new version, add it to the `assert_bounds_prefix!` call below so
+/// the compiler checks the layout.
+#[repr(C)]
+pub struct DevDescBounds {
+    pub left: f64,
+    pub right: f64,
+    pub bottom: f64,
+    pub top: f64,
+}
+
+macro_rules! assert_bounds_prefix {
+    ($($version:ty),+) => {
+        $(
+            const _: () = {
+                assert!(std::mem::offset_of!($version, left) == std::mem::offset_of!(DevDescBounds, left));
+                assert!(std::mem::offset_of!($version, right) == std::mem::offset_of!(DevDescBounds, right));
+                assert!(std::mem::offset_of!($version, bottom) == std::mem::offset_of!(DevDescBounds, bottom));
+                assert!(std::mem::offset_of!($version, top) == std::mem::offset_of!(DevDescBounds, top));
+            };
+        )+
+    };
+}
+
+assert_bounds_prefix!(
+    DevDescVersion13,
+    DevDescVersion14,
+    DevDescVersion15,
+    DevDescVersion16,
+    DevDescVersion17
+);
+
 #[repr(C)]
 pub struct R_GE_gcontext {
     _data: [u8; 0],

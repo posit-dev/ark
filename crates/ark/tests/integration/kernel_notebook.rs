@@ -216,6 +216,21 @@ fn test_notebook_stdin_followed_by_an_expression_on_the_next_line() {
 }
 
 #[test]
+fn test_notebook_ignores_plot_render_settings() {
+    // Positron sends the Plots pane size to notebook sessions too, but notebook
+    // plots are not sized by the Plots pane, so the shadow device keeps its
+    // default size.
+    let frontend = DummyArkFrontendNotebook::lock();
+    let ui_comm_id = frontend.open_ui_comm();
+    frontend.send_plot_render_settings(&ui_comm_id, 800, 600);
+
+    frontend.execute_request_with_ui_comm(
+        "x <- .ark.graphics.device(); isTRUE(all.equal(dev.size('px'), c(480, 480)))",
+        |result| assert_eq!(result, "[1] TRUE"),
+    );
+}
+
+#[test]
 fn test_notebook_graphics_device_is_not_interactive() {
     let frontend = DummyArkFrontendNotebook::lock();
 

@@ -64,6 +64,35 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     # Now return back to Rust to modify the wrapped callbacks directly
 }
 
+#' Replay the Ark device's display list after a Plots pane resize
+#'
+#' The replay makes base graphics recompute its state (such as `par("din")`)
+#' for the new device size. Ark runs this at an idle prompt, not because the
+#' user ran something, so all output, messages, and warnings are discarded.
+#' This includes `GEplayDisplayList()`'s own "display list redraw incomplete"
+#' warning, which R would otherwise print after the user's next command.
+#'
+#' @export
+.ps.graphics.replay_quietly <- function() {
+    # `GEplayDisplayList()` restores the current device only when the replay
+    # finishes. On an R error it leaves the Ark device current, so restore the
+    # previous device here on every exit path.
+    old_device <- grDevices::dev.cur()
+    on.exit(
+        if (old_device %in% grDevices::dev.list()) {
+            invisible(grDevices::dev.set(old_device))
+        },
+        add = TRUE
+    )
+
+    utils::capture.output(
+        suppressMessages(suppressWarnings(
+            .ps.Call("ps_graphics_play_display_list")
+        ))
+    )
+    invisible(NULL)
+}
+
 #' @export
 .ps.graphics.register_as_interactive <- function() {
     # Set ourselves as a known interactive device.

@@ -40,9 +40,11 @@ use anyhow::anyhow;
 use anyhow::Context;
 use base64::prelude::*;
 use crossbeam::channel::Sender;
+use harp::exec::r_sandbox;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::raii::RLocalInteractive;
 use libr::pDevDesc;
 use libr::pGEcontext;
 use libr::R_NilValue;
@@ -86,6 +88,7 @@ pub(crate) fn init_graphics_device(session_mode: SessionMode) {
 #[allow(non_snake_case)]
 struct WrappedDeviceCallbacks {
     activate: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
+    close: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
     deactivate: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
     holdflush: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc, i32) -> i32>>,
     mode: Cell<Option<unsafe extern "C-unwind" fn(i32, pDevDesc)>>,
@@ -204,6 +207,20 @@ pub(crate) struct DeviceContext {
     /// The settings used for pre-renderings of new plots.
     prerender_settings: Cell<PlotRenderSettings>,
 
+    /// The Ark graphics device. Set when the device is created, cleared when
+    /// it is closed.
+    device: Cell<Option<libr::pGEDevDesc>>,
+
+    /// The last Plots pane size the frontend sent in a console session, in CSS
+    /// pixels. The Ark device's bounds follow it. `None` until the frontend
+    /// sends a size (always `None` in notebook sessions), in which case the
+    /// device keeps the size it was created with.
+    pane_size: Cell<Option<PlotSize>>,
+
+    /// Whether we are replaying the display list after a Plots pane resize
+    /// (see [DeviceContext::set_pane_size]).
+    is_replaying: Cell<bool>,
+
     /// The current execution context from the active request. Pushed here when
     /// an execute request starts via `graphics_on_execute_request()`, cleared
     /// when the request completes.
@@ -249,6 +266,9 @@ impl DeviceContext {
                 pixel_ratio: 1.,
                 format: PlotRenderFormat::Png,
             }),
+            device: Cell::new(None),
+            pane_size: Cell::new(None),
+            is_replaying: Cell::new(false),
             execution_context: RefCell::new(None),
             source_context_stack: RefCell::new(Vec::new()),
             pending_origin: RefCell::new(None),
@@ -257,6 +277,68 @@ impl DeviceContext {
 
     pub fn set_prerender_settings(&self, settings: PlotRenderSettings) {
         self.prerender_settings.replace(settings);
+    }
+
+    /// Make the Ark device follow the Plots pane size, so `dev.size()`,
+    /// `par("din")`, and grid report the size the plot is shown at.
+    ///
+    /// Only call this in console sessions: notebook plots are not sized by the
+    /// Plots pane. If the device doesn't exist yet, the size is applied when
+    /// it is created. If the bounds change at the top-level prompt, the display
+    /// list is replayed without plot events.
+    pub(crate) fn set_pane_size(&self, size: PlotSize) {
+        self.pane_size.set(Some(size));
+        if !self.resize_device(size) {
+            return;
+        }
+
+        // Replay only at the top-level prompt. At a nested prompt (`browser()`,
+        // a breakpoint, `readline()`), the code under the prompt may still be
+        // drawing, so the display list can be incomplete. The next
+        // `plot.new()` uses the new bounds.
+        match harp::session::r_n_frame() {
+            Ok(0) => {},
+            Ok(_) => return,
+            Err(err) => {
+                log::warn!("Can't determine if we're at top level, not replaying: {err:?}");
+                return;
+            },
+        }
+
+        // Replay the display list so base graphics recomputes its state (such
+        // as `par("din")`) for the new bounds. The replay runs R code, so it
+        // runs in a sandbox and errors are only logged: the user didn't ask
+        // for it. Not interactive, so `readline()` in replayed code returns at
+        // once (`r_read_console()` handles `browser()`). Created outside of
+        // `r_sandbox()` so that its `Drop` runs in a frame that an R longjump
+        // never crosses.
+        let _interactive = RLocalInteractive::new(false);
+        self.is_replaying.set(true);
+        let result =
+            r_sandbox(|| RFunction::from(".ps.graphics.replay_quietly").call()).and_then(|r| r);
+        self.is_replaying.set(false);
+        if let Err(err) = result {
+            log::warn!("Can't replay the display list after a resize: {err:?}");
+        }
+    }
+
+    /// Whether we are replaying the display list after a Plots pane resize.
+    /// While this is `true`, the plot hooks do nothing (the replay is not a
+    /// plot change) and the console returns EOF at nested prompts.
+    pub(crate) fn is_replaying(&self) -> bool {
+        self.is_replaying.get()
+    }
+
+    /// Set the Ark device's bounds to `size` (in CSS pixels). Returns `true`
+    /// if the bounds changed. Does nothing and returns `false` if there is no
+    /// Ark device. Never calls into R.
+    fn resize_device(&self, size: PlotSize) -> bool {
+        let Some(ge_device) = self.device.get() else {
+            return false;
+        };
+        // Safety: `device` is cleared in `callback_close()`, so it points to a
+        // live device.
+        unsafe { set_device_bounds(ge_device, size) }
     }
 
     /// Set the current execution context (called when an execute request starts)
@@ -341,11 +423,20 @@ impl DeviceContext {
     /// ```
     #[tracing::instrument(level = "trace", skip_all)]
     fn hook_deactivate(self: &Rc<Self>, console: &Console) {
+        // `GEplayDisplayList()` selects the Ark device and then the previous
+        // device, so this runs on every replay
+        if self.is_replaying() {
+            return;
+        }
         self.process_changes(console);
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(level = %level))]
     fn hook_holdflush(self: &Rc<Self>, level: i32, console: &Console) {
+        if self.is_replaying() {
+            return;
+        }
+
         // Be extra safe and check `level <= 0` rather than just `level == 0` in case
         // our shadowed device returns a negative `level`
         let is_released = level <= 0;
@@ -359,6 +450,11 @@ impl DeviceContext {
 
     #[tracing::instrument(level = "trace", skip_all, fields(mode = %mode))]
     fn hook_mode(&self, mode: i32) {
+        // A replay draws the existing plot again, it doesn't change it
+        if self.is_replaying() {
+            return;
+        }
+
         let is_drawing = mode != 0;
         self.is_drawing.replace(is_drawing);
         let old_has_changes = self.has_changes.get();
@@ -380,6 +476,11 @@ impl DeviceContext {
     /// [ps_graphics_before_plot_new()] instead.
     #[tracing::instrument(level = "trace", skip_all)]
     fn hook_new_page(&self) {
+        // A replay starts the existing page again, it isn't a new plot
+        if self.is_replaying() {
+            return;
+        }
+
         // Only pages the frontend has already seen are owed an update. A page
         // that was never shown stays hidden, so `dev.hold()` still suppresses
         // intermediate pages.
@@ -1026,6 +1127,50 @@ macro_rules! with_device {
     }};
 }
 
+/// Set the bounds of `ge_device` to `size` (in CSS pixels). Returns `true` if
+/// the bounds changed.
+///
+/// Converts through inches with the device's own `ipr`, so this is correct for
+/// any device units. A pane of `w` CSS pixels is `w / DEFAULT_DPI` inches,
+/// the same size the plot is rendered at (see `finalize_device_arguments()`).
+/// Keeps the device's y direction (`bottom > top` for devices whose y axis
+/// points down).
+///
+/// Only the bounds change. The wrapped device keeps its internal canvas, which
+/// is fine because nothing reads the shadow device's pixels: we render plots on
+/// a separate device.
+unsafe fn set_device_bounds(ge_device: libr::pGEDevDesc, size: PlotSize) -> bool {
+    let width = size.width as f64 / DEFAULT_DPI;
+    let height = size.height as f64 / DEFAULT_DPI;
+
+    let changed;
+    with_device!(ge_device, |_ge_device, device| {
+        let right = (*device).left + width / (*device).ipr[0];
+        let delta_y = height / (*device).ipr[1];
+        let (bottom, top) = if (*device).bottom >= (*device).top {
+            ((*device).top + delta_y, (*device).top)
+        } else {
+            ((*device).bottom, (*device).bottom + delta_y)
+        };
+
+        changed = right != (*device).right || bottom != (*device).bottom || top != (*device).top;
+
+        (*device).right = right;
+        (*device).bottom = bottom;
+        (*device).top = top;
+    });
+    changed
+}
+
+/// Whether `ge_device` wraps the device `dev`
+unsafe fn is_device(ge_device: libr::pGEDevDesc, dev: pDevDesc) -> bool {
+    let is_device;
+    with_device!(ge_device, |_ge_device, device| {
+        is_device = device as pDevDesc == dev;
+    });
+    is_device
+}
+
 impl Display for PlotId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -1285,6 +1430,47 @@ unsafe extern "C-unwind" fn callback_new_page(dd: pGEcontext, dev: pDevDesc) {
     dc.hook_new_page();
 }
 
+#[tracing::instrument(level = "trace", skip_all)]
+unsafe extern "C-unwind" fn callback_close(dev: pDevDesc) {
+    log::trace!("Entering callback_close");
+
+    let dc = Console::get().device_context();
+
+    // R's `removeDevice()` calls `close` before `GEdestroyDevDesc()`, so the
+    // stored device is still valid here
+    if let Some(ge_device) = dc.device.get() {
+        if is_device(ge_device, dev) {
+            dc.device.set(None);
+        }
+    }
+
+    if let Some(callback) = dc.wrapped_callbacks.close.get() {
+        callback(dev);
+    }
+}
+
+/// Size callback
+///
+/// Reports the bounds of `dev`, which follow the Plots pane (see
+/// [DeviceContext::set_pane_size]). `dev.size()` and grid read the device size
+/// through this callback. We never call the wrapped device's `size`, because it
+/// reports the fixed size the device was created with.
+#[tracing::instrument(level = "trace", skip_all)]
+unsafe extern "C-unwind" fn callback_size(
+    left: *mut f64,
+    right: *mut f64,
+    bottom: *mut f64,
+    top: *mut f64,
+    dev: pDevDesc,
+) {
+    // The bounds are the first fields of every `DevDesc` version
+    let bounds = dev as *mut libr::DevDescBounds;
+    *left = (*bounds).left;
+    *right = (*bounds).right;
+    *bottom = (*bounds).bottom;
+    *top = (*bounds).top;
+}
+
 unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     // TODO: Don't allow creation of more than one graphics device.
 
@@ -1323,7 +1509,22 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
 
         wrapped_callbacks.newPage.replace((*device).newPage);
         (*device).newPage = Some(callback_new_page);
+
+        wrapped_callbacks.close.replace((*device).close);
+        (*device).close = Some(callback_close);
+
+        // Not wrapped: we report our own bounds, see `callback_size()`
+        (*device).size = Some(callback_size);
     });
+
+    let dc = Console::get().device_context();
+    dc.device.set(Some(ge_device));
+
+    // Apply a pane size that arrived before the device was created. Without
+    // one, keep the device's own size.
+    if let Some(size) = dc.pane_size.get() {
+        dc.resize_device(size);
+    }
 
     Ok(R_NilValue)
 }
@@ -1442,6 +1643,19 @@ fn ps_graphics_push_source_context(console: &Console, uri: SEXP) -> anyhow::Resu
 fn ps_graphics_pop_source_context(console: &Console) -> anyhow::Result<SEXP> {
     console.device_context().pop_source_context();
     Ok(harp::r_null())
+}
+
+/// Replay the Ark device's display list. Called only from
+/// `.ps.graphics.replay_quietly()`, see [DeviceContext::set_pane_size].
+#[harp::register]
+unsafe extern "C-unwind" fn ps_graphics_play_display_list() -> anyhow::Result<SEXP> {
+    let Some(ge_device) = Console::get().device_context().device.get() else {
+        return Ok(R_NilValue);
+    };
+    // The replay evaluates R code, so catch R errors here rather than
+    // longjumping over this Rust frame
+    harp::try_catch(|| libr::GEplayDisplayList(ge_device))?;
+    Ok(R_NilValue)
 }
 
 /// Returns the default DPI for the current OS.

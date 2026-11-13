@@ -32,6 +32,7 @@ use crate::comm_handler::CommHandlerContext;
 use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 use crate::console::ConsoleOutputCapture;
+use crate::console::SessionMode;
 use crate::modules::ARK_ENVS;
 
 pub const UI_COMM_NAME: &str = "positron.ui";
@@ -171,9 +172,15 @@ impl UiComm {
             ));
         }
 
-        Console::get()
-            .device_context()
-            .set_prerender_settings(params.settings);
+        let console = Console::get();
+        let device_context = console.device_context();
+        device_context.set_prerender_settings(params.settings);
+
+        // Notebook plots are not sized by the Plots pane, but Positron sends
+        // the pane size to notebook sessions too
+        if console.session_mode() == SessionMode::Console {
+            device_context.set_pane_size(params.settings.size);
+        }
 
         Ok(())
     }
