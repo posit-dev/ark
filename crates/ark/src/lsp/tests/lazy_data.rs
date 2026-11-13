@@ -28,7 +28,7 @@ use crate::lsp::state_handlers::ConsoleInputs;
 #[test]
 fn test_sidecar_reads_lazy_data_like_read_rds() {
     let r_home = harp::command::r_home_setup().unwrap();
-    let r = harp::command::r_executable(&r_home).unwrap();
+    let r = oak_r_process::r_executable(&r_home).unwrap();
 
     let output = oak_r_process::run_text(
         &r,

@@ -20,6 +20,7 @@ libc.workspace = true
 libloading.workspace = true
 libr.workspace = true
 log.workspace = true
+oak_r_process.workspace = true
 once_cell.workspace = true
 parking_lot.workspace = true
 regex.workspace = true

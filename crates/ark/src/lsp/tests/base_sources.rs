@@ -39,7 +39,7 @@ use crate::lsp::sources::SourceScheduler;
 #[test]
 fn test_primitive_stubs_describe_every_primitive() {
     let r_home = harp::command::r_home_setup().unwrap();
-    let r = harp::command::r_executable(&r_home).unwrap();
+    let r = oak_r_process::r_executable(&r_home).unwrap();
 
     let output = oak_r_process::run_text(
         &r,

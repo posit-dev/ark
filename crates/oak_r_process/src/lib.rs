@@ -7,6 +7,7 @@ use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Child;
 use std::process::Command;
 use std::process::ExitStatus;
@@ -26,6 +27,14 @@ use nix::unistd::Pid;
 static STARTUP_ENVIRONMENT: OnceLock<Vec<(OsString, OsString)>> = OnceLock::new();
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Locations on the `PATH` to look for R when using `Command::new()`
+#[cfg(unix)]
+pub const COMMAND_R_NAMES: [&str; 1] = ["R"];
+
+/// Locations on the `PATH` to look for R when using `Command::new()`
+#[cfg(windows)]
+pub const COMMAND_R_NAMES: [&str; 2] = ["R.exe", "R.bat"];
 
 /// Which startup files the R subprocess runs.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +67,24 @@ pub struct RunOptions<'a> {
     /// Overrides the captured environment, or the current environment if no
     /// snapshot has been captured. R startup files may change these values.
     pub env: &'a [(&'a str, &'a str)],
+}
+
+/// Locate an R executable, given an `R_HOME` path
+///
+/// - For unix, this look for `{R_HOME}/bin/R`
+/// - For Windows, this looks for `{R_HOME}/bin/R.exe` and `{R_HOME}/bin/R.bat` (for rig compatibility)
+pub fn r_executable(r_home: &Path) -> Option<PathBuf> {
+    let r_bin = r_home.join("bin");
+
+    for command in COMMAND_R_NAMES {
+        let candidate = r_bin.join(command);
+
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
+    None
 }
 
 /// Captures the base environment for subsequent calls to [`run_file()`] and

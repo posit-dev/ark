@@ -12,8 +12,7 @@ use std::process::Command;
 use std::process::Output;
 
 use anyhow::anyhow;
-
-use crate::sys::command::COMMAND_R_NAMES;
+use oak_r_process::COMMAND_R_NAMES;
 
 /// Execute a `Command` for R, trying multiple names for the R executable
 ///
@@ -83,24 +82,6 @@ pub fn r_home_setup() -> anyhow::Result<PathBuf> {
         )),
         Err(err) => Err(anyhow!("Can't check if `R_HOME` path exists: {err}")),
     }
-}
-
-/// Locate an R executable, given an `R_HOME` path
-///
-/// - For unix, this look for `{R_HOME}/bin/R`
-/// - For Windows, this looks for `{R_HOME}/bin/R.exe` and `{R_HOME}/bin/R.bat` (for rig compatibility)
-pub fn r_executable(r_home: &Path) -> Option<PathBuf> {
-    let r_bin = r_home.join("bin");
-
-    for command in COMMAND_R_NAMES {
-        let candidate = r_bin.join(command);
-
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-
-    None
 }
 
 /// Execute a `Command` for R found on the `PATH`

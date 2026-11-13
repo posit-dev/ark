@@ -5,6 +5,5 @@
  *
  */
 
-pub mod command;
 pub mod library;
 pub mod line_ending;

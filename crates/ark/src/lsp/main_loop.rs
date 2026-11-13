@@ -460,7 +460,7 @@ impl GlobalState {
     ) -> Self {
         // The embedded session's `.libPaths()` cannot describe every workspace
         // environment. Resolution starts fresh R processes at `initialize`.
-        let r = harp::command::r_executable(&r_home);
+        let r = oak_r_process::r_executable(&r_home);
         if r.is_none() {
             log::warn!(
                 "Can't locate an R executable under '{r_home}', source fetching, the sidecar job and R library resolution are disabled",
