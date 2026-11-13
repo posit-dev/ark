@@ -10,6 +10,8 @@
 //! For integration test utilities (DummyArkFrontend, DapClient, etc.),
 //! use the `ark_test` crate instead.
 
+mod cursor;
 mod utils;
 
+pub use cursor::*;
 pub use utils::*;
