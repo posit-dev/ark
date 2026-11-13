@@ -11,7 +11,6 @@ use super::catch_cancellation;
 use crate::lsp::config::LspConfig;
 use crate::lsp::db::ArkDb;
 use crate::lsp::state::WorldState;
-use crate::panic;
 
 /// Read-only snapshot of [`WorldState`] handed to a background reader, so a
 /// reader thread can't reach salsa input setters. Carries only the fields
@@ -46,7 +45,7 @@ impl WorldStateSnapshot {
     /// `&OakDatabase` because `dyn ArkDb` is unsized, so a reader can't
     /// `.snapshot()` its way to an owned database and call setters on it.
     pub(crate) fn db(&self) -> &dyn ArkDb {
-        panic::assert_in_catch_boundary();
+        stdext::assert_in_catch_boundary!();
         &self.db
     }
 

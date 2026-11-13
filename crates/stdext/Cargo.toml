@@ -17,5 +17,11 @@ workspace = true
 anyhow.workspace = true
 log.workspace = true
 
+[dev-dependencies]
+tokio.workspace = true
+
 [features]
+# Enables the panic test helpers (`panic::test_boundary()`,
+# `panic::install_abort_hook()`), and also turns on the process-wide
+# `IS_TESTING` flag.
 testing = []

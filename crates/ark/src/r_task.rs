@@ -299,7 +299,7 @@ where
     F: 'env + Send,
     T: 'env + Send,
 {
-    panic::assert_in_catch_boundary();
+    stdext::assert_in_catch_boundary!();
 
     if !Console::is_initialized() {
         // Escape hatch for unit tests, which run without a Console. Unlike in

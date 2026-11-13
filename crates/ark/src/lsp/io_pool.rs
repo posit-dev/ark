@@ -172,11 +172,11 @@ mod tests {
     use crate::lsp::main_loop::KernelNotification;
     use crate::lsp::state_handlers::ConsoleInputs;
 
-    /// Install the production hook so a missing `catch_unwind()` aborts the
-    /// process instead of silently losing the worker panic.
+    /// The aborting hook makes a panic outside all recovery boundaries fail the
+    /// test process instead of only ending the worker thread.
     #[test]
     fn test_pool_survives_panicking_job() {
-        crate::panic::install();
+        crate::panic::install_abort_hook();
 
         let context = Arc::new(LspServiceContext::new());
         let pool = IoPool::new("test-io-pool", 1, stdext::DEFAULT_STACK_SIZE, context);
@@ -199,12 +199,12 @@ mod tests {
         }
     }
 
-    /// Install the production hook so a panic that escapes the worker's
-    /// boundary aborts the test process. Two workers, so the one left after
-    /// the other exits must still run jobs.
+    /// The aborting hook makes a panic outside the worker's recovery boundary
+    /// fail the test process. With two workers, jobs must still run after one
+    /// worker exits.
     #[test]
     fn test_pool_survives_panic_outside_a_job() {
-        crate::panic::install();
+        crate::panic::install_abort_hook();
 
         let context = Arc::new(LspServiceContext::new());
         let pool = IoPool::new(
@@ -257,11 +257,11 @@ mod tests {
         assert!(events_rx.try_recv().is_err());
     }
 
-    /// Install the production hook so a panic that escapes `reporting_job()`'s
+    /// Install an aborting hook so a panic that escapes `reporting_job()`'s
     /// own `catch_unwind()` aborts the test process.
     #[test]
     fn test_reporting_job_reports_panic_and_sends_abort_event() {
-        crate::panic::install();
+        crate::panic::install_abort_hook();
         let mut auxiliary_rx = init_aux_for_test();
         let (events_tx, mut events_rx) = tokio::sync::mpsc::unbounded_channel();
 

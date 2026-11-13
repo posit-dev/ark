@@ -381,11 +381,11 @@ mod tests {
         assert_eq!(counts.waiting(), 0);
     }
 
-    /// Install the production hook so a missing `catch_unwind()` aborts the
-    /// process instead of silently losing the worker panic.
+    /// The aborting hook makes a panic outside all recovery boundaries fail the
+    /// test process instead of only ending the worker thread.
     #[test]
     fn test_pool_survives_panicking_task() {
-        crate::panic::install();
+        crate::panic::install_abort_hook();
 
         let state = WorldState::default();
         let context = Arc::new(LspServiceContext::new());
@@ -420,12 +420,12 @@ mod tests {
         }
     }
 
-    /// Install the production hook so a panic that escapes the worker's
-    /// boundary aborts the test process. Two workers, so the one left after
-    /// the other exits must still run tasks.
+    /// The aborting hook makes a panic outside the worker's recovery boundary
+    /// fail the test process. With two workers, tasks must still run after one
+    /// worker exits.
     #[test]
     fn test_pool_survives_panic_outside_a_task() {
-        crate::panic::install();
+        crate::panic::install_abort_hook();
 
         let state = WorldState::default();
         let context = Arc::new(LspServiceContext::new());
@@ -478,7 +478,7 @@ mod tests {
 
     #[test]
     fn test_pool_records_completed_task() {
-        crate::panic::install();
+        crate::panic::install_abort_hook();
 
         let state = WorldState::default();
         let context = Arc::new(LspServiceContext::new());
@@ -660,11 +660,11 @@ mod tests {
         assert_eq!(pool.metrics().cancelled_running, 1);
     }
 
-    /// Install the production hook so an uncaught worker panic aborts the test
-    /// process instead of being ignored.
+    /// The aborting hook makes a panic outside all recovery boundaries fail the
+    /// test process instead of only ending the worker thread.
     #[test]
     fn test_pool_is_idle_after_panicking_task() {
-        crate::panic::install();
+        crate::panic::install_abort_hook();
 
         let state = WorldState::default();
         let pool = test_pool(1);

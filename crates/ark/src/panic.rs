@@ -8,16 +8,16 @@
 //! Logs panics before `catch_unwind()` handles them. `catch_unwind()` prevents a
 //! recovered panic from aborting the process. Kept outside `main.rs` so tests can
 //! install it.
+//!
+//! Also re-exports the recovery boundary from `stdext::panic`, so Ark code reaches
+//! the boundary, the hook and `spawn()` through this one module.
 
 use std::cell::Cell;
 use std::future::Future;
-use std::panic::AssertUnwindSafe;
-use std::task::Poll;
 
+pub(crate) use stdext::panic::*;
 use stdext::panic_message;
 use tokio::task::JoinHandle;
-
-pub(crate) type PanicPayload = Box<dyn std::any::Any + Send + 'static>;
 
 /// Install the global panic hook.
 ///
@@ -81,125 +81,6 @@ fn on_r_thread() -> bool {
     ON_R_THREAD.get()
 }
 
-/// Which builds a boundary recovers panics in.
-#[derive(Clone, Copy)]
-pub(crate) enum Recovery {
-    /// Recover in every build.
-    Always,
-    /// Recover in release builds only. A panic in an R callback aborts during
-    /// development instead of surfacing as an R error.
-    ReleaseOnly,
-}
-
-thread_local! {
-    static BOUNDARY: Cell<Option<Recovery>> = const { Cell::new(None) };
-}
-
-/// Whether a `catch_unwind()` boundary is waiting to recover this panic.
-pub(crate) fn recovers_panic() -> bool {
-    match BOUNDARY.get() {
-        None => false,
-        Some(Recovery::Always) => true,
-        Some(Recovery::ReleaseOnly) => !cfg!(debug_assertions),
-    }
-}
-
-/// Whether a `catch_unwind()` boundary is declared on this thread. Unlike
-/// [`recovers_panic()`], this includes `ReleaseOnly` boundaries in debug builds,
-/// which abort rather than recover.
-fn in_catch_boundary() -> bool {
-    BOUNDARY.get().is_some()
-}
-
-/// Assert that code which can panic by design runs inside a declared `catch_unwind()`
-/// boundary: Salsa database access, which panics on query cycles, and `try_r_task()`,
-/// which re-raises panics from its closure on the caller's thread.
-///
-/// Unit tests invoke handlers without their normal boundaries, so `cfg!(test)` exempts
-/// them. The `testing` feature gets no exemption because Ark's own dev-dependency
-/// enables it for every integration test and benchmark. The LSP harness enters
-/// boundaries instead, see [`test_boundary()`].
-pub(crate) fn assert_in_catch_boundary() {
-    stdext::soft_assert!(cfg!(test) || in_catch_boundary());
-}
-
-/// Allow synchronous harness code to unwind to the test or benchmark runner
-/// instead of aborting in Ark's panic hook. This guard does not catch panics;
-/// dropping it restores the previous boundary state.
-///
-/// Never hold this guard across `.await`: its state is thread-local, so unrelated
-/// tasks could inherit it and the guard could be dropped on a different thread.
-#[cfg(any(test, feature = "testing"))]
-#[must_use]
-pub(crate) fn test_boundary() -> CatchBoundary {
-    catch_boundary(Recovery::Always)
-}
-
-/// Restore this thread's boundary state when the returned guard drops, without
-/// entering a boundary.
-///
-/// An R error longjumps over Rust frames without running their destructors. If it
-/// jumps over a [`CatchBoundary`] guard, the thread stays marked as recovering
-/// panics, so a later panic on it would unwind instead of aborting. Hold this guard
-/// in a frame outside the R error's landing point, such as the caller of
-/// `r_sandbox()`, so it drops normally after the jump.
-#[must_use]
-pub(crate) fn preserve_boundary() -> CatchBoundary {
-    CatchBoundary {
-        previous: BOUNDARY.get(),
-    }
-}
-
-/// Runs `f` inside a `catch_unwind()` boundary. `Err` carries the panic message, and
-/// unwind safety is asserted on the caller's behalf.
-pub(crate) fn catch_unwind<T>(recovery: Recovery, f: impl FnOnce() -> T) -> Result<T, String> {
-    catch_unwind_payload(recovery, f).map_err(|payload| panic_message(payload.as_ref()))
-}
-
-/// [`catch_unwind()`] for a caller that hands the panic on to `resume_unwind()`
-/// elsewhere, or that must classify the payload (e.g. distinguish `salsa::Cancelled`
-/// from a genuine panic), and so needs the payload rather than a message.
-#[expect(clippy::disallowed_methods)]
-pub(crate) fn catch_unwind_payload<T>(
-    recovery: Recovery,
-    f: impl FnOnce() -> T,
-) -> std::thread::Result<T> {
-    let _boundary = catch_boundary(recovery);
-    std::panic::catch_unwind(AssertUnwindSafe(f))
-}
-
-/// Recover panics while polling a future. Enter the recovery boundary for each poll so
-/// unrelated work on the polling thread cannot inherit it.
-pub(crate) async fn catch_unwind_async<T>(
-    recovery: Recovery,
-    future: impl Future<Output = T>,
-) -> Result<T, String> {
-    catch_unwind_async_payload(recovery, future)
-        .await
-        .map_err(|payload| panic_message(payload.as_ref()))
-}
-
-/// [`catch_unwind_async()`] for a caller that must classify the payload, such as the
-/// LSP event loop distinguishing `salsa::Cancelled` from a genuine panic.
-#[expect(clippy::disallowed_methods)]
-pub(crate) async fn catch_unwind_async_payload<T>(
-    recovery: Recovery,
-    future: impl Future<Output = T>,
-) -> Result<T, PanicPayload> {
-    let mut future = Box::pin(future);
-
-    std::future::poll_fn(move |cx| {
-        let _boundary = catch_boundary(recovery);
-
-        match std::panic::catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(cx))) {
-            Ok(Poll::Pending) => Poll::Pending,
-            Ok(Poll::Ready(value)) => Poll::Ready(Ok(value)),
-            Err(payload) => Poll::Ready(Err(payload)),
-        }
-    })
-    .await
-}
-
 /// Catch and log task panics instead of letting the panic hook abort the process.
 ///
 /// [`catch_unwind_async()`] declares a boundary only during each poll of its future.
@@ -218,180 +99,13 @@ pub(crate) fn spawn(
     })
 }
 
-pub(crate) fn message(payload: &PanicPayload) -> String {
-    panic_message(payload.as_ref())
-}
-
-/// Guard that preserves a `catch_unwind()` recovery boundary for the panic hook.
-///
-/// Restores the preceding flag in `Drop::drop()` so a nested boundary cannot disable an
-/// outer boundary.
-pub(crate) struct CatchBoundary {
-    previous: Option<Recovery>,
-}
-
-impl Drop for CatchBoundary {
-    fn drop(&mut self) {
-        BOUNDARY.set(self.previous);
-    }
-}
-
-/// Prevent the hook from aborting a panic handled by `catch_unwind()`.
-fn catch_boundary(recovery: Recovery) -> CatchBoundary {
-    let previous = BOUNDARY.get();
-    BOUNDARY.set(Some(recovery));
-    CatchBoundary { previous }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_recovers_panic_false_without_boundary() {
-        assert!(!recovers_panic());
-    }
-
-    #[test]
-    fn test_recovers_panic_true_inside_always_boundary() {
-        let _boundary = catch_boundary(Recovery::Always);
-        assert!(recovers_panic());
-    }
-
-    #[test]
-    fn test_nested_always_boundary_recovers_inside_release_only() {
-        let _outer = catch_boundary(Recovery::ReleaseOnly);
-        {
-            let _inner = catch_boundary(Recovery::Always);
-            assert!(recovers_panic());
-        }
-        assert_eq!(recovers_panic(), !cfg!(debug_assertions));
-    }
-
-    #[test]
-    fn test_dropping_boundary_leaves_none() {
-        {
-            let _boundary = catch_boundary(Recovery::Always);
-            assert!(recovers_panic());
-        }
-        assert!(!recovers_panic());
-    }
-
-    #[test]
-    fn test_in_catch_boundary_ignores_recovery_kind() {
-        assert!(!in_catch_boundary());
-
-        let _boundary = catch_boundary(Recovery::ReleaseOnly);
-        assert!(in_catch_boundary());
-    }
-
-    #[test]
-    fn test_test_boundary_restores_scope() {
-        assert!(!in_catch_boundary());
-        {
-            let _boundary = test_boundary();
-            assert!(recovers_panic());
-        }
-        assert!(!in_catch_boundary());
-    }
-
-    #[test]
-    fn test_test_boundary_restores_outer_boundary() {
-        let _outer = catch_boundary(Recovery::ReleaseOnly);
-        {
-            let _boundary = test_boundary();
-            assert!(recovers_panic());
-        }
-        assert!(matches!(BOUNDARY.get(), Some(Recovery::ReleaseOnly)));
-    }
-
-    #[test]
-    #[expect(clippy::disallowed_methods)]
-    fn test_test_boundary_propagates_panic_and_restores_outer_boundary() {
-        let _outer = catch_boundary(Recovery::ReleaseOnly);
-        let result = std::panic::catch_unwind(|| {
-            let _boundary = test_boundary();
-            assert!(recovers_panic());
-            panic!("harness panic");
-        });
-        let Err(payload) = result else {
-            panic!("Expected a panic payload");
-        };
-        assert_eq!(message(&payload), "harness panic");
-        assert!(matches!(BOUNDARY.get(), Some(Recovery::ReleaseOnly)));
-    }
-
-    #[test]
-    fn test_preserve_boundary_restores_state_after_skipped_guard() {
-        let _outer = catch_boundary(Recovery::ReleaseOnly);
-        {
-            let _preserved = preserve_boundary();
-
-            // Stands in for an R longjump skipping the guard's destructor
-            std::mem::forget(catch_boundary(Recovery::Always));
-            assert!(recovers_panic());
-        }
-        assert!(matches!(BOUNDARY.get(), Some(Recovery::ReleaseOnly)));
-    }
-
-    #[test]
-    fn test_catch_unwind_passes_through_ok() {
-        let result = catch_unwind(Recovery::Always, || 1 + 1);
-        assert_eq!(result, Ok(2));
-    }
-
-    #[test]
-    fn test_catch_unwind_converts_panic_to_message() {
-        let result = catch_unwind(Recovery::Always, || panic!("oh no"));
-        assert_eq!(result, Err(String::from("oh no")));
-    }
-
-    #[test]
-    fn test_catch_unwind_payload_preserves_panic_payload() {
-        let result = catch_unwind_payload(Recovery::Always, || panic!("oh no"));
-        let Err(payload) = result else {
-            panic!("Expected a panic payload");
-        };
-        assert_eq!(message(&payload), "oh no");
-    }
-
-    #[tokio::test]
-    async fn test_catch_unwind_async_passes_through_ok() {
-        let result = catch_unwind_async(Recovery::Always, async { 1 + 1 }).await;
-        assert_eq!(result, Ok(2));
-    }
-
-    #[tokio::test]
-    async fn test_catch_unwind_async_converts_panic_to_message() {
-        let result = catch_unwind_async(Recovery::Always, async { panic!("oh no") }).await;
-        assert_eq!(result, Err(String::from("oh no")));
-    }
-
-    #[tokio::test]
-    async fn test_catch_unwind_async_payload_preserves_panic_payload() {
-        let result = catch_unwind_async_payload(Recovery::Always, async { panic!("oh no") }).await;
-        let Err(payload) = result else {
-            panic!("Expected a panic payload");
-        };
-        assert_eq!(message(&payload), "oh no");
-    }
 
     #[tokio::test]
     async fn test_spawn_recovers_panic_instead_of_propagating() {
         let handle = spawn(Recovery::Always, async { panic!("oh no") });
         assert!(handle.await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_catch_unwind_async_payload_preserves_salsa_cancellation() {
-        let result = catch_unwind_async_payload(Recovery::Always, async {
-            std::panic::resume_unwind(Box::new(salsa::Cancelled::PendingWrite))
-        })
-        .await;
-
-        let Err(payload) = result else {
-            panic!("Expected a cancellation payload");
-        };
-        assert!(payload.is::<salsa::Cancelled>());
     }
 }
