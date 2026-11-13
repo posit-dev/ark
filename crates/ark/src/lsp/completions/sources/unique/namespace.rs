@@ -5,6 +5,10 @@
 //
 //
 
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::NamespaceOperatorType;
+use legacy_ide::treesitter::NodeType;
+use legacy_ide::treesitter::NodeTypeExt;
 use oak_db::BindingKind;
 use oak_db::NamespaceVisibility;
 use oak_ide::namespace_completions;
@@ -20,10 +24,6 @@ use crate::lsp::completions::function_context::FunctionContext;
 use crate::lsp::completions::sources::unique::Recognized;
 use crate::lsp::completions::sources::unique::UniqueCompletions;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::NamespaceOperatorType;
-use crate::treesitter::NodeType;
-use crate::treesitter::NodeTypeExt;
 
 // Handle the case with 'package::prefix', where the user has now
 // started typing the prefix of the symbol they would like completions for.
@@ -168,11 +168,12 @@ fn namespace_node_from_identifier(node: Node) -> NamespaceNodeKind {
 
 #[cfg(test)]
 mod tests {
+    use legacy_ide::fixtures::point_from_cursor;
     use oak_db::SourceDb;
+    use oak_lsp::state::WorldState;
     use tower_lsp_server::ls_types::CompletionItem;
     use tower_lsp_server::ls_types::CompletionItemKind;
 
-    use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::finish;
     use crate::lsp::completions::request::RCompletionReplies;
@@ -188,7 +189,6 @@ mod tests {
     use crate::lsp::completions::tests::utils::write_library_package;
     use crate::lsp::document_context::open_test_document;
     use crate::lsp::document_context::test_document_context;
-    use crate::lsp::state::WorldState;
     use crate::panic;
 
     fn recognize_namespace_at_cursor(

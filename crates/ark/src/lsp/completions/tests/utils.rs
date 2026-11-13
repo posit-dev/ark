@@ -7,8 +7,10 @@
 use std::path::Path;
 
 use aether_path::FilePath;
+use legacy_ide::fixtures::point_from_cursor;
 use oak_db::OakDatabase;
 use oak_db::SourceDb;
+use oak_lsp::state::WorldState;
 use oak_scan::DbScan;
 use oak_scan::ScanScheduler;
 use tower_lsp_server::ls_types as lsp_types;
@@ -17,7 +19,6 @@ use tower_lsp_server::ls_types::CompletionTextEdit;
 use tree_sitter::Point;
 use url::Url;
 
-use crate::fixtures::point_from_cursor;
 use crate::lsp::completions::finish;
 use crate::lsp::completions::provide::StaticCompletions;
 use crate::lsp::completions::r_completions;
@@ -27,7 +28,6 @@ use crate::lsp::completions::sources::utils::has_priority_prefix;
 use crate::lsp::completions::static_completions;
 use crate::lsp::document_context::open_test_document;
 use crate::lsp::document_context::test_document_context;
-use crate::lsp::state::WorldState;
 use crate::panic;
 
 /// Runs both completion passes. Requires the R thread.

@@ -5,12 +5,12 @@
 //
 //
 
+use legacy_ide::traits::node::NodeExt;
 use tower_lsp_server::ls_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::node::NodeExt;
 
 pub(super) struct SingleColonSource;
 

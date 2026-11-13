@@ -1,0 +1,360 @@
+//! Integration test that drives the real [`GlobalState`] event loop.
+//!
+//! Where the handler tests in [`super::state_handlers`] reconstruct the scan
+//! pump by hand, this one feeds an event through the production `handle_event`
+//! and lets the loop dispatch the scan, run it on the scan pool, route the
+//! [`Event::OakScanCompleted`] back, and apply it. So it pins the main loop's
+//! own wiring: which arm calls which handler, and the apply-and-redispatch
+//! step. The scheduler's policy is unit tested without tokio in `oak_scan`.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+
+use aether_path::AbsPathBuf;
+use oak_db::DbInputs;
+use oak_db::OakDatabase;
+use oak_db::SourceDb;
+use oak_scan::DbScan;
+use tower_lsp_server::ls_types::CompletionItem;
+use tower_lsp_server::ls_types::CompletionParams;
+use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
+use tower_lsp_server::ls_types::HoverParams;
+use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::ls_types::SignatureHelpParams;
+use tower_lsp_server::ls_types::TextDocumentIdentifier;
+use tower_lsp_server::ls_types::TextDocumentPositionParams;
+use tower_lsp_server::ls_types::Uri;
+use tower_lsp_server::ls_types::WorkspaceFolder;
+use tower_lsp_server::ls_types::WorkspaceFoldersChangeEvent;
+
+use super::source_handler::gate;
+use super::source_handler::wait_for_entries;
+use super::source_handler::TestBehavior;
+use super::source_handler::TestSourceHandler;
+use super::utils::did_change;
+use super::utils::did_change_workspace_folders;
+use super::utils::did_open;
+use super::utils::fixed_environments;
+use super::utils::test_client;
+use super::utils::write_sources;
+use super::utils::DescriptionWriter;
+use crate::backend::LspMessage;
+use crate::backend::LspNotification;
+use crate::backend::LspRequest;
+use crate::backend::LspResponse;
+use crate::backend::RequestResponse;
+use crate::harness::LspHarness;
+use crate::harness::TestHandlers;
+use crate::main_loop::init_aux_for_test;
+use crate::main_loop::Event;
+use crate::main_loop::GlobalState;
+use crate::main_loop::LspState;
+use crate::state::WorldState;
+
+/// Drive `didChangeWorkspaceFolders` through the real `handle_event`, including
+/// the real `OakScanCompleted` arm, to check that the main loop wires scan
+/// dispatch and completion-apply together.
+#[tokio::test]
+async fn test_workspace_folder_scan_drives_through_main_loop() {
+    let _aux = init_aux_for_test();
+    let mut state = GlobalState::from_parts(
+        TestHandlers,
+        test_client(),
+        WorldState::new(OakDatabase::new()),
+        LspState::new().with_environment_scheduler(fixed_environments(&[])),
+    );
+
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    DescriptionWriter::new()
+        .package("pkg")
+        .version("0.0.0")
+        .write(&pkg);
+    write_sources(&pkg.join("R"), &[("a.R", "x <- 1\n")]);
+
+    let params = DidChangeWorkspaceFoldersParams {
+        event: WorkspaceFoldersChangeEvent {
+            added: vec![WorkspaceFolder {
+                uri: Uri::from_file_path(tmp.path()).unwrap(),
+                name: String::new(),
+            }],
+            removed: vec![],
+        },
+    };
+    state
+        .handle_event_to_quiescence(Event::Lsp(LspMessage::Notification(
+            LspNotification::DidChangeWorkspaceFolders(params),
+        )))
+        .await;
+
+    let db = state.world().db();
+    let roots = db.workspace_roots().roots(db).clone();
+    assert_eq!(roots.len(), 1);
+    let packages = roots[0].packages(db);
+    assert_eq!(packages.len(), 1);
+    assert_eq!(packages[0].name(db), "pkg");
+    assert_eq!(packages[0].files(db).len(), 1);
+}
+
+/// Starting a session runs the production `initialize`, so it must keep the
+/// workspace the harness prepared, index it, and hand back an idle loop. A
+/// benchmark that measured an edit against an unsettled session would race
+/// startup diagnostics.
+#[tokio::test]
+async fn test_start_indexes_the_prepared_workspace_and_settles() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    DescriptionWriter::new()
+        .package("pkg")
+        .version("0.0.0")
+        .write(&pkg);
+    write_sources(&pkg.join("R"), &[("a.R", "x <- 1\n")]);
+
+    let folder = AbsPathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+    let mut harness = LspHarness::new(OakDatabase::new());
+    harness.set_workspace_folders(vec![folder.clone()]);
+
+    let session = harness.start(&[]).await;
+
+    assert!(session.is_settled());
+    assert_eq!(session.world().workspace.folders, vec![folder]);
+
+    let db = session.world().db();
+    let roots = db.workspace_roots().roots(db).clone();
+    assert_eq!(roots.len(), 1);
+    let packages = roots[0].packages(db);
+    assert_eq!(packages.len(), 1);
+    assert_eq!(packages[0].name(db), "pkg");
+}
+
+#[tokio::test]
+async fn test_start_keeps_the_libraries_the_database_was_built_with() {
+    let workspace = tempfile::tempdir().unwrap();
+    let lib = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("donor")
+        .version("0.0.0")
+        .built("dummy")
+        .write_installed(&lib.path().join("donor"));
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let folder = AbsPathBuf::from_path_buf(workspace.path().to_path_buf()).unwrap();
+    let mut harness = LspHarness::new(db);
+    harness.set_workspace_folders(vec![folder]);
+    let session = harness.start(&[]).await;
+
+    let db = session.world().db();
+    let library_paths: Vec<_> = db
+        .library_roots()
+        .roots(db)
+        .iter()
+        .map(|root| root.path(db).as_path().unwrap().as_std_path().to_path_buf())
+        .collect();
+    assert_eq!(library_paths, vec![lib.path().to_path_buf()]);
+    assert_eq!(db.workspace_environments().environments(db).len(), 1);
+    assert!(db.package_by_name("donor").is_some());
+}
+
+/// Db-holding work (diagnostics, index warmup) and unbounded I/O (package source
+/// fetches) run on separate executors, so saturating the source pool can't stall a
+/// main-loop write: the analysis pool stays free to drain the queued diagnostics
+/// snapshot the write is waiting on. Gates five packages, one more than
+/// `MAX_ANALYSIS_THREADS`, so a regression that merged the two executors back together
+/// would leave every thread parked instead of a few free ones, and the write would park
+/// behind the pinned snapshot. If that happens, the watchdog (`crate::watchdog`)
+/// aborts the test with a diagnosis instead of hanging to the harness timeout.
+#[tokio::test]
+async fn test_main_loop_write_survives_saturated_source_pool() {
+    // One shared "entered" sender: with five gates and a 2-thread source pool, only two
+    // can ever be inside `handle()` at once, but which two is unpredictable.
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let donors = ["donor1", "donor2", "donor3", "donor4", "donor5"];
+
+    let mut behavior = HashMap::new();
+    let mut releases = Vec::new();
+    for name in donors {
+        let (gate, release) = gate(entered_tx.clone());
+        behavior.insert(name.to_string(), TestBehavior::Gated(gate));
+        releases.push(release);
+    }
+    let handler = Arc::new(TestSourceHandler::new(behavior));
+
+    let lib = tempfile::tempdir().unwrap();
+    for name in donors {
+        DescriptionWriter::new()
+            .package(name)
+            .version("0.0.0")
+            .built("dummy")
+            .write_installed(&lib.path().join(name));
+    }
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let mut session = LspHarness::with_default_source_fetching(db)
+        .start_with_sources(&[], handler)
+        .await;
+
+    // A workspace package using all five library packages via `::`, so the scan hands
+    // the scheduler five dependencies to fetch.
+    let workspace = tempfile::tempdir().unwrap();
+    let myproj = workspace.path().join("myproj");
+    DescriptionWriter::new()
+        .package("myproj")
+        .version("0.0.0")
+        .write(&myproj);
+    let uses: String = donors
+        .iter()
+        .map(|name| format!("{name}::foo()\n"))
+        .collect();
+    write_sources(&myproj.join("R"), &[("use.R", &uses)]);
+    let script = workspace.path().join("script.R");
+
+    session
+        .handle_once(did_change_workspace_folders(workspace.path()))
+        .await;
+    session.pump_scans_to_quiescence().await;
+
+    // The source pool workers are now parked in a fetch that salsa cancellation can't
+    // reach. Index warmup went to the analysis pool, so it isn't queued behind them.
+    wait_for_entries(&entered_rx, 2);
+
+    // Goes through, no holds outstanding. Ends the tick by queueing a diagnostics
+    // pass, which needs an analysis thread to run on.
+    session.handle_once(did_open(&script, "x <- 1\n")).await;
+
+    // The write that has to drain that pinned hold.
+    session
+        .handle_once(did_change(&script, "x <- 2\n", 1))
+        .await;
+
+    // Let the still-gated workers finish so the test process can exit cleanly.
+    drop(releases);
+}
+
+/// `settle()` must report a worker panic. The pool reports the panic before it
+/// sends the failed `SourceCompleted` that lets the source scheduler settle, so
+/// `settle()` sees the report before it can return. The timeout ensures that a
+/// regression does not hang the test.
+#[tokio::test]
+#[should_panic(expected = "background failure")]
+async fn test_settle_reports_a_panicking_source_worker() {
+    let mut behavior = HashMap::new();
+    behavior.insert(String::from("donor1"), TestBehavior::Panic);
+    let handler = Arc::new(TestSourceHandler::new(behavior));
+
+    let lib = tempfile::tempdir().unwrap();
+    DescriptionWriter::new()
+        .package("donor1")
+        .version("0.0.0")
+        .built("dummy")
+        .write_installed(&lib.path().join("donor1"));
+    let mut db = OakDatabase::new();
+    db.set_library_paths(&[lib.path().to_path_buf()]);
+
+    let mut session = LspHarness::with_default_source_fetching(db)
+        .start_with_sources(&[], handler)
+        .await;
+
+    let workspace = tempfile::tempdir().unwrap();
+    let myproj = workspace.path().join("myproj");
+    DescriptionWriter::new()
+        .package("myproj")
+        .version("0.0.0")
+        .write(&myproj);
+    write_sources(&myproj.join("R"), &[("use.R", "donor1::foo()\n")]);
+
+    session
+        .handle_once(did_change_workspace_folders(workspace.path()))
+        .await;
+
+    tokio::time::timeout(Duration::from_secs(30), session.settle())
+        .await
+        .unwrap();
+}
+
+/// A host that overrides no request handler answers completion, hover and
+/// signature help with no result, and returns a completion item unresolved.
+#[tokio::test]
+async fn test_host_without_overrides_answers_session_requests_with_no_result() {
+    let _aux = init_aux_for_test();
+    let mut state = GlobalState::from_parts(
+        TestHandlers,
+        test_client(),
+        WorldState::new(OakDatabase::new()),
+        LspState::new(),
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("script.R");
+    state.handle_event_once(did_open(&path, "mean(x)\n")).await;
+
+    let position = TextDocumentPositionParams {
+        text_document: TextDocumentIdentifier {
+            uri: Uri::from_file_path(&path).unwrap(),
+        },
+        position: Position::new(0, 5),
+    };
+
+    let completion = answer(
+        &mut state,
+        LspRequest::Completion(CompletionParams {
+            text_document_position: position.clone(),
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            context: None,
+        }),
+    )
+    .await;
+    assert!(matches!(completion, LspResponse::Completion(None)));
+
+    let hover = answer(
+        &mut state,
+        LspRequest::Hover(HoverParams {
+            text_document_position_params: position.clone(),
+            work_done_progress_params: Default::default(),
+        }),
+    )
+    .await;
+    assert!(matches!(hover, LspResponse::Hover(None)));
+
+    let signature_help = answer(
+        &mut state,
+        LspRequest::SignatureHelp(SignatureHelpParams {
+            context: None,
+            text_document_position_params: position,
+            work_done_progress_params: Default::default(),
+        }),
+    )
+    .await;
+    assert!(matches!(signature_help, LspResponse::SignatureHelp(None)));
+
+    let item = CompletionItem {
+        label: String::from("mean"),
+        data: Some(serde_json::json!({ "topic": "mean" })),
+        ..Default::default()
+    };
+    let resolved = answer(&mut state, LspRequest::CompletionResolve(item.clone())).await;
+    let LspResponse::CompletionResolve(resolved) = resolved else {
+        panic!("Expected a completion resolve response, got {resolved:?}");
+    };
+    assert_eq!(resolved, item);
+}
+
+async fn answer(
+    state: &mut GlobalState<TestHandlers>,
+    request: LspRequest<TestHandlers>,
+) -> LspResponse<TestHandlers> {
+    let (response_tx, mut response_rx) = tokio::sync::mpsc::unbounded_channel();
+    state
+        .handle_event_once(Event::Lsp(LspMessage::Request(request, response_tx)))
+        .await;
+
+    match response_rx.try_recv() {
+        Ok(RequestResponse::Result(Ok(response))) => response,
+        Ok(RequestResponse::Result(Err(err))) => panic!("The request failed: {err:?}"),
+        Ok(RequestResponse::Disabled) => panic!("The request is disabled"),
+        Err(err) => panic!("No response: {err:?}"),
+    }
+}

@@ -8,6 +8,9 @@
 use harp::syntax::is_valid_symbol;
 use harp::syntax::sym_quote;
 use harp::syntax::sym_quote_invalid;
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::NodeType;
+use legacy_ide::treesitter::NodeTypeExt;
 use oak_ide::FilePathItem;
 use stdext::*;
 use tower_lsp_server::ls_types::Command;
@@ -29,9 +32,6 @@ use crate::lsp::completions::function_context::FunctionContext;
 use crate::lsp::completions::function_context::FunctionRefUsage;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::NodeType;
-use crate::treesitter::NodeTypeExt;
 
 pub(super) fn completion_item(
     label: impl AsRef<str>,

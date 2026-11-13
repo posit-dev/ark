@@ -11,6 +11,13 @@
 use std::collections::HashMap;
 
 use anyhow::anyhow;
+use legacy_ide::coordinates::tree_sitter_point_from_lsp_position;
+use legacy_ide::db::FileLegacyExt;
+use oak_lsp::backend::LspError;
+use oak_lsp::backend::LspResult;
+use oak_lsp::handlers::RequestContext;
+use oak_lsp::state::WorldState;
+use oak_lsp::traits::url::UriExt;
 use stdext::unwrap;
 use tower_lsp_server::ls_types::CompletionItem;
 use tower_lsp_server::ls_types::CompletionList;
@@ -23,19 +30,13 @@ use tower_lsp_server::ls_types::SignatureHelp;
 use tower_lsp_server::ls_types::SignatureHelpParams;
 
 use crate::analysis::input_boundaries::input_boundaries;
-use crate::lsp;
-use crate::lsp::backend::LspError;
-use crate::lsp::backend::LspResult;
 use crate::lsp::completions::finish;
 use crate::lsp::completions::r_completions;
 use crate::lsp::completions::resolve_completion;
 use crate::lsp::completions::resolve_target;
 use crate::lsp::completions::static_completions;
 use crate::lsp::completions::RCompletionReplies;
-use crate::lsp::coordinates::tree_sitter_point_from_lsp_position;
-use crate::lsp::db::FileLegacyExt;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::handlers::RequestContext;
 use crate::lsp::help_topic::help_topic;
 use crate::lsp::help_topic::HelpTopicParams;
 use crate::lsp::help_topic::HelpTopicResponse;
@@ -45,11 +46,9 @@ use crate::lsp::input_boundaries::InputBoundariesResponse;
 use crate::lsp::signature_help::r_signature_help;
 use crate::lsp::signature_help::static_signature_help;
 use crate::lsp::signature_help::StaticSignatureHelp;
-use crate::lsp::state::WorldState;
 use crate::lsp::statement_range::statement_range;
 use crate::lsp::statement_range::StatementRangeParams;
 use crate::lsp::statement_range::StatementRangeResponse;
-use crate::lsp::traits::url::UriExt;
 use crate::r_task;
 use crate::r_task::try_r_task;
 
@@ -91,7 +90,7 @@ pub(crate) fn handle_completion(
         point,
         trigger,
     );
-    lsp::log_info!("Completion context: {:#?}", context);
+    oak_lsp::log_info!("Completion context: {:#?}", context);
 
     let (completions, request) = static_completions(&context, file, state)?;
 
@@ -209,7 +208,7 @@ pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult
 
     // unwrap errors
     let result = unwrap!(result, Err(err) => {
-        lsp::log_error!("{err:?}");
+        oak_lsp::log_error!("{err:?}");
         return Ok(None);
     });
 
@@ -253,7 +252,7 @@ pub(crate) fn handle_signature_help(
 
     let result = static_signature_help(&context, db, file);
     let result = unwrap!(result, Err(err) => {
-        lsp::log_error!("{err:?}");
+        oak_lsp::log_error!("{err:?}");
         return Ok(None);
     });
     let Some(StaticSignatureHelp { help, request }) = result else {
@@ -271,7 +270,7 @@ pub(crate) fn handle_signature_help(
     match reply {
         Ok(reply) => Ok(reply.help_or(help)),
         Err(err) => {
-            lsp::log_error!("{err:?}");
+            oak_lsp::log_error!("{err:?}");
             Ok(help)
         },
     }

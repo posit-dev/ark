@@ -18,6 +18,8 @@ use harp::utils::r_is_object;
 use harp::utils::r_type2char;
 use harp::utils::r_typeof;
 use harp::RSymbol;
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::NodeTypeExt;
 use libr::*;
 use log::info;
 use oak_db::Db;
@@ -38,8 +40,6 @@ use crate::lsp::call_arguments::CallArguments;
 use crate::lsp::call_arguments::CallAt;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::help::RHtmlHelp;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::NodeTypeExt;
 
 /// Signature help from the static pass, which runs on the main loop without R.
 pub(crate) struct StaticSignatureHelp {
@@ -503,11 +503,11 @@ mod tests {
     use harp::r_null;
     use harp::r_symbol;
     use harp::RObject;
+    use legacy_ide::fixtures::point_from_cursor;
     use libr::R_xlen_t;
     use tower_lsp_server::ls_types::ParameterLabel;
     use tower_lsp_server::ls_types::SignatureHelp;
 
-    use crate::fixtures::point_from_cursor;
     use crate::lsp::document_context::TestDocument;
     use crate::lsp::signature_help::argument_label;
     use crate::lsp::signature_help::r_signature_help;

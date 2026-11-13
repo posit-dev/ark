@@ -5,12 +5,12 @@
 //
 //
 
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::NodeTypeExt;
 use tree_sitter::Node;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::NodeTypeExt;
 
 /// Text of the root of the pipe containing the cursor's call, as in `x` for
 /// `x |> foo() %>% bar(|)`, where `|` marks the cursor.

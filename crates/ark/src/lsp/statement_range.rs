@@ -8,7 +8,17 @@
 use aether_lsp_utils::proto::PositionEncoding;
 use anyhow::bail;
 use anyhow::Result;
+use legacy_ide::coordinates::lsp_position_from_tree_sitter_point;
+use legacy_ide::db::parse_tree_sitter;
+use legacy_ide::db::FileLegacyExt;
+use legacy_ide::db::LegacyDb;
+use legacy_ide::traits::cursor::TreeCursorExt;
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::node_has_error_or_missing;
+use legacy_ide::treesitter::NodeType;
+use legacy_ide::treesitter::NodeTypeExt;
 use oak_db::File;
+use oak_lsp::backend::LspResult;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
@@ -19,17 +29,6 @@ use tower_lsp_server::ls_types::Position;
 use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
 use tree_sitter::Node;
 use tree_sitter::Point;
-
-use crate::lsp::backend::LspResult;
-use crate::lsp::coordinates::lsp_position_from_tree_sitter_point;
-use crate::lsp::db::parse_tree_sitter;
-use crate::lsp::db::FileLegacyExt;
-use crate::lsp::db::LegacyDb;
-use crate::lsp::traits::cursor::TreeCursorExt;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::node_has_error_or_missing;
-use crate::treesitter::NodeType;
-use crate::treesitter::NodeTypeExt;
 
 pub static POSITRON_STATEMENT_RANGE_REQUEST: &str = "positron/textDocument/statementRange";
 
@@ -844,14 +843,14 @@ fn contains_row_at_different_start_position(node: Node, row: usize) -> Option<No
 #[cfg(test)]
 mod tests {
     use insta::assert_snapshot;
+    use legacy_ide::fixtures::point_and_offset_from_cursor;
+    use legacy_ide::fixtures::point_from_cursor;
     use tower_lsp_server::ls_types as lsp_types;
     use tree_sitter::Node;
     use tree_sitter::Parser;
     use tree_sitter::Point;
 
     use super::parse_tree_sitter;
-    use crate::fixtures::point_and_offset_from_cursor;
-    use crate::fixtures::point_from_cursor;
     use crate::lsp::statement_range::find_roxygen_statement_range;
     use crate::lsp::statement_range::find_statement_range;
     use crate::lsp::statement_range::ArkStatementRangeRejection;

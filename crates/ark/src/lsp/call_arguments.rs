@@ -7,6 +7,10 @@
 
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::traits::point::PointExt;
+use legacy_ide::treesitter::NodeType;
+use legacy_ide::treesitter::NodeTypeExt;
 use oak_db::Db;
 use oak_db::File;
 use oak_ide::callee_description;
@@ -15,10 +19,6 @@ use tree_sitter::Node;
 use tree_sitter::Point;
 
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::node::NodeExt;
-use crate::lsp::traits::point::PointExt;
-use crate::treesitter::NodeType;
-use crate::treesitter::NodeTypeExt;
 
 /// The arguments of the call around the cursor, as written in the document.
 ///
@@ -239,7 +239,8 @@ fn is_within_call_parentheses(x: &Point, node: &Node) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::fixtures::point_from_cursor;
+    use legacy_ide::fixtures::point_from_cursor;
+
     use crate::lsp::call_arguments::active_parameter;
     use crate::lsp::call_arguments::call_arguments_at;
     use crate::lsp::call_arguments::CallArguments;

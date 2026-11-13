@@ -5,10 +5,9 @@
 //
 //
 
+use legacy_ide::traits::point::PointExt;
 use tree_sitter::Node;
 use tree_sitter::Point;
-
-use crate::lsp::traits::point::PointExt;
 
 pub(crate) fn is_within_subset_delimiters(x: &Point, subset_node: &Node) -> bool {
     let Some(arguments) = subset_node.child_by_field_name("arguments") else {

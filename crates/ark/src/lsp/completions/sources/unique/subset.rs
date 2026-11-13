@@ -5,13 +5,13 @@
 //
 //
 
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::node_find_parent_call;
+use legacy_ide::treesitter::NodeTypeExt;
 use tree_sitter::Node;
 
 use crate::lsp::completions::sources::common::subset::is_within_subset_delimiters;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::node_find_parent_call;
-use crate::treesitter::NodeTypeExt;
 
 /// Returns the object identifier for string subsetting, such as `x` in
 /// `x["|"]` or `x[c("col", "|")]`, with `|` marking the cursor.
@@ -86,11 +86,12 @@ fn node_is_c_call(x: &Node, contents: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::fixtures::point_from_cursor;
+    use legacy_ide::fixtures::point_from_cursor;
+    use legacy_ide::traits::node::NodeExt;
+    use legacy_ide::treesitter::node_find_string;
+
     use crate::lsp::completions::sources::unique::subset::node_find_object_for_string_subset;
     use crate::lsp::document_context::TestDocument;
-    use crate::lsp::traits::node::NodeExt;
-    use crate::treesitter::node_find_string;
 
     fn subset_object_at_cursor(code: &str) -> Option<String> {
         let (text, point) = point_from_cursor(code);

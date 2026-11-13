@@ -5,16 +5,16 @@
 //
 //
 
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::traits::point::PointExt;
+use legacy_ide::treesitter::NodeType;
+use legacy_ide::treesitter::NodeTypeExt;
 use regex::Regex;
 use tower_lsp_server::ls_types::CompletionItem;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::node::NodeExt;
-use crate::lsp::traits::point::PointExt;
-use crate::treesitter::NodeType;
-use crate::treesitter::NodeTypeExt;
 
 pub(crate) fn has_priority_prefix(sort_text: &str) -> bool {
     // If we want to force a completion item to the top of the list,
@@ -188,12 +188,13 @@ fn call_prev_leaf_position_type(node: &Node, allow_ambiguous: bool) -> CallNodeP
 
 #[cfg(test)]
 mod tests {
-    use crate::fixtures::point_from_cursor;
+    use legacy_ide::fixtures::point_from_cursor;
+    use legacy_ide::treesitter::NodeType;
+    use legacy_ide::treesitter::NodeTypeExt;
+
     use crate::lsp::completions::sources::utils::call_node_position_type;
     use crate::lsp::completions::sources::utils::CallNodePositionType;
     use crate::lsp::document_context::TestDocument;
-    use crate::treesitter::NodeType;
-    use crate::treesitter::NodeTypeExt;
 
     #[test]
     fn test_call_node_position_type() {

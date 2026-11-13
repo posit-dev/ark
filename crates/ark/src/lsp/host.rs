@@ -12,6 +12,14 @@ mod requests;
 use std::collections::HashMap;
 
 use aether_path::FilePath;
+use oak_lsp::backend::new_jsonrpc_error;
+use oak_lsp::backend::Backend;
+use oak_lsp::backend::LspResult;
+use oak_lsp::handlers::EventContext;
+use oak_lsp::handlers::Handlers;
+use oak_lsp::handlers::RequestContext;
+use oak_lsp::main_loop::TokioUnboundedSender;
+use oak_lsp::state::WorldState;
 pub(crate) use requests::VirtualDocumentParams;
 pub(crate) use requests::VirtualDocumentResponse;
 pub(crate) use requests::ARK_VDOC_REQUEST;
@@ -29,21 +37,12 @@ use tower_lsp_server::ls_types::SignatureHelpParams;
 use tower_lsp_server::LspServiceBuilder;
 
 use crate::console::ConsoleNotification;
-use crate::lsp;
-use crate::lsp::backend::new_jsonrpc_error;
-use crate::lsp::backend::Backend;
-use crate::lsp::backend::LspResult;
-use crate::lsp::handlers::EventContext;
-use crate::lsp::handlers::Handlers;
-use crate::lsp::handlers::RequestContext;
 use crate::lsp::help_topic;
 use crate::lsp::help_topic::HelpTopicParams;
 use crate::lsp::help_topic::HelpTopicResponse;
 use crate::lsp::input_boundaries;
 use crate::lsp::input_boundaries::InputBoundariesParams;
 use crate::lsp::input_boundaries::InputBoundariesResponse;
-use crate::lsp::main_loop::TokioUnboundedSender;
-use crate::lsp::state::WorldState;
 use crate::lsp::statement_range;
 use crate::lsp::statement_range::StatementRangeParams;
 use crate::lsp::statement_range::StatementRangeResponse;
@@ -236,7 +235,7 @@ impl ArkHandlers {
         notif: KernelNotification,
         state: &mut WorldState,
     ) -> anyhow::Result<()> {
-        lsp::log_info!("{notif:#?}", notif = notif.trace());
+        oak_lsp::log_info!("{notif:#?}", notif = notif.trace());
 
         match notif {
             KernelNotification::DidChangeConsoleInputs(inputs) => {
@@ -431,6 +430,9 @@ mod tests {
 
     use aether_path::FilePath;
     use oak_db::OakDatabase;
+    use oak_lsp::harness::LspHarness;
+    use oak_lsp::harness::LspSession;
+    use oak_lsp::main_loop::Event;
     use tower_lsp_server::ls_types::Diagnostic;
 
     use super::ArkEvent;
@@ -438,9 +440,6 @@ mod tests {
     use super::ConsoleInputs;
     use super::KernelNotification;
     use crate::console::ConsoleNotification;
-    use crate::lsp::harness::LspHarness;
-    use crate::lsp::harness::LspSession;
-    use crate::lsp::main_loop::Event;
 
     /// Bounds every wait so a lost wakeup fails here rather than hanging to the
     /// harness timeout.

@@ -1,0 +1,54 @@
+[package]
+name = "oak_lsp"
+version = "0.1.0"
+description = """
+The R language server core shared by Ark and Oak.
+"""
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+testing = ["legacy_ide/testing", "oak_package_metadata/testing", "stdext/testing"]
+
+[lints]
+workspace = true
+
+[dependencies]
+aether_lsp_utils.workspace = true
+aether_path.workspace = true
+anyhow.workspace = true
+biome_line_index.workspace = true
+camino.workspace = true
+crossbeam.workspace = true
+futures.workspace = true
+ignore.workspace = true
+legacy_ide.workspace = true
+log.workspace = true
+oak_db.workspace = true
+oak_ide.workspace = true
+oak_package_metadata.workspace = true
+oak_r_process.workspace = true
+oak_scan.workspace = true
+oak_sidecar.workspace = true
+oak_source.workspace = true
+oak_srcref.workspace = true
+salsa.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+stdext.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-lsp-server.workspace = true
+tracing.workspace = true
+tree-sitter.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+assert_matches.workspace = true
+oak_package_metadata = { workspace = true, features = ["testing"] }
+stdext = { workspace = true, features = ["testing"] }

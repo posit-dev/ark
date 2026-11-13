@@ -1,0 +1,371 @@
+use oak_db::File;
+use tower_lsp_server::ls_types as lsp_types;
+
+use crate::code_action::CodeActionEdit;
+use crate::code_action::CodeActionTextEdit;
+use crate::coordinates::get_line;
+use crate::db::FileLegacyExt;
+use crate::db::LegacyDb;
+use crate::traits::node::NodeExt;
+use crate::treesitter::BinaryOperatorType;
+use crate::treesitter::NodeTypeExt;
+
+/// A roxygen template to insert, in tree-sitter coordinates.
+pub(crate) struct RoxygenEdit {
+    pub(crate) position: tree_sitter::Point,
+    pub(crate) documentation: String,
+}
+
+/// Build the "Generate a roxygen template" code action for `range`, if the
+/// cursor is on a documentable function definition.
+pub(crate) fn to_code_action(
+    db: &dyn LegacyDb,
+    file: File,
+    range: tree_sitter::Range,
+    code_action_literal_support: bool,
+) -> Option<CodeActionEdit> {
+    if !code_action_literal_support {
+        return None;
+    }
+
+    let edit = roxygen_documentation(db, file, range)?;
+
+    Some(CodeActionEdit::new(
+        "Generate a roxygen template".to_string(),
+        lsp_types::CodeActionKind::EMPTY,
+        vec![CodeActionTextEdit::insertion(
+            edit.position,
+            edit.documentation,
+        )],
+    ))
+}
+
+pub(crate) fn roxygen_documentation(
+    db: &dyn LegacyDb,
+    file: File,
+    range: tree_sitter::Range,
+) -> Option<RoxygenEdit> {
+    // For cursors (the common case), start and end points are the same.
+    // For selections, we require that the start point be touching the function name.
+    let start = range.start_point;
+
+    let node = file
+        .tree_sitter(db)
+        .root_node()
+        .named_descendant_for_point_range(start, start)?;
+
+    // User must be sitting on the function name
+    if !node.is_identifier() {
+        return None;
+    }
+
+    // Parent must be a `<-` or `=` assignment node
+    let assignment = node.parent()?;
+
+    if !assignment.is_binary_operator_of_kind(BinaryOperatorType::LeftAssignment) &&
+        !assignment.is_binary_operator_of_kind(BinaryOperatorType::EqualsAssignment)
+    {
+        return None;
+    }
+
+    // And the rhs must be a function definition
+    let function = assignment.child_by_field_name("rhs")?;
+
+    if !function.is_function_definition() {
+        return None;
+    }
+
+    // The assignment node must be a direct descendent of the program node (i.e. we don't
+    // provide the code action for local functions defined within another function, or
+    // within some arbitrary braced expression)
+    if !assignment.parent()?.is_program() {
+        return None;
+    }
+
+    let position = node.start_position();
+
+    // Fairly simple detection of existing `#'` on the previous line (but starting at the
+    // same `column` offset), which tells us not to provide this code action
+    if let Some(previous_line) = get_line(
+        file.source_text(db).as_str(),
+        file.line_index(db),
+        position.row.saturating_sub(1),
+    ) {
+        if let Some(previous_line) = previous_line.get(position.column..) {
+            let mut previous_line = previous_line.bytes();
+
+            if previous_line
+                .next()
+                .map(|byte| byte == b'#')
+                .unwrap_or(false) &&
+                previous_line
+                    .next()
+                    .map(|byte| byte == b'\'')
+                    .unwrap_or(false)
+            {
+                return None;
+            }
+        }
+    }
+
+    // Okay, looks like we are going to provide the code action, collect all parameter
+    // names
+    let parameters = function.child_by_field_name("parameters")?;
+
+    let mut parameter_names = vec![];
+    let mut cursor = parameters.walk();
+
+    for child in parameters.children_by_field_name("parameter", &mut cursor) {
+        let parameter_name = child.child_by_field_name("name")?;
+        let parameter_name = parameter_name
+            .node_to_string(file.source_text(db).as_str())
+            .ok()?;
+        parameter_names.push(parameter_name);
+    }
+
+    let indent_size = position.column;
+    let documentation = documentation_builder(parameter_names, indent_size);
+
+    // The documentation string is inserted at the start position of the function
+    // name. This handles the indentation of the first documentation line, and makes
+    // new line handling trivial (we just add a new line to every documentation line).
+    Some(RoxygenEdit {
+        position,
+        documentation,
+    })
+}
+
+fn documentation_builder(parameter_names: Vec<String>, indent_size: usize) -> String {
+    let mut lines = vec![];
+
+    lines.push("#' Title".to_string());
+
+    if !parameter_names.is_empty() {
+        lines.push("#'".to_string());
+        lines.append(&mut parameters_builder(parameter_names));
+    }
+
+    lines.push("#'".to_string());
+    lines.push("#' @returns".to_string());
+    lines.push("#'".to_string());
+    lines.push("#' @export".to_string());
+    lines.push("#' @examples".to_string());
+
+    documentation_from_lines(lines, indent_size)
+}
+
+fn parameters_builder(names: Vec<String>) -> Vec<String> {
+    names
+        .into_iter()
+        .map(|name| format!("#' @param {name}"))
+        .collect()
+}
+
+/// Combine lines into a single documentation string used within a `TextEdit`
+///
+/// This is done in a clever way:
+/// - We don't apply indentation to the first line, as our `TextEdit` will do that for us,
+///   by inserting at the specified column position.
+/// - We insert a newline after every line, even the last one. This allows us to cleanly
+///   insert the documentation at the start position of the function name.
+fn documentation_from_lines(lines: Vec<String>, indent_size: usize) -> String {
+    let mut documentation = String::new();
+    for line in lines {
+        documentation.push_str(&line);
+        documentation.push('\n');
+        documentation.push_str(&" ".repeat(indent_size));
+    }
+    documentation
+}
+
+#[cfg(test)]
+mod tests {
+    use aether_lsp_utils::proto::PositionEncoding;
+    use tower_lsp_server::ls_types::CodeActionOrCommand;
+    use tower_lsp_server::ls_types::Position;
+    use tower_lsp_server::ls_types::Uri;
+    use tree_sitter::Point;
+    use tree_sitter::Range;
+
+    use super::roxygen_documentation;
+    use crate::code_action::code_actions;
+    use crate::db::test_file;
+    use crate::fixtures::point_and_offset_from_cursor;
+
+    const ENCODING: PositionEncoding =
+        PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
+
+    fn point_range(point: Point, byte: usize) -> Range {
+        Range {
+            start_byte: byte,
+            end_byte: byte,
+            start_point: point,
+            end_point: point,
+        }
+    }
+
+    fn roxygen_point_and_offset_from_cursor(text: &str) -> (String, Point, usize) {
+        point_and_offset_from_cursor(text, b'@')
+    }
+
+    fn roxygen_documentation_test(text: &str, position: Position) -> String {
+        let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
+        let (db, file) = test_file(&text);
+
+        let edit = roxygen_documentation(&db, file, point_range(point, offset)).unwrap();
+
+        // The edit is a zero-width insertion at the function name, in tree-sitter
+        // coordinates. The test inputs are ASCII, so the column matches the LSP character.
+        assert_eq!(edit.position.row as u32, position.line);
+        assert_eq!(edit.position.column as u32, position.character);
+
+        edit.documentation
+    }
+
+    #[test]
+    fn test_adds_parameters() {
+        let new_text = roxygen_documentation_test("fu@n <- function(a, b = 2) {}", Position {
+            line: 0,
+            character: 0,
+        });
+        insta::assert_snapshot!(new_text);
+
+        let new_text = roxygen_documentation_test("fu@n <- function(...) {}", Position {
+            line: 0,
+            character: 0,
+        });
+        insta::assert_snapshot!(new_text);
+
+        // Mock some new lines and indentation
+        // (It's correct for the first line to not be indented in the snapshot,
+        // since the `Position` handles the indentation through `character`)
+        let new_text = roxygen_documentation_test("\n\n    fu@n <- function(...) {}", Position {
+            line: 2,
+            character: 4,
+        });
+        insta::assert_snapshot!(new_text);
+    }
+
+    #[test]
+    fn test_no_parameters() {
+        let new_text = roxygen_documentation_test("fu@n <- function() {}", Position {
+            line: 0,
+            character: 0,
+        });
+        insta::assert_snapshot!(new_text);
+    }
+
+    #[test]
+    fn test_supports_equals_assignment() {
+        let new_text = roxygen_documentation_test("fu@n = function(a, b = 2) {}", Position {
+            line: 0,
+            character: 0,
+        });
+        insta::assert_snapshot!(new_text);
+    }
+
+    #[test]
+    fn test_adds_documentation_when_direct_preceding_line_is_not_documentation() {
+        let new_text = roxygen_documentation_test("#'\n\nfu@n = function(a, b = 2) {}", Position {
+            line: 2,
+            character: 0,
+        });
+        insta::assert_snapshot!(new_text);
+    }
+
+    #[test]
+    fn test_no_action_when_on_local_function() {
+        let text = "
+outer <- function(a, b = 2) {
+  in@ner <- function(a, b, c) {}
+}
+        ";
+
+        let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
+        let (db, file) = test_file(&text);
+
+        let edit = roxygen_documentation(&db, file, point_range(point, offset));
+        assert!(edit.is_none());
+    }
+
+    #[test]
+    fn test_no_action_when_documentation_on_previous_line() {
+        let text = "
+#' Title
+f@n <- function(a, b) {}
+        ";
+
+        let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
+        let (db, file) = test_file(&text);
+
+        let edit = roxygen_documentation(&db, file, point_range(point, offset));
+        assert!(edit.is_none());
+    }
+
+    #[test]
+    fn test_no_action_when_cursor_is_after_function_name() {
+        // This is just how tree-sitter works, it uses a half open range of `[)`.
+        let text = "
+fn@ <- function(a, b) {}
+        ";
+
+        let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
+        let (db, file) = test_file(&text);
+
+        let edit = roxygen_documentation(&db, file, point_range(point, offset));
+        assert!(edit.is_none());
+    }
+
+    #[test]
+    fn test_no_action_without_code_action_literal_support() {
+        let uri: Uri = "file:///test.R".parse().unwrap();
+
+        let text = "
+f@n <- function(a, b) {}
+        ";
+
+        let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
+        let (db, file) = test_file(&text);
+
+        let actions = code_actions(&db, file, point_range(point, offset), false)
+            .into_response(&db, file, &uri, None, ENCODING, true);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn test_uses_hash_map_of_text_edits_without_document_changes_support() {
+        let uri: Uri = "file:///test.R".parse().unwrap();
+
+        let text = "
+f@n <- function(a, b) {}
+        ";
+
+        let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
+        let (db, file) = test_file(&text);
+
+        let mut actions = code_actions(&db, file, point_range(point, offset), true)
+            .into_response(&db, file, &uri, None, ENCODING, false);
+        assert_eq!(actions.len(), 1);
+
+        let CodeActionOrCommand::CodeAction(action) = actions.pop().unwrap() else {
+            panic!("Unexpected");
+        };
+        let workspace_edit = action.edit.unwrap();
+
+        // This is now `None`
+        assert!(workspace_edit.document_changes.is_none());
+
+        // The edits are here instead
+        let changes = workspace_edit.changes.unwrap();
+        assert_eq!(changes.len(), 1);
+        let text_edits = changes.get(&uri).unwrap();
+        assert_eq!(text_edits.len(), 1);
+
+        let text_edit = text_edits.first().unwrap();
+        assert_eq!(text_edit.range.start.line, 1);
+        assert_eq!(text_edit.range.start.character, 0);
+        assert_eq!(text_edit.range.end, text_edit.range.start);
+
+        insta::assert_snapshot!(text_edit.new_text);
+    }
+}

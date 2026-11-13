@@ -22,11 +22,11 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
 
-use ark::lsp::harness::DefinitionRequest;
-use ark::lsp::harness::LspHarness;
-use ark::lsp::harness::LspSession;
-use ark::lsp::harness::Publication;
 use oak_db::OakDatabase;
+use oak_lsp::harness::DefinitionRequest;
+use oak_lsp::harness::LspHarness;
+use oak_lsp::harness::LspSession;
+use oak_lsp::harness::Publication;
 use oak_package_metadata::tests::mark_installed;
 use oak_scan::DbScan;
 use tempfile::TempDir;

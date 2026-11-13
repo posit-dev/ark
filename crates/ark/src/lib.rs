@@ -48,7 +48,6 @@ pub mod sys;
 pub mod thread;
 pub mod timeout;
 pub mod traps;
-pub mod treesitter;
 pub mod ui;
 pub mod url;
 pub mod variables;

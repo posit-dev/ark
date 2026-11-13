@@ -1,0 +1,38 @@
+//
+// analysis.rs
+//
+// Copyright (C) 2026 Posit Software, PBC. All rights reserved.
+//
+//
+
+//! Background analysis, the only place a salsa db handle lives off the main
+//! loop.
+//!
+//! Two things maintain that invariant: [`WorldStateSnapshot`] is built only in
+//! this module, and `OakDatabase` isn't `Clone`.
+
+use std::panic::AssertUnwindSafe;
+
+mod metrics;
+mod pool;
+mod refresh;
+mod snapshot;
+mod warmup;
+
+pub use metrics::DiagnosticsMetrics;
+pub(crate) use pool::AnalysisPool;
+#[cfg(any(test, feature = "testing"))]
+pub use pool::PoolMetrics;
+#[cfg(any(test, feature = "testing"))]
+pub use pool::MAX_ANALYSIS_THREADS_ENV_VAR;
+#[cfg(any(test, feature = "testing"))]
+pub(crate) use refresh::is_testthat_path;
+pub use refresh::DiagnosticsReady;
+pub(crate) use refresh::DiagnosticsState;
+pub(crate) use snapshot::WorldStateSnapshot;
+pub(crate) use warmup::warm_workspace_index;
+
+/// Run `f`, swallowing a salsa cancellation as `None`. Any other panic propagates.
+pub(crate) fn catch_cancellation<T>(f: impl FnOnce() -> T) -> Option<T> {
+    salsa::Cancelled::catch(AssertUnwindSafe(f)).ok()
+}

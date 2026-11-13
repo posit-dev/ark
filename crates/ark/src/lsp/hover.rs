@@ -6,6 +6,8 @@
 //
 
 use anyhow::*;
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::NodeTypeExt;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
 use tower_lsp_server::ls_types::MarkupContent;
@@ -14,8 +16,6 @@ use tree_sitter::Node;
 
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::help::RHtmlHelp;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::NodeTypeExt;
 
 enum HoverContext {
     Topic { topic: String },

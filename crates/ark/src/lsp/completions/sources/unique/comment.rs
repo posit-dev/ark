@@ -7,6 +7,9 @@
 
 use std::sync::LazyLock;
 
+use legacy_ide::db::LegacyDb;
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::NodeTypeExt;
 #[cfg(test)]
 use oak_db::OakDatabase;
 use regex::Regex;
@@ -21,12 +24,9 @@ use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::sources::unique::Recognized;
 use crate::lsp::completions::sources::unique::UniqueCompletions;
 use crate::lsp::completions::types::CompletionData;
-use crate::lsp::db::LegacyDb;
 use crate::lsp::document_context::DocumentContext;
 #[cfg(test)]
 use crate::lsp::document_context::TestDocument;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::NodeTypeExt;
 
 pub(super) fn recognize_comment(
     completion_context: &CompletionContext,

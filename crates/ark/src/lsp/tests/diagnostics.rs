@@ -5,8 +5,11 @@ use aether_path::FilePath;
 use biome_line_index::WideEncoding;
 use harp::eval::RParseEvalOptions;
 use harp::RFunction;
+use legacy_ide::diagnostics;
+use legacy_ide::diagnostics::DiagnosticsConfig;
 use oak_db::File;
 use oak_db::OakDatabase;
+use oak_lsp::harness::LspHarness;
 use oak_scan::DbScan;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::Position;
@@ -14,9 +17,6 @@ use tower_lsp_server::ls_types::Uri;
 use url::Url;
 
 use crate::console::console_scopes;
-use crate::lsp::diagnostics;
-use crate::lsp::diagnostics::DiagnosticsConfig;
-use crate::lsp::harness::LspHarness;
 use crate::r_task;
 
 /// A snapshot must serve documents opened by the live state, as

@@ -17,7 +17,6 @@ mod subset;
 use anyhow::Context;
 use tower_lsp_server::ls_types::CompletionItem;
 
-use crate::lsp;
 use crate::lsp::completions::r_completions::call::r_call_completions;
 use crate::lsp::completions::r_completions::custom::r_custom_completions;
 use crate::lsp::completions::r_completions::extractor::r_extractor_completions;
@@ -165,12 +164,12 @@ fn decline_on_err(source: &str, reply: anyhow::Result<SlotReply>) -> SlotReply {
     #[cfg(test)]
     expected_errors::record(source, &err);
 
-    // `lsp::log_error!` reaches only the client, as a `window/logMessage` that
+    // `oak_lsp::log_error!` reaches only the client, as a `window/logMessage` that
     // the integration test client rejects unless the test calls
     // `allow_log_message()`. Without that, a test whose static items hide the
     // declined slot would pass. `log::error!` keeps the error in the kernel log.
     log::error!("{err:?}");
-    lsp::log_error!("{err:?}");
+    oak_lsp::log_error!("{err:?}");
 
     SlotReply::Decline
 }

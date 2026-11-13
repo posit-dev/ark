@@ -6,24 +6,24 @@ use std::sync::Arc;
 use oak_db::OakDatabase;
 use oak_db::Package;
 use oak_db::SourceDb;
+use oak_lsp::harness::TestEvent;
+use oak_lsp::harness::TestHandlers;
+use oak_lsp::main_loop::init_aux_for_test;
+use oak_lsp::main_loop::Event;
+use oak_lsp::main_loop::GlobalState;
+use oak_lsp::sidecar::OakSidecarHandler;
+use oak_lsp::sidecar::SidecarHandler;
+use oak_lsp::sidecar::SidecarRequest;
+use oak_lsp::tests::sidecar_handler::install_package;
+use oak_lsp::tests::sidecar_handler::sidecar_state;
+use oak_lsp::tests::sidecar_handler::TestSidecarHandler;
+use oak_lsp::tests::utils::did_change_watched_file;
+use oak_lsp::tests::utils::initialize;
+use oak_lsp::tests::utils::DescriptionWriter;
 use oak_scan::DbScan;
 use oak_sidecar::primitives::PrimitivesCache;
 use tower_lsp_server::ls_types::FileChangeType;
 
-use super::sidecar_handler::install_package;
-use super::sidecar_handler::sidecar_state;
-use super::sidecar_handler::TestSidecarHandler;
-use super::utils::did_change_watched_file;
-use super::utils::initialize;
-use super::utils::DescriptionWriter;
-use crate::lsp::harness::TestEvent;
-use crate::lsp::harness::TestHandlers;
-use crate::lsp::main_loop::init_aux_for_test;
-use crate::lsp::main_loop::Event;
-use crate::lsp::main_loop::GlobalState;
-use crate::lsp::sidecar::OakSidecarHandler;
-use crate::lsp::sidecar::SidecarHandler;
-use crate::lsp::sidecar::SidecarRequest;
 use crate::panic;
 
 #[test]

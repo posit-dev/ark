@@ -102,7 +102,7 @@ pub fn init(log_file: Option<&str>, profile_file: Option<&str>) {
 /// span-only filter, it reports
 /// [`Interest::always()`](tracing::subscriber::Interest::always) for every level,
 /// so `tracing::enabled!(tracing::Level::TRACE)` and
-/// [`crate::lsp::log_trace!`] report enabled regardless of the log layer's
+/// [`oak_lsp::log_trace!`] report enabled regardless of the log layer's
 /// `RUST_LOG`-derived [`EnvFilter`]. `SpanTrace` only requires span metadata.
 fn errors_layer<S>() -> impl Layer<S>
 where
@@ -151,14 +151,14 @@ mod tests {
     fn test_log_trace_disabled_under_production_subscriber_default() {
         std::env::set_var("RUST_LOG", "ark=info");
         init(None, None);
-        assert!(!crate::lsp::trace_enabled!());
+        assert!(!oak_lsp::trace_enabled!());
     }
 
     #[test]
     fn test_log_trace_enabled_under_production_subscriber_with_ark_trace() {
         std::env::set_var("RUST_LOG", "ark=trace");
         init(None, None);
-        assert!(crate::lsp::trace_enabled!());
+        assert!(oak_lsp::trace_enabled!());
     }
 
     #[test]

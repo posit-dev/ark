@@ -14,6 +14,8 @@ mod subset;
 mod workspace;
 
 use indexmap::IndexMap;
+use legacy_ide::treesitter::NodeType;
+use legacy_ide::treesitter::NodeTypeExt;
 use stdext::*;
 use tower_lsp_server::ls_types::CompletionItem;
 use tower_lsp_server::ls_types::CompletionItemKind;
@@ -25,8 +27,6 @@ use crate::lsp::completions::request::CompositeRequest;
 use crate::lsp::completions::sources::collect_completions;
 use crate::lsp::completions::sources::utils::has_priority_prefix;
 use crate::lsp::completions::sources::CompletionSource;
-use crate::treesitter::NodeType;
-use crate::treesitter::NodeTypeExt;
 
 const OBJECT_KIND_CLASS: &str = "Object";
 
@@ -302,10 +302,12 @@ fn is_identifier_like(x: Node) -> bool {
 #[cfg(test)]
 mod tests {
     use indexmap::IndexMap;
+    use legacy_ide::fixtures::point_from_cursor;
+    use legacy_ide::treesitter::NodeType;
+    use legacy_ide::treesitter::NodeTypeExt;
     use tower_lsp_server::ls_types::CompletionItem;
     use tower_lsp_server::ls_types::CompletionItemKind;
 
-    use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::request::CompositeReplies;
     use crate::lsp::completions::request::SlotReply;
@@ -317,8 +319,6 @@ mod tests {
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::document_context::TestDocument;
     use crate::panic;
-    use crate::treesitter::NodeType;
-    use crate::treesitter::NodeTypeExt;
 
     #[test]
     fn test_completions_on_anonymous_node_keywords() {

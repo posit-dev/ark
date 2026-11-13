@@ -11,7 +11,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
-testing = ["stdext/testing"]
+testing = ["legacy_ide/testing", "oak_lsp/testing", "stdext/testing"]
 
 [lints]
 workspace = true
@@ -45,6 +45,7 @@ harp.workspace = true
 home.workspace = true
 indexmap.workspace = true
 itertools.workspace = true
+legacy_ide.workspace = true
 libc.workspace = true
 libr.workspace = true
 log.workspace = true
@@ -54,13 +55,13 @@ notify.workspace = true
 oak_core.workspace = true
 oak_db.workspace = true
 oak_ide.workspace = true
+oak_lsp.workspace = true
 oak_package_metadata.workspace = true
 oak_r_process.workspace = true
 oak_scan.workspace = true
 oak_semantic.workspace = true
 oak_sidecar.workspace = true
 oak_source.workspace = true
-oak_srcref.workspace = true
 once_cell.workspace = true
 regex.workspace = true
 reqwest.workspace = true
@@ -73,7 +74,6 @@ scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 stdext.workspace = true
-streaming-iterator.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 tempfile.workspace = true

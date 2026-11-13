@@ -1,0 +1,959 @@
+use anyhow::anyhow;
+use oak_db::File;
+use serde::Deserialize;
+use serde::Serialize;
+
+use crate::db::FileLegacyExt;
+use crate::db::LegacyDb;
+use crate::traits::node::NodeExt;
+use crate::treesitter::NodeType;
+use crate::treesitter::NodeTypeExt;
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct IndentationConfig {
+    /// Whether to insert spaces of tabs for one level of indentation.
+    pub indent_style: IndentStyle,
+
+    /// The number of spaces for one level of indentation.
+    pub indent_size: usize,
+
+    /// The width of a tab. There may be projects with an `indent_size` of 4 and
+    /// a `tab_width` of 8 (e.g. GNU R).
+    pub tab_width: usize,
+}
+
+#[derive(PartialEq, Serialize, Deserialize, Clone, Debug)]
+pub enum IndentStyle {
+    Tab,
+    Space,
+}
+
+impl Default for IndentationConfig {
+    fn default() -> Self {
+        Self {
+            indent_style: IndentStyle::Space,
+            indent_size: 2,
+            tab_width: 2,
+        }
+    }
+}
+
+/// An indentation correction in tree-sitter coordinates.
+pub struct IndentEdit {
+    pub range: tree_sitter::Range,
+    pub new_text: String,
+}
+
+/// Provide indentation corrections
+///
+/// Hooked up to format-on-type for newline characters.
+///
+/// This is not a full indenter yet. We only provide corrections for the
+/// Positron frontend when the VS Code regexp-based indenting rules are not able
+/// to indent as expected. For instance we reindent pipeline components to
+/// ensure alignment and avoid a staircase effect.
+///
+/// Once we implement a full formatter, indentation will be provided for any
+/// constructs based on the formatter and will be fully consistent with it.
+pub fn indent_edit(
+    db: &dyn LegacyDb,
+    file: File,
+    config: &IndentationConfig,
+    line: usize,
+) -> anyhow::Result<Option<Vec<IndentEdit>>> {
+    let text = file.source_text(db).as_str();
+    let ast = file.tree_sitter(db);
+
+    let line_count = if text.is_empty() {
+        1
+    } else {
+        // Note that `lines().count()` doesn't count trailing newlines
+        text.chars().filter(|c| *c == '\n').count() + 1
+    };
+    if line >= line_count {
+        return Err(anyhow!("`line` is OOB"));
+    }
+
+    let indent_pos = tree_sitter::Point {
+        row: line,
+        column: 0,
+    };
+
+    let node = ast.root_node().find_smallest_spanning_node(indent_pos);
+
+    // FIXME: Remove this as soon as https://github.com/r-lib/tree-sitter-r/pull/126
+    // is merged and we have synced with upstream tree-sitter-r.
+    // Due to a tree-sitter-r bug, if there are leading newlines in a document, they are
+    // consumed before the `program` node is created, meaning that rows at the beginning
+    // of a document before the first token can look OOB and won't be contained by any
+    // node. There should be no indent adjustment required in these cases.
+    if node.is_none() {
+        return Ok(None);
+    }
+
+    let node = node.unwrap(); // Can only happen if `line` is OOB, which it isn't
+
+    // Get the parent node of the beginning of line
+    let mut bol_parent = node;
+    while bol_parent.start_position().row == line {
+        if let Some(parent) = bol_parent.parent() {
+            bol_parent = parent;
+        } else {
+            break;
+        }
+    }
+
+    // log::trace!("node: {node:?}");
+    // log::trace!("bol_parent: {bol_parent:?}");
+
+    // Iterator over characters following `line`'s indent
+    let text_at_indent = || {
+        text.lines()
+            .nth(line)
+            .map(|line_text| line_text.chars().skip_while(|c| *c == ' ' || *c == '\t'))
+            .into_iter()
+            .flatten()
+    };
+
+    // The indentation of the line the node starts on
+    let node_line_indent = |point: tree_sitter::Node| -> usize {
+        line_indent(text, point.start_position().row, config).0
+    };
+    let brace_parent_indent =
+        |node: tree_sitter::Node| -> usize { node_line_indent(brace_parent(node)) };
+
+    let brace_indent = |parent: tree_sitter::Node| -> (usize, usize) {
+        // If we're looking at a closing delimiter, indent at the parent's
+        // beginning of line
+        if let Some(c) = text_at_indent().next() {
+            if c == '}' {
+                return (brace_parent_indent(parent), 0);
+            }
+            // else fallthrough
+        };
+
+        (brace_parent_indent(parent), config.indent_size)
+    };
+
+    let (old_indent, old_indent_byte) = line_indent(text, line, config);
+
+    // Whether the first non-blank character of `row` is inside a string that
+    // starts on an earlier row. Its indentation is string content, not code
+    // indentation.
+    let starts_in_string = |within: tree_sitter::Node, row: usize| -> bool {
+        let point = tree_sitter::Point {
+            row,
+            column: line_indent(text, row, config).1,
+        };
+        let Some(node) = within.descendant_for_point_range(point, point) else {
+            return false;
+        };
+        let in_string = node
+            .ancestors()
+            .any(|node| node.is_string() && node.start_position().row < row);
+        in_string
+    };
+
+    // Indentation of a line where an argument or parameter goes. Starts one
+    // level past the line of the opening delimiter, but doesn't add back
+    // indentation removed on a line where the previous argument starts or
+    // ends, as in:
+    //
+    // ```r
+    // fun_call(parameter = (
+    //   stuff
+    // ),
+    // argument)
+    // ```
+    //
+    // The line of the opening delimiter is excluded because it sets the
+    // anchor rather than the indentation of arguments.
+    let argument_line_indent = |parent: tree_sitter::Node, anchor: usize| -> (usize, usize) {
+        let open_row = parent.start_position().row;
+
+        let prev = parent
+            .children(&mut parent.walk())
+            .filter(|child| {
+                (child.is_argument() || child.node_type() == NodeType::Parameter) &&
+                    child.end_position().row < line
+            })
+            .last();
+
+        let prev_indent = prev
+            .into_iter()
+            .flat_map(|prev| {
+                [prev.start_position().row, prev.end_position().row]
+                    .into_iter()
+                    .filter(|row| *row > open_row)
+                    .filter(move |row| !starts_in_string(prev, *row))
+            })
+            .map(|row| line_indent(text, row, config).0)
+            .min();
+
+        let Some(prev_indent) = prev_indent.filter(|indent| *indent < anchor + config.indent_size)
+        else {
+            return (anchor, config.indent_size);
+        };
+
+        (prev_indent, 0)
+    };
+
+    let arguments_indent = |parent: tree_sitter::Node| -> (usize, usize) {
+        let anchor = node_line_indent(parent);
+
+        let line_start = tree_sitter::Point {
+            row: line,
+            column: old_indent_byte,
+        };
+        let Some(close) = parent
+            .child_by_field_name("close")
+            .filter(|close| !close.is_missing() && close.start_position() == line_start)
+        else {
+            return argument_line_indent(parent, anchor);
+        };
+
+        // A closing delimiter preceded by a trailing comma is where the next
+        // argument goes: hitting Enter in `f(x,|)`, with `)` auto-closed by
+        // the frontend, leaves the cursor in front of `)`.
+        let mut prev = close.prev_sibling();
+        while let Some(node) = prev.filter(|node| node.is_comment()) {
+            prev = node.prev_sibling();
+        }
+        if prev.is_some_and(|node| node.node_type() == NodeType::Comma) {
+            return argument_line_indent(parent, anchor);
+        }
+
+        (anchor, 0)
+    };
+
+    // Structured in two stages as in Emacs TS rules: first match, then
+    // return anchor and indent size. We can add more rules here as needed.
+    let (anchor, indent) = match bol_parent {
+        // Indentation of top-level expressions. Fixes some problematic
+        // outdents:
+        // https://github.com/posit-dev/positron/issues/1880
+        // https://github.com/posit-dev/positron/issues/2764
+        parent if parent.is_program() => (parent.start_position().column, 0),
+        parent if parent.is_braced_expression() => brace_indent(parent),
+
+        // Indentation of chained operators (aka pipelines):
+        // https://github.com/posit-dev/positron/issues/2707
+        parent if parent.is_binary_operator() => {
+            let anchor = node
+                .ancestors()
+                .find(|n| n.parent().is_none_or(|p| !p.is_binary_operator()))
+                .unwrap_or(parent); // Should not happen
+
+            (node_line_indent(anchor), config.indent_size)
+        },
+
+        // Indentation of arguments in calls and subsets, and of parameters in
+        // function definitions, relative to the line of the opening delimiter:
+        // https://github.com/posit-dev/positron/issues/5754
+        //
+        // Hitting Enter in `function(a,|)` is not covered: R doesn't allow a
+        // trailing comma in parameters, so tree-sitter parses the `)` as an
+        // `ERROR` and there is no `parameters` node to match.
+        parent if parent.is_arguments() || parent.node_type() == NodeType::Parameters => {
+            arguments_indent(parent)
+        },
+
+        _ => {
+            // Find nearest containing braced expression or top-level node. We'll use
+            // that to prevent ever indenting past these in unhandled cases for which we
+            // don't have rules yet: https://github.com/posit-dev/positron/issues/1683
+
+            // First climb one level if cursor is in front of a `{` character.
+            // In that case `node` is the `{` token which is an immediate child
+            // of the containing `{` expression. We want to indent that braced
+            // expression relative to the next enclosing `{` expression.
+            let mut node = node;
+            if let Some(c) = text_at_indent().next() {
+                if c == '{' {
+                    if let Some(parent) = node.parent() {
+                        node = parent;
+                    }
+                }
+            }
+
+            // Find nearest enclosing brace. If there is none, just use current indentation.
+            let Some(enclosing_brace) = find_enclosing_brace(node) else {
+                return Ok(None);
+            };
+            let (anchor, indent) = brace_indent(enclosing_brace);
+
+            // Only correct if we're too far on the left, past the indentation
+            // implied by the enclosing brace
+            let min_indent = anchor + indent;
+            if old_indent >= min_indent {
+                return Ok(None);
+            }
+
+            (anchor, indent)
+        },
+    };
+
+    let new_indent = anchor + indent;
+
+    if old_indent == new_indent {
+        return Ok(None);
+    }
+
+    let new_text = new_line_indent(config, new_indent);
+
+    let range = tree_sitter::Range {
+        start_byte: 0, // Not used by lsp_range_from_tree_sitter_range
+        end_byte: 0,   // Not used by lsp_range_from_tree_sitter_range
+        start_point: tree_sitter::Point {
+            row: line,
+            column: 0,
+        },
+        end_point: tree_sitter::Point {
+            row: line,
+            column: old_indent_byte,
+        },
+    };
+
+    let edit = IndentEdit { range, new_text };
+
+    let mut edits = vec![edit];
+
+    // Indent closing delimiter to mitigate VS Code's indent-outdent behaviour
+    // https://github.com/posit-dev/positron/issues/3484
+    if bol_parent.is_braced_expression() {
+        // FIXME: Use named delim node once available
+        let n = bol_parent.child_count();
+        if n > 1 {
+            let close = bol_parent.child(n - 1).unwrap();
+            let close_line = close.start_position().row;
+
+            if close.node_type() == NodeType::Anonymous("}".into()) && close_line > line {
+                if let Some(ref mut close_edits) = indent_edit(db, file, config, close_line)? {
+                    edits.append(close_edits);
+                }
+            }
+        }
+    }
+
+    Ok(Some(edits))
+}
+
+fn brace_parent(node: tree_sitter::Node) -> tree_sitter::Node {
+    let Some(parent) = node.parent() else {
+        return node;
+    };
+
+    match parent.node_type() {
+        NodeType::FunctionDefinition => parent,
+        NodeType::IfStatement => parent,
+        NodeType::ForStatement => parent,
+        NodeType::WhileStatement => parent,
+        NodeType::RepeatStatement => parent,
+        _ => node,
+    }
+}
+
+/// Returns indent as a pair of space size and byte size
+pub fn line_indent(text: &str, line: usize, config: &IndentationConfig) -> (usize, usize) {
+    let mut byte_indent = 0;
+    let mut indent = 0;
+
+    let Some(line_text) = text.lines().nth(line) else {
+        return (0, 0);
+    };
+
+    for next_char in line_text.chars() {
+        if next_char == ' ' {
+            indent += 1;
+            byte_indent += 1;
+            continue;
+        } else if next_char == '\t' {
+            indent += config.tab_width;
+            byte_indent += 1;
+            continue;
+        }
+        break;
+    }
+
+    (indent, byte_indent)
+}
+
+pub fn new_line_indent(config: &IndentationConfig, indent: usize) -> String {
+    match config.indent_style {
+        IndentStyle::Space => String::from(' ').repeat(indent),
+        IndentStyle::Tab => {
+            let n_tabs = indent / config.tab_width;
+            let n_spaces = indent % config.tab_width;
+            String::from('\t').repeat(n_tabs) + &String::from(' ').repeat(n_spaces)
+        },
+    }
+}
+
+/// Find the nearest node that is a braced expression
+pub fn find_enclosing_brace(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+    if let Some(parent) = node.parent() {
+        parent.ancestors().find(|n| n.is_braced_expression())
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aether_lsp_utils::proto::from_proto;
+    use aether_lsp_utils::proto::PositionEncoding;
+    use biome_line_index::WideEncoding;
+    use oak_db::File;
+    use oak_db::OakDatabase;
+    use salsa::Setter;
+    use stdext::assert_match;
+    use tower_lsp_server::ls_types::TextEdit;
+
+    use crate::coordinates::lsp_range_from_tree_sitter_range;
+    use crate::db::test_file;
+    use crate::indent::indent_edit;
+    use crate::indent::new_line_indent;
+    use crate::indent::IndentEdit;
+    use crate::indent::IndentStyle;
+    use crate::indent::IndentationConfig;
+
+    // NOTE: If we keep adding tests we might want to switch to snapshot tests
+
+    const SPACE_CFG: IndentationConfig = IndentationConfig {
+        indent_style: IndentStyle::Space,
+        indent_size: 2,
+        tab_width: 2,
+    };
+
+    const ENCODING: PositionEncoding = PositionEncoding::Wide(WideEncoding::Utf16);
+
+    fn apply_text_edits(
+        edits: Vec<IndentEdit>,
+        db: &mut OakDatabase,
+        file: File,
+        encoding: PositionEncoding,
+    ) {
+        let line_index = file.line_index(&*db).clone();
+        let edits = edits
+            .into_iter()
+            .map(|edit| TextEdit {
+                range: lsp_range_from_tree_sitter_range(edit.range, &line_index, encoding).unwrap(),
+                new_text: edit.new_text,
+            })
+            .collect();
+
+        let mut contents = file.source_text(&*db).clone();
+        let mut line_index = line_index;
+        from_proto::apply_text_edits(&mut contents, edits, &mut line_index, encoding);
+        file.set_source_text_override(db).to(Some(contents));
+    }
+
+    #[test]
+    fn test_line_indent_oob() {
+        let (db, file) = test_file("");
+        assert_match!(
+            indent_edit(&db, file, &IndentationConfig::default(), 1),
+            Err(_)
+        );
+
+        let (db, file) = test_file("\n");
+        assert_match!(
+            indent_edit(&db, file, &IndentationConfig::default(), 2),
+            Err(_)
+        );
+    }
+
+    #[test]
+    fn test_line_indent_leading_whitespace() {
+        // Indent should be unchanged regardless of how much leading whitespace
+        // there is before the first newline
+        // https://github.com/posit-dev/positron/issues/5258
+        let text = String::from("  \nx");
+        let (db, file) = test_file(&text);
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1).unwrap();
+        assert!(edit.is_none());
+
+        let text = String::from("\r\nx");
+        let (db, file) = test_file(&text);
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1).unwrap();
+        assert!(edit.is_none());
+    }
+
+    #[test]
+    fn test_line_indent_chains() {
+        let (mut db, file) = test_file("foo +\n  bar +\n    baz + qux |>\nfoofy()");
+
+        // Indenting the first two lines doesn't change the text
+        assert_match!(
+            indent_edit(&db, file, &IndentationConfig::default(), 0),
+            Ok(None)
+        );
+        assert_match!(
+            indent_edit(&db, file, &IndentationConfig::default(), 1),
+            Ok(None)
+        );
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(
+            file.source_text(&db),
+            "foo +\n  bar +\n  baz + qux |>\nfoofy()"
+        );
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 3)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(
+            file.source_text(&db),
+            "foo +\n  bar +\n  baz + qux |>\n  foofy()"
+        );
+    }
+
+    #[test]
+    fn test_line_indent_chains_trailing_space() {
+        let (mut db, file) = test_file("foo +\n  bar(\n    x\n  ) +\n    baz\n  ");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 4)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(
+            file.source_text(&db),
+            "foo +\n  bar(\n    x\n  ) +\n  baz\n  "
+        );
+    }
+
+    #[test]
+    fn test_line_indent_chains_outdent() {
+        let text = String::from("1 +\n  2\n");
+        let (db, file) = test_file(&text);
+
+        assert_match!(
+            indent_edit(&db, file, &IndentationConfig::default(), 2),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn test_line_indent_chains_deep() {
+        let (mut db, file) = test_file("deep()()[] +\n    deep()()[]");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 0).unwrap();
+        assert!(edit.is_none());
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "deep()()[] +\n  deep()()[]");
+    }
+
+    #[test]
+    fn test_line_indent_chains_deep_newlines() {
+        // With newlines in the way
+        let (mut db, file) = test_file("deep(\n)()[] +\ndeep(\n)()[]");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 0).unwrap();
+        assert!(edit.is_none());
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "deep(\n)()[] +\n  deep(\n)()[]");
+    }
+
+    #[test]
+    fn test_line_indent_chains_calls() {
+        let (mut db, file) = test_file("foo() +\n  bar() +\nbaz()");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "foo() +\n  bar() +\n  baz()");
+
+        // Indenting the first two lines doesn't change the text
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 0).unwrap();
+        assert!(edit.is_none());
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1).unwrap();
+        assert!(edit.is_none());
+
+        let (db, file) = test_file("foo(\n) +\n  bar");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 0).unwrap();
+        assert!(edit.is_none());
+    }
+
+    #[test]
+    fn test_line_indent_braced_expression() {
+        let (mut db, file) = test_file("{\nbar\n}");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "{\n  bar\n}");
+
+        let (mut db, file) = test_file("function() {\nbar\n}");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "function() {\n  bar\n}");
+    }
+
+    #[test]
+    fn test_line_indent_braced_expression_closing() {
+        let (mut db, file) = test_file("{\n  }");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "{\n}");
+    }
+
+    #[test]
+    fn test_line_indent_braced_expression_closing_multiline() {
+        // https://github.com/posit-dev/positron/issues/3484
+        let (mut db, file) = test_file("{\n\n    }");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "{\n  \n}");
+    }
+
+    #[test]
+    fn test_line_indent_braced_expression_multiline() {
+        let (mut db, file) = test_file("function(\n        ) {\nfoo\n}");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "function(\n        ) {\n  foo\n}");
+    }
+
+    #[test]
+    fn test_line_indent_braced_expression_multiline_empty() {
+        let (mut db, file) = test_file("function(\n        ) {\n\n}");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "function(\n        ) {\n  \n}");
+    }
+
+    #[test]
+    fn test_line_indent_minimum() {
+        // https://github.com/posit-dev/positron/issues/1683
+        let (mut db, file) = test_file("function() {\n  ({\n  }\n)\n}");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 3)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "function() {\n  ({\n  }\n  )\n}");
+    }
+
+    #[test]
+    fn test_line_indent_minimum_nested() {
+        // Nested R function test with multiple levels of nesting
+        let (mut db, file) = test_file("{\n  {\n    ({\n    }\n  )\n  }\n}");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 4)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(
+            file.source_text(&db),
+            "{\n  {\n    ({\n    }\n    )\n  }\n}"
+        );
+    }
+
+    #[test]
+    fn test_line_indent_function_opening_brace_own_line() {
+        let text = String::from("object <- function()\n{\n  body\n}");
+        let (db, file) = test_file(&text);
+
+        assert_match!(
+            indent_edit(&db, file, &IndentationConfig::default(), 1).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn test_line_indent_arguments() {
+        // https://github.com/posit-dev/positron/issues/5754
+        let (mut db, file) = test_file("mtcars |>\n  ggplot(aes(x = qsec,\n  y = hp))");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(
+            file.source_text(&db),
+            "mtcars |>\n  ggplot(aes(x = qsec,\n    y = hp))"
+        );
+    }
+
+    #[test]
+    fn test_line_indent_arguments_closing_after_comma() {
+        // Enter after `x = qsec,` with auto-closed delimiters
+        let (mut db, file) = test_file("mtcars |>\n  ggplot(aes(x = qsec,\n  ))");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(
+            file.source_text(&db),
+            "mtcars |>\n  ggplot(aes(x = qsec,\n    ))"
+        );
+
+        // Also with a comment in between
+        let (mut db, file) = test_file("foo(x, # comment\n)");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "foo(x, # comment\n  )");
+    }
+
+    #[test]
+    fn test_line_indent_arguments_after_outdent() {
+        let text = String::from("fun_call(parameter = (\n  stuff\n),\nargument)");
+        let (db, file) = test_file(&text);
+        assert_match!(
+            indent_edit(&db, file, &IndentationConfig::default(), 3),
+            Ok(None)
+        );
+
+        let (mut db, file) = test_file("fun_call(function() {\n  body\n},\n    argument)");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 3)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(
+            file.source_text(&db),
+            "fun_call(function() {\n  body\n},\nargument)"
+        );
+
+        // A previous argument at the regular indentation doesn't lower it
+        let (mut db, file) = test_file("foo(\n  bar(\n    x\n  ),\nbaz)");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 4)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "foo(\n  bar(\n    x\n  ),\n  baz)");
+
+        // The previous argument starts on an outdented line but ends on a
+        // line at the regular indentation
+        let (mut db, file) = test_file("foo(\na = bar(\n  x\n  ),\n    b)");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 4)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "foo(\na = bar(\n  x\n  ),\nb)");
+    }
+
+    #[test]
+    fn test_line_indent_arguments_after_multiline_string() {
+        // The string's last line is content, not an outdent
+        let (mut db, file) = test_file("foo(\n  \"abc\ndef\",\nx)");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 3)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "foo(\n  \"abc\ndef\",\n  x)");
+
+        // Raw string
+        let (mut db, file) = test_file("foo(\n  r\"(abc\ndef)\",\nx)");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 3)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "foo(\n  r\"(abc\ndef)\",\n  x)");
+
+        // The string starts on an outdented line, which still counts
+        let (mut db, file) = test_file("foo(\na = \"abc\ndef\",\n  x)");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 3)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "foo(\na = \"abc\ndef\",\nx)");
+
+        // The string starts on the line of the opening delimiter
+        let (mut db, file) = test_file("foo(\"abc\ndef\",\nx)");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "foo(\"abc\ndef\",\n  x)");
+    }
+
+    #[test]
+    fn test_line_indent_parameters_after_outdent() {
+        let (mut db, file) = test_file("function(\na = c(\n  1\n  ),\n    b) NULL");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 4)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(
+            file.source_text(&db),
+            "function(\na = c(\n  1\n  ),\nb) NULL"
+        );
+    }
+
+    #[test]
+    fn test_line_indent_arguments_tabs() {
+        // The closing delimiter is found by byte column while the anchor is
+        // measured in display width
+        let tab_cfg = IndentationConfig {
+            indent_style: IndentStyle::Tab,
+            indent_size: 2,
+            tab_width: 4,
+        };
+        let (mut db, file) = test_file("mtcars |>\n\tggplot(aes(x = qsec,\n\t))");
+        let edit = indent_edit(&db, file, &tab_cfg, 2).unwrap().unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(
+            file.source_text(&db),
+            "mtcars |>\n\tggplot(aes(x = qsec,\n\t  ))"
+        );
+    }
+
+    #[test]
+    fn test_line_indent_subset2() {
+        let (mut db, file) = test_file("  x[[1,\n  ]]");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "  x[[1,\n    ]]");
+
+        let (mut db, file) = test_file("  x[[1\n    ]]");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "  x[[1\n  ]]");
+    }
+
+    #[test]
+    fn test_line_indent_arguments_omitted() {
+        // No argument node precedes the closing delimiter, only a comma
+        let (mut db, file) = test_file("x[,\n]");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "x[,\n  ]");
+    }
+
+    #[test]
+    fn test_line_indent_parameters() {
+        let (mut db, file) = test_file("  f <- function(a,\nb) {\n  }");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "  f <- function(a,\n    b) {\n  }");
+
+        let (mut db, file) = test_file("function(\n  a\n    ) {\n}");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "function(\n  a\n) {\n}");
+    }
+
+    #[test]
+    fn test_line_indent_arguments_closing() {
+        let (mut db, file) = test_file("  foo(\n    x\n    )");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "  foo(\n    x\n  )");
+
+        let (mut db, file) = test_file("x[\n  1\n  ]");
+
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
+            .unwrap()
+            .unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
+        assert_eq!(file.source_text(&db), "x[\n  1\n]");
+    }
+
+    #[test]
+    fn test_new_line_indent() {
+        let tab_cfg = IndentationConfig {
+            indent_style: IndentStyle::Tab,
+            indent_size: 4,
+            tab_width: 4,
+        };
+        let large_tab_cfg = IndentationConfig {
+            indent_style: IndentStyle::Tab,
+            indent_size: 4,
+            tab_width: 8,
+        };
+
+        assert_eq!(
+            new_line_indent(&SPACE_CFG, 12),
+            String::from(' ').repeat(12)
+        );
+
+        assert_eq!(new_line_indent(&tab_cfg, 7), String::from("\t   "));
+        assert_eq!(new_line_indent(&tab_cfg, 8), String::from("\t\t"));
+        assert_eq!(new_line_indent(&tab_cfg, 9), String::from("\t\t "));
+
+        assert_eq!(
+            new_line_indent(&large_tab_cfg, 7),
+            String::from(' ').repeat(7)
+        );
+        assert_eq!(new_line_indent(&large_tab_cfg, 8), String::from("\t"));
+        assert_eq!(new_line_indent(&large_tab_cfg, 12), String::from("\t    "));
+    }
+
+    fn read_text_asset(path: &str) -> String {
+        let mut asset = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        asset.push("src");
+        asset.push(path);
+        std::fs::read_to_string(asset).unwrap()
+    }
+
+    fn write_asset(path: &str, text: &str) {
+        let mut asset = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        asset.push("src");
+        asset.push(path);
+        std::fs::write(asset, text).unwrap();
+    }
+
+    #[test]
+    fn test_indent_snapshot() {
+        let orig = read_text_asset("snapshots/indent.R");
+        let (mut db, file) = test_file(&orig);
+        let n_lines = file.source_text(&db).matches('\n').count();
+        for i in 0..n_lines {
+            if let Some(edit) = indent_edit(&db, file, &IndentationConfig::default(), i).unwrap() {
+                apply_text_edits(edit, &mut db, file, ENCODING);
+            }
+        }
+        let result = file.source_text(&db).to_string();
+        write_asset("snapshots/indent.R", &result);
+        if orig != result {
+            panic!("Indentation snapshots have changed.\nPlease see git diff.");
+        }
+    }
+}

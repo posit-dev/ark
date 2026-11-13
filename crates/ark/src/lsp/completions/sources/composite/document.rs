@@ -5,6 +5,12 @@
 //
 //
 
+use legacy_ide::traits::cursor::TreeCursorExt;
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::traits::point::PointExt;
+use legacy_ide::treesitter::BinaryOperatorType;
+use legacy_ide::treesitter::NodeType;
+use legacy_ide::treesitter::NodeTypeExt;
 use stdext::*;
 use tower_lsp_server::ls_types::CompletionItem;
 use tree_sitter::Node;
@@ -15,12 +21,6 @@ use crate::lsp::completions::completion_item::completion_item_from_scope_paramet
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::cursor::TreeCursorExt;
-use crate::lsp::traits::node::NodeExt;
-use crate::lsp::traits::point::PointExt;
-use crate::treesitter::BinaryOperatorType;
-use crate::treesitter::NodeType;
-use crate::treesitter::NodeTypeExt;
 
 pub(super) struct DocumentSource;
 

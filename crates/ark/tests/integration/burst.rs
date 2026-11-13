@@ -16,10 +16,10 @@
 use std::time::Duration;
 use std::time::Instant;
 
-use ark::lsp::harness::MAX_ANALYSIS_THREADS_ENV_VAR;
 use burst_replay::BurstConfig;
 use burst_replay::Fixture;
 use burst_replay::Replay;
+use oak_lsp::harness::MAX_ANALYSIS_THREADS_ENV_VAR;
 use stdext::env_flag;
 use stdext::parse_positive_count;
 
@@ -32,7 +32,7 @@ const TEMPORARIES_ENV_VAR: &str = "ARK_BURST_TEMPORARIES";
 
 const PADDING_ENV_VAR: &str = "ARK_BURST_PADDING";
 
-/// Abort a stalled replay. [`ark::lsp::harness::LspSession::is_settled()`] is
+/// Abort a stalled replay. [`oak_lsp::harness::LspSession::is_settled()`] is
 /// counter-based, not time-based.
 const SETTLE_TIMEOUT: Duration = Duration::from_secs(120);
 

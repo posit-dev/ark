@@ -1,0 +1,46 @@
+[package]
+name = "legacy_ide"
+version = "0.1.0"
+description = """
+Tree-sitter IDE features for R, pending their port to `oak_ide`.
+"""
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+# Exposes the cursor marker helpers in `fixtures` to other crates' tests.
+testing = []
+
+[lints]
+workspace = true
+
+[dependencies]
+aether_lsp_utils.workspace = true
+aether_path.workspace = true
+anyhow.workspace = true
+biome_line_index.workspace = true
+camino.workspace = true
+log.workspace = true
+oak_core.workspace = true
+oak_db.workspace = true
+regex.workspace = true
+rustc-hash.workspace = true
+salsa.workspace = true
+serde.workspace = true
+stdext.workspace = true
+streaming-iterator.workspace = true
+tower-lsp-server.workspace = true
+tracing.workspace = true
+tree-sitter.workspace = true
+tree-sitter-r.workspace = true
+
+[dev-dependencies]
+assert_matches.workspace = true
+insta.workspace = true
+oak_package_metadata = { workspace = true, features = ["testing"] }
+oak_scan.workspace = true
+tempfile.workspace = true
+url.workspace = true

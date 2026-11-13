@@ -5,6 +5,11 @@
 //
 //
 
+use legacy_ide::indexer;
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::traits::string::StringExt;
+use legacy_ide::treesitter::node_in_string;
+use legacy_ide::treesitter::NodeTypeExt;
 use tower_lsp_server::ls_types::CompletionItem;
 use tower_lsp_server::ls_types::Documentation;
 use tower_lsp_server::ls_types::MarkupContent;
@@ -15,11 +20,6 @@ use crate::lsp::completions::completion_item::completion_item_from_function;
 use crate::lsp::completions::completion_item::completion_item_from_variable;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::completions::sources::CompletionSource;
-use crate::lsp::indexer;
-use crate::lsp::traits::node::NodeExt;
-use crate::lsp::traits::string::StringExt;
-use crate::treesitter::node_in_string;
-use crate::treesitter::NodeTypeExt;
 
 pub(super) struct WorkspaceSource;
 

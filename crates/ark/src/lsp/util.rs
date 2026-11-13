@@ -28,12 +28,3 @@ pub unsafe extern "C-unwind" fn ps_object_id(object: SEXP) -> anyhow::Result<SEX
     let value = format!("{:p}", object);
     return Ok(Rf_mkString(value.as_ptr() as *const c_char));
 }
-
-/// Create a URI from a file name.
-/// File name is joined to the temp directory in a cross-platform way.
-/// Returns a `Url`. Does not create the file.
-#[cfg(test)]
-pub(crate) fn test_path(file_name: &str) -> url::Url {
-    let path = std::env::temp_dir().join(file_name);
-    url::Url::from_file_path(&path).unwrap()
-}

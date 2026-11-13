@@ -5,8 +5,11 @@
 //
 //
 
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::NodeTypeExt;
 use oak_db::File;
 use oak_db::Package;
+use oak_lsp::state::WorldState;
 use tower_lsp_server::ls_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
@@ -17,9 +20,6 @@ use crate::lsp::completions::sources::composite;
 use crate::lsp::completions::sources::composite::CompositeCompletions;
 use crate::lsp::completions::sources::unique;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::state::WorldState;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::NodeTypeExt;
 
 /// Completion items and source selection from [static_completions()], to be
 /// merged with the session's replies by [finish()].
@@ -127,9 +127,9 @@ pub(crate) fn finish(
 
 #[cfg(test)]
 mod tests {
+    use legacy_ide::fixtures::point_and_offset_from_cursor;
     use tower_lsp_server::ls_types::CompletionItemKind;
 
-    use crate::fixtures::point_and_offset_from_cursor;
     use crate::lsp::completions::finish;
     use crate::lsp::completions::request::ExtractOperator;
     use crate::lsp::completions::request::RCompletionReplies;

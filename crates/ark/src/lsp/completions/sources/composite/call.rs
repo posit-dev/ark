@@ -5,6 +5,8 @@
 //
 //
 
+use legacy_ide::coordinates::lsp_position_from_tree_sitter_point;
+use legacy_ide::traits::node::NodeExt;
 use tower_lsp_server::ls_types::CompletionItem;
 use tree_sitter::Node;
 
@@ -16,9 +18,7 @@ use crate::lsp::completions::request::CallRequest;
 use crate::lsp::completions::sources::utils::call_node_position_type;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
 use crate::lsp::completions::sources::utils::CallNodePositionType;
-use crate::lsp::coordinates::lsp_position_from_tree_sitter_point;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::node::NodeExt;
 
 /// Recognizes an argument name position in a call. With a pipe root, the
 /// root takes the place of the first argument for S3 dispatch.

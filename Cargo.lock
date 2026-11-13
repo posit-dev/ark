@@ -459,6 +459,7 @@ dependencies = [
  "indexmap 2.14.2",
  "insta",
  "itertools 0.15.0",
+ "legacy_ide",
  "libc",
  "libr",
  "log",
@@ -468,13 +469,13 @@ dependencies = [
  "oak_core",
  "oak_db",
  "oak_ide",
+ "oak_lsp",
  "oak_package_metadata",
  "oak_r_process",
  "oak_scan",
  "oak_semantic",
  "oak_sidecar",
  "oak_source",
- "oak_srcref",
  "once_cell",
  "regex",
  "reqwest",
@@ -487,7 +488,6 @@ dependencies = [
  "serde",
  "serde_json",
  "stdext",
- "streaming-iterator",
  "strum",
  "strum_macros",
  "tempfile",
@@ -526,6 +526,7 @@ dependencies = [
  "crossbeam",
  "dap",
  "harp",
+ "legacy_ide",
  "libc",
  "log",
  "regex",
@@ -2406,6 +2407,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
+name = "legacy_ide"
+version = "0.1.0"
+dependencies = [
+ "aether_lsp_utils",
+ "aether_path",
+ "anyhow",
+ "assert_matches",
+ "biome_line_index",
+ "camino",
+ "insta",
+ "log",
+ "oak_core",
+ "oak_db",
+ "oak_package_metadata",
+ "oak_scan",
+ "regex",
+ "rustc-hash",
+ "salsa",
+ "serde",
+ "stdext",
+ "streaming-iterator",
+ "tempfile",
+ "tower-lsp-server",
+ "tracing",
+ "tree-sitter",
+ "tree-sitter-r",
+ "url",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2772,6 +2803,43 @@ version = "0.1.0"
 dependencies = [
  "biome_text_size",
  "oak_core",
+]
+
+[[package]]
+name = "oak_lsp"
+version = "0.1.0"
+dependencies = [
+ "aether_lsp_utils",
+ "aether_path",
+ "anyhow",
+ "assert_matches",
+ "biome_line_index",
+ "camino",
+ "crossbeam",
+ "futures",
+ "ignore",
+ "legacy_ide",
+ "log",
+ "oak_db",
+ "oak_ide",
+ "oak_package_metadata",
+ "oak_r_process",
+ "oak_scan",
+ "oak_sidecar",
+ "oak_source",
+ "oak_srcref",
+ "salsa",
+ "serde",
+ "serde_json",
+ "stdext",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tower-lsp-server",
+ "tracing",
+ "tree-sitter",
+ "url",
+ "uuid",
 ]
 
 [[package]]

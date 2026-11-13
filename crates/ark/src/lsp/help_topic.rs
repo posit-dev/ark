@@ -5,7 +5,13 @@
 //
 //
 
+use legacy_ide::db::FileLegacyExt;
+use legacy_ide::db::LegacyDb;
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::NodeType;
+use legacy_ide::treesitter::NodeTypeExt;
 use oak_db::File;
+use oak_lsp::backend::LspResult;
 use serde::Deserialize;
 use serde::Serialize;
 use tower_lsp_server::ls_types::Position;
@@ -13,14 +19,6 @@ use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
 use tree_sitter::Node;
 use tree_sitter::Point;
 use tree_sitter::Tree;
-
-use crate::lsp;
-use crate::lsp::backend::LspResult;
-use crate::lsp::db::FileLegacyExt;
-use crate::lsp::db::LegacyDb;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::NodeType;
-use crate::treesitter::NodeTypeExt;
 
 pub static POSITRON_HELP_TOPIC_REQUEST: &str = "positron/textDocument/helpTopic";
 
@@ -48,14 +46,14 @@ pub(crate) fn help_topic(
     let tree = file.tree_sitter(db);
 
     let Some(node) = locate_help_node(tree, point) else {
-        lsp::log_warn!("help_topic(): No help node at position {point}");
+        oak_lsp::log_warn!("help_topic(): No help node at position {point}");
         return Ok(None);
     };
 
     let text = node.node_to_string(file.source_text(db))?;
     let response = HelpTopicResponse { topic: text };
 
-    lsp::log_info!(
+    oak_lsp::log_info!(
         "help_topic(): Using help topic '{}' at position {}",
         response.topic,
         point
@@ -95,11 +93,11 @@ fn locate_help_node(tree: &Tree, point: Point) -> Option<Node<'_>> {
 
 #[cfg(test)]
 mod tests {
+    use legacy_ide::fixtures::point_from_cursor;
+    use legacy_ide::traits::node::NodeExt;
     use tree_sitter::Parser;
 
-    use crate::fixtures::point_from_cursor;
     use crate::lsp::help_topic::locate_help_node;
-    use crate::lsp::traits::node::NodeExt;
 
     #[test]
     fn test_locate_help_node() {

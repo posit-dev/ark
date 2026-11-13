@@ -1,0 +1,435 @@
+use std::fs;
+
+use legacy_ide::diagnostics::generate_diagnostics;
+use oak_db::DbInputs;
+use oak_scan::DbScan;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::DidChangeNotebookDocumentParams;
+use tower_lsp_server::ls_types::DidCloseNotebookDocumentParams;
+use tower_lsp_server::ls_types::DidOpenNotebookDocumentParams;
+use tower_lsp_server::ls_types::GotoDefinitionParams;
+use tower_lsp_server::ls_types::GotoDefinitionResponse;
+use tower_lsp_server::ls_types::NotebookCell;
+use tower_lsp_server::ls_types::NotebookCellArrayChange;
+use tower_lsp_server::ls_types::NotebookCellKind;
+use tower_lsp_server::ls_types::NotebookDocument;
+use tower_lsp_server::ls_types::NotebookDocumentCellChange;
+use tower_lsp_server::ls_types::NotebookDocumentCellChangeStructure;
+use tower_lsp_server::ls_types::NotebookDocumentChangeEvent;
+use tower_lsp_server::ls_types::NotebookDocumentChangeTextContent;
+use tower_lsp_server::ls_types::NotebookDocumentIdentifier;
+use tower_lsp_server::ls_types::TextDocumentContentChangeEvent;
+use tower_lsp_server::ls_types::TextDocumentIdentifier;
+use tower_lsp_server::ls_types::TextDocumentItem;
+use tower_lsp_server::ls_types::Uri;
+use tower_lsp_server::ls_types::VersionedNotebookDocumentIdentifier;
+use tower_lsp_server::ls_types::VersionedTextDocumentIdentifier;
+
+use crate::goto_definition::goto_definition;
+use crate::harness::TestHandlers;
+use crate::main_loop::init_aux_for_test;
+use crate::state::WorldState;
+use crate::state_handlers::did_change_notebook;
+use crate::state_handlers::did_close_notebook;
+use crate::state_handlers::did_open_notebook;
+use crate::tests::state_handlers::set_workspace_paths;
+
+const NOTEBOOK: &str = "file:///proj/analysis.ipynb";
+
+fn cell_uri(handle: usize) -> Uri {
+    format!("vscode-notebook-cell:/proj/analysis.ipynb#W{handle}s")
+        .parse()
+        .unwrap()
+}
+
+fn code_cell(handle: usize) -> NotebookCell {
+    NotebookCell {
+        kind: NotebookCellKind::CODE,
+        document: cell_uri(handle),
+        metadata: None,
+        execution_summary: None,
+    }
+}
+
+fn cell_item(handle: usize, text: &str) -> TextDocumentItem {
+    TextDocumentItem {
+        uri: cell_uri(handle),
+        language_id: "r".to_string(),
+        version: 0,
+        text: text.to_string(),
+    }
+}
+
+/// `cells` may include handles absent from `texts` to model listed cells
+/// whose text the client does not sync.
+fn open(state: &mut WorldState, cells: &[usize], texts: &[(usize, &str)]) {
+    open_at(state, NOTEBOOK, cells, texts);
+}
+
+/// Like [`open()`], with the notebook at `notebook`. Cell URIs stay the same.
+fn open_at(state: &mut WorldState, notebook: &str, cells: &[usize], texts: &[(usize, &str)]) {
+    let params = DidOpenNotebookDocumentParams {
+        notebook_document: NotebookDocument {
+            uri: notebook.parse().unwrap(),
+            notebook_type: "jupyter-notebook".to_string(),
+            version: 0,
+            metadata: None,
+            cells: cells.iter().map(|&handle| code_cell(handle)).collect(),
+        },
+        cell_text_documents: texts
+            .iter()
+            .map(|&(handle, text)| cell_item(handle, text))
+            .collect(),
+    };
+    did_open_notebook(params, state).unwrap();
+}
+
+fn definition_uri(state: &WorldState, cell: usize, line: u32, character: u32) -> Option<Uri> {
+    let params = GotoDefinitionParams {
+        text_document_position_params: lsp_types::TextDocumentPositionParams {
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: cell_uri(cell),
+            },
+            position: lsp_types::Position::new(line, character),
+        },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+    };
+    match goto_definition(params, state).unwrap() {
+        None => None,
+        Some(GotoDefinitionResponse::Link(links)) => Some(links[0].target_uri.clone()),
+        Some(other) => panic!("unexpected response: {other:?}"),
+    }
+}
+
+#[test]
+fn test_notebook_did_open_resolves_across_cells() {
+    let mut state = WorldState::default();
+    open(&mut state, &[0, 1], &[
+        (0, "helper <- function(a) a * 2\n"),
+        (1, "helper(3)\n"),
+    ]);
+
+    assert_eq!(definition_uri(&state, 1, 0, 0), Some(cell_uri(0)));
+}
+
+#[test]
+fn test_notebook_did_open_skips_cells_without_text_documents() {
+    // Handle 1 has no synced text. Listed but unsynced cells must not prevent
+    // resolution between the surrounding R cells.
+    let mut state = WorldState::default();
+    open(&mut state, &[0, 1, 2], &[(0, "x <- 1\n"), (2, "x\n")]);
+
+    assert_eq!(definition_uri(&state, 2, 0, 0), Some(cell_uri(0)));
+}
+
+/// A state with the `penguins` package installed and only `library()` on the
+/// search path, so the package's exports count as defined only after a
+/// `library(penguins)` call.
+fn penguins_state(library: &tempfile::TempDir) -> WorldState {
+    let mut db = oak_db::OakDatabase::new();
+    db.set_library_paths(&[library.path().to_path_buf()]);
+
+    let mut state = WorldState::with_db(db);
+    state.set_session_scopes(vec![vec!["library".to_string()]]);
+    state
+}
+
+fn cell_file(state: &WorldState, handle: usize) -> oak_db::File {
+    let uri = cell_uri(handle);
+    state
+        .open_files
+        .values()
+        .find(|open_file| *open_file.wire_uri() == uri)
+        .expect("cell is open")
+        .file()
+}
+
+fn cell_diagnostic_messages(state: &WorldState, handle: usize) -> Vec<String> {
+    let file = cell_file(state, handle);
+    generate_diagnostics(
+        state.db(),
+        file,
+        &cell_uri(handle),
+        &state.config.diagnostics,
+        state.config.position_encoding,
+        state.session_scopes(),
+        false,
+    )
+    .into_iter()
+    .map(|diagnostic| diagnostic.message)
+    .collect()
+}
+
+/// Notebook cells use the workspace environment rather than the default.
+/// While that environment is unresolved or failed, undefined-symbol diagnostics
+/// are suppressed but syntax errors are reported. Only the first cell reports
+/// the environment failure.
+#[test]
+fn test_notebook_cells_use_workspace_environment_and_report_failure_once() {
+    let workspace = tempfile::tempdir().unwrap();
+    let mut state = WorldState::with_db(oak_db::OakDatabase::new());
+    set_workspace_paths(&mut state, &[workspace.path().to_path_buf()]);
+    state.db_mut().reconcile_environments();
+
+    let notebook = url::Url::from_file_path(workspace.path().join("analysis.ipynb")).unwrap();
+    open_at(&mut state, notebook.as_str(), &[0, 1], &[
+        (0, "foo\n"),
+        (1, "bar\n1 }\n"),
+    ]);
+
+    // An unresolved environment suppresses undefined-symbol diagnostics without
+    // reporting a startup failure.
+    assert_eq!(cell_diagnostic_messages(&state, 0), Vec::<String>::new());
+    assert_eq!(cell_diagnostic_messages(&state, 1), vec!["Syntax error"]);
+
+    let environment = cell_file(&state, 0).environment(state.db());
+    assert_ne!(environment, state.db().default_environment());
+    state
+        .db_mut()
+        .record_environment_failure(environment, String::from("R exited with status 1"));
+
+    let first = cell_diagnostic_messages(&state, 0);
+    let [failure] = first.as_slice() else {
+        panic!("Expected one diagnostic, got {first:?}");
+    };
+    let prefix = format!("R startup failed in {}, ", workspace.path().display());
+    assert!(failure.starts_with(&prefix));
+
+    assert_eq!(cell_diagnostic_messages(&state, 1), vec!["Syntax error"]);
+}
+
+#[test]
+fn test_notebook_diagnostics_see_library_in_earlier_cell() {
+    let library = oak_package_metadata::tests::temp_palmerpenguin();
+    let mut state = penguins_state(&library);
+    open(&mut state, &[0, 1], &[
+        (0, "library(penguins)\n"),
+        (1, "path_to_file()\n"),
+    ]);
+
+    assert_eq!(cell_diagnostic_messages(&state, 1), Vec::<String>::new());
+}
+
+#[test]
+fn test_notebook_diagnostics_ignore_library_in_later_cell() {
+    let library = oak_package_metadata::tests::temp_palmerpenguin();
+    let mut state = penguins_state(&library);
+    open(&mut state, &[0, 1], &[
+        (0, "path_to_file()\n"),
+        (1, "library(penguins)\n"),
+    ]);
+
+    assert_eq!(cell_diagnostic_messages(&state, 0), vec![
+        "No symbol named 'path_to_file' in scope.".to_string()
+    ]);
+}
+
+fn write_package(library: &tempfile::TempDir, name: &str, description: &str, namespace: &str) {
+    let package = library.path().join(name);
+    fs::create_dir(&package).unwrap();
+    fs::write(package.join("DESCRIPTION"), description).unwrap();
+    fs::write(package.join("NAMESPACE"), namespace).unwrap();
+    oak_package_metadata::tests::mark_installed(&package);
+}
+
+#[test]
+fn test_notebook_diagnostics_see_depends_of_library_in_earlier_cell() {
+    let library = oak_package_metadata::tests::temp_palmerpenguin();
+    write_package(
+        &library,
+        "colony",
+        "Package: colony\nVersion: 1.0\nDepends: penguins\n",
+        "",
+    );
+    let mut state = penguins_state(&library);
+    open(&mut state, &[0, 1], &[
+        (0, "library(colony)\n"),
+        (1, "path_to_file()\n"),
+    ]);
+
+    assert_eq!(cell_diagnostic_messages(&state, 1), Vec::<String>::new());
+}
+
+#[test]
+fn test_notebook_diagnostics_see_tidyverse_members_in_earlier_cell() {
+    // `library(tidyverse)` attaches its members by name, so `tidyverse`
+    // itself does not need to be installed.
+    let library = tempfile::tempdir().unwrap();
+    write_package(
+        &library,
+        "dplyr",
+        "Package: dplyr\nVersion: 1.0\n",
+        "export(mutate)\n",
+    );
+    let mut state = penguins_state(&library);
+    open(&mut state, &[0, 1], &[
+        (0, "library(tidyverse)\n"),
+        (1, "mutate()\n"),
+    ]);
+
+    assert_eq!(cell_diagnostic_messages(&state, 1), Vec::<String>::new());
+}
+
+#[test]
+fn test_notebook_did_open_registers_cells_as_open_files() {
+    let mut state = WorldState::default();
+    open(&mut state, &[0], &[(0, "x <- 1\n")]);
+
+    assert_eq!(state.open_files.len(), 1);
+    assert_eq!(state.notebooks.len(), 1);
+}
+
+fn change(state: &mut WorldState, cells: NotebookDocumentCellChange) -> anyhow::Result<()> {
+    let params = DidChangeNotebookDocumentParams {
+        notebook_document: VersionedNotebookDocumentIdentifier {
+            version: 1,
+            uri: NOTEBOOK.parse().unwrap(),
+        },
+        change: NotebookDocumentChangeEvent {
+            metadata: None,
+            cells: Some(cells),
+        },
+    };
+    did_change_notebook(params, &mut TestHandlers, state)
+}
+
+fn splice(start: u32, delete_count: u32, inserted: &[(usize, &str)]) -> NotebookDocumentCellChange {
+    NotebookDocumentCellChange {
+        structure: Some(NotebookDocumentCellChangeStructure {
+            array: NotebookCellArrayChange {
+                start,
+                delete_count,
+                cells: Some(
+                    inserted
+                        .iter()
+                        .map(|&(handle, _)| code_cell(handle))
+                        .collect(),
+                ),
+            },
+            did_open: Some(
+                inserted
+                    .iter()
+                    .map(|&(handle, text)| cell_item(handle, text))
+                    .collect(),
+            ),
+            did_close: None,
+        }),
+        data: None,
+        text_content: None,
+    }
+}
+
+#[test]
+fn test_notebook_did_change_splice_inserts_cell() {
+    let mut state = WorldState::default();
+    open(&mut state, &[1], &[(1, "y\n")]);
+    assert_eq!(definition_uri(&state, 1, 0, 0), None);
+
+    change(&mut state, splice(0, 0, &[(5, "y <- 1\n")])).unwrap();
+
+    assert_eq!(definition_uri(&state, 1, 0, 0), Some(cell_uri(5)));
+}
+
+#[test]
+fn test_notebook_did_change_text_updates_resolution() {
+    let mut state = WorldState::default();
+    open(&mut state, &[0, 1], &[(0, "old <- 1\n"), (1, "old\n")]);
+    assert_eq!(definition_uri(&state, 1, 0, 0), Some(cell_uri(0)));
+
+    let edit = NotebookDocumentCellChange {
+        structure: None,
+        data: None,
+        text_content: Some(vec![NotebookDocumentChangeTextContent {
+            document: VersionedTextDocumentIdentifier {
+                uri: cell_uri(0),
+                version: 1,
+            },
+            changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "new <- 1\n".to_string(),
+            }],
+        }]),
+    };
+    change(&mut state, edit).unwrap();
+
+    assert_eq!(definition_uri(&state, 1, 0, 0), None);
+}
+
+#[test]
+fn test_notebook_did_change_out_of_range_splice_errors() {
+    let mut state = WorldState::default();
+    open(&mut state, &[0], &[(0, "x <- 1\n")]);
+
+    assert!(change(&mut state, splice(3, 1, &[])).is_err());
+}
+
+#[test]
+fn test_notebook_did_close_forgets_cell_order() {
+    // `did_close` publishes empty diagnostics through the auxiliary loop.
+    let _aux = init_aux_for_test();
+    let mut state = WorldState::default();
+    open(&mut state, &[0, 1], &[(0, "x <- 1\n"), (1, "x\n")]);
+
+    let params = DidCloseNotebookDocumentParams {
+        notebook_document: NotebookDocumentIdentifier {
+            uri: NOTEBOOK.parse().unwrap(),
+        },
+        cell_text_documents: vec![
+            TextDocumentIdentifier { uri: cell_uri(0) },
+            TextDocumentIdentifier { uri: cell_uri(1) },
+        ],
+    };
+    did_close_notebook(params, &mut state).unwrap();
+
+    assert!(state.notebooks.is_empty());
+    assert!(state.open_files.is_empty());
+    assert!(state.db().open_notebooks().notebooks(state.db()).is_empty());
+}
+
+#[test]
+fn test_notebook_did_change_ignores_unknown_notebook() {
+    // The client sends cell edits to every server whose selector matches, even
+    // one whose `filterCells` dropped the notebook. That server never opened it.
+    let mut state = WorldState::default();
+
+    let edit = NotebookDocumentCellChange {
+        structure: None,
+        data: None,
+        text_content: Some(vec![NotebookDocumentChangeTextContent {
+            document: VersionedTextDocumentIdentifier {
+                uri: cell_uri(0),
+                version: 1,
+            },
+            changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "x <- 1\n".to_string(),
+            }],
+        }]),
+    };
+    change(&mut state, edit).unwrap();
+
+    assert!(state.open_files.is_empty());
+    assert!(state.notebooks.is_empty());
+}
+
+#[test]
+fn test_notebook_did_close_closes_cells_the_client_omits() {
+    // Deleting the last R cell makes the client close the notebook. It lists
+    // only the cells still in the notebook, so the deleted cell is missing.
+    let _aux = init_aux_for_test();
+    let mut state = WorldState::default();
+    open(&mut state, &[0], &[(0, "x <- 1\n")]);
+
+    let params = DidCloseNotebookDocumentParams {
+        notebook_document: NotebookDocumentIdentifier {
+            uri: NOTEBOOK.parse().unwrap(),
+        },
+        cell_text_documents: vec![],
+    };
+    did_close_notebook(params, &mut state).unwrap();
+
+    assert!(state.open_files.is_empty());
+}

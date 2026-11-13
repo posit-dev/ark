@@ -5,13 +5,14 @@
 //
 //
 
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::NodeType;
+use legacy_ide::treesitter::NodeTypeExt;
+
 use crate::lsp::completions::request::SubsetOperator;
 use crate::lsp::completions::request::SubsetRequest;
 use crate::lsp::completions::sources::common::subset::is_within_subset_delimiters;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::NodeType;
-use crate::treesitter::NodeTypeExt;
 
 /// Checks for `[` and `[[` completions
 ///

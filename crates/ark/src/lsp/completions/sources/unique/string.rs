@@ -11,6 +11,8 @@ use aether_path::FilePath;
 use anyhow::anyhow;
 use anyhow::Context;
 use biome_line_index::LineCol;
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::node_find_string;
 use oak_core::string::decode_string_prefix;
 use oak_db::Db;
 use oak_db::File;
@@ -25,8 +27,6 @@ use crate::lsp::completions::sources::unique::subset::node_find_object_for_strin
 use crate::lsp::completions::sources::unique::Recognized;
 use crate::lsp::completions::sources::unique::UniqueCompletions;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::node_find_string;
 
 /// Recognizes a cursor inside a string, suppressing later sources even when
 /// there are no items.
@@ -145,17 +145,20 @@ mod tests {
     use harp::exec::RFunction;
     use harp::exec::RFunctionExt;
     use harp::utils::r_is_string;
+    use legacy_ide::fixtures::point_from_cursor;
+    use legacy_ide::treesitter::node_find_string;
+    use legacy_ide::treesitter::NodeTypeExt;
     use oak_core::string::decode_string;
     use oak_db::DbInputs;
     use oak_db::File;
     use oak_db::Root;
     use oak_db::RootKind;
+    use oak_lsp::state::WorldState;
     use oak_scan::DbScan;
     use salsa::Setter;
     use tower_lsp_server::ls_types::CompletionItemKind;
     use tree_sitter::Point;
 
-    use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::finish;
     use crate::lsp::completions::request::RCompletionReplies;
@@ -167,11 +170,8 @@ mod tests {
     use crate::lsp::completions::static_completions;
     use crate::lsp::document_context::test_document_context;
     use crate::lsp::document_context::TestDocument;
-    use crate::lsp::state::WorldState;
     use crate::panic;
     use crate::r_task;
-    use crate::treesitter::node_find_string;
-    use crate::treesitter::NodeTypeExt;
 
     fn recognize_in(
         doc: &TestDocument,

@@ -5,16 +5,16 @@
 //
 //
 
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::ExtractOperatorType;
+use legacy_ide::treesitter::NodeType;
+use legacy_ide::treesitter::NodeTypeExt;
 use tree_sitter::Node;
 
 use crate::lsp::completions::request::ExtractOperator;
 use crate::lsp::completions::request::UniqueRequest;
 use crate::lsp::completions::sources::unique::Recognized;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::ExtractOperatorType;
-use crate::treesitter::NodeType;
-use crate::treesitter::NodeTypeExt;
 
 pub(super) fn recognize_dollar(context: &DocumentContext) -> anyhow::Result<Option<Recognized>> {
     recognize_extractor(context, ExtractOperator::Dollar)
@@ -84,8 +84,9 @@ fn locate_extractor_node(node: Node, node_type: NodeType) -> Option<Node> {
 
 #[cfg(test)]
 mod tests {
-    use crate::fixtures::point_and_offset_from_cursor;
-    use crate::fixtures::point_from_cursor;
+    use legacy_ide::fixtures::point_and_offset_from_cursor;
+    use legacy_ide::fixtures::point_from_cursor;
+
     use crate::lsp::completions::request::ExtractOperator;
     use crate::lsp::completions::request::UniqueRequest;
     use crate::lsp::completions::sources::unique::extractor::recognize_at;

@@ -1,0 +1,982 @@
+//
+// state_handlers.rs
+//
+// Copyright (C) 2024 Posit Software, PBC. All rights reserved.
+//
+//
+
+use std::collections::HashSet;
+use std::path::PathBuf;
+
+use aether_path::AbsPathBuf;
+use aether_path::FilePath;
+use anyhow::anyhow;
+use oak_db::Db;
+use oak_db::File;
+use oak_scan::DbScan;
+use stdext::result::ResultExt;
+use tower_lsp_server::ls_types as lsp_types;
+use tower_lsp_server::ls_types::CompletionOptions;
+use tower_lsp_server::ls_types::CompletionOptionsCompletionItem;
+use tower_lsp_server::ls_types::DidChangeConfigurationParams;
+use tower_lsp_server::ls_types::DidChangeNotebookDocumentParams;
+use tower_lsp_server::ls_types::DidChangeTextDocumentParams;
+use tower_lsp_server::ls_types::DidChangeWatchedFilesParams;
+use tower_lsp_server::ls_types::DidChangeWatchedFilesRegistrationOptions;
+use tower_lsp_server::ls_types::DidChangeWorkspaceFoldersParams;
+use tower_lsp_server::ls_types::DidCloseNotebookDocumentParams;
+use tower_lsp_server::ls_types::DidCloseTextDocumentParams;
+use tower_lsp_server::ls_types::DidOpenNotebookDocumentParams;
+use tower_lsp_server::ls_types::DidOpenTextDocumentParams;
+use tower_lsp_server::ls_types::DocumentOnTypeFormattingOptions;
+use tower_lsp_server::ls_types::ExecuteCommandOptions;
+use tower_lsp_server::ls_types::FileSystemWatcher;
+use tower_lsp_server::ls_types::FoldingRangeProviderCapability;
+use tower_lsp_server::ls_types::FormattingOptions;
+use tower_lsp_server::ls_types::GlobPattern;
+use tower_lsp_server::ls_types::HoverProviderCapability;
+use tower_lsp_server::ls_types::ImplementationProviderCapability;
+use tower_lsp_server::ls_types::InitializeParams;
+use tower_lsp_server::ls_types::InitializeResult;
+use tower_lsp_server::ls_types::Notebook;
+use tower_lsp_server::ls_types::NotebookCellArrayChange;
+use tower_lsp_server::ls_types::NotebookCellSelector;
+use tower_lsp_server::ls_types::NotebookDocumentSyncOptions;
+use tower_lsp_server::ls_types::NotebookSelector;
+use tower_lsp_server::ls_types::OneOf;
+use tower_lsp_server::ls_types::Registration;
+use tower_lsp_server::ls_types::RelativePattern;
+use tower_lsp_server::ls_types::RenameOptions;
+use tower_lsp_server::ls_types::SelectionRangeProviderCapability;
+use tower_lsp_server::ls_types::ServerCapabilities;
+use tower_lsp_server::ls_types::SignatureHelpOptions;
+use tower_lsp_server::ls_types::TextDocumentIdentifier;
+use tower_lsp_server::ls_types::TextDocumentSyncCapability;
+use tower_lsp_server::ls_types::TextDocumentSyncKind;
+use tower_lsp_server::ls_types::Unregistration;
+use tower_lsp_server::ls_types::Uri;
+use tower_lsp_server::ls_types::WorkDoneProgressOptions;
+use tower_lsp_server::ls_types::WorkspaceFoldersServerCapabilities;
+use tower_lsp_server::ls_types::WorkspaceServerCapabilities;
+
+use crate::backend::LspResult;
+use crate::capabilities::Capabilities;
+use crate::config::combine_diagnostics_enable_settings;
+use crate::config::indent_style_from_lsp;
+use crate::config::initialization_options;
+use crate::config::LspSettings;
+use crate::config::DOCUMENT_SETTINGS;
+use crate::config::GLOBAL_SETTINGS;
+use crate::config::LEGACY_R_DIAGNOSTICS_ENABLE_SETTING;
+use crate::config::OAK_SOURCE_FETCHING_ENABLED_ENV_VAR;
+use crate::content_changes::apply_content_changes;
+use crate::handlers::Handlers;
+use crate::main_loop::dispatch_scan_requests;
+use crate::main_loop::DiagnosticsPublication;
+use crate::main_loop::Event;
+use crate::main_loop::LspState;
+use crate::main_loop::TokioUnboundedSender;
+use crate::sources::source_fetching_disabled_by_ci;
+use crate::state::open_file_wire_uris;
+use crate::state::WorldState;
+use crate::traits::url::UriExt;
+use crate::traits::url::UrlExt;
+
+const DID_CHANGE_WATCHED_FILES: &str = "workspace/didChangeWatchedFiles";
+
+// Handlers that mutate the world state
+
+// Handlers taking exclusive references to global state
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn initialize<H: Handlers>(
+    params: InitializeParams,
+    handlers: &H,
+    lsp_state: &mut LspState,
+    state: &mut WorldState,
+    events_tx: &TokioUnboundedSender<Event<H>>,
+) -> LspResult<InitializeResult> {
+    let workspace_paths = effective_workspace_paths(&params);
+    lsp_state.capabilities = Capabilities::new(params.capabilities);
+
+    // Retain `initializationOptions` so a missing setting in a later pull falls
+    // through to it.
+    if let Some(options) = &params.initialization_options {
+        state.initialization_options = initialization_options(options);
+        state.resolve_config(LspSettings::default());
+    }
+
+    state.workspace.folders = workspace_paths;
+
+    // Files outside every workspace root depend on the default. Resolve it
+    // first so it does not queue behind workspace R startups.
+    lsp_state.environment_scheduler.request_default(
+        state.db(),
+        &lsp_state.environment_pool,
+        events_tx,
+    );
+    dispatch_workspace_scan(state, lsp_state, events_tx);
+
+    let result = InitializeResult {
+        server_info: Some(handlers.server_info()),
+        capabilities: handlers.capabilities(ServerCapabilities {
+            // Currently hard-coded to UTF-16, but we might want to allow UTF-8 frontends
+            // once/if Ark becomes an independent LSP
+            position_encoding: Some(lsp_types::PositionEncodingKind::UTF16),
+            text_document_sync: Some(TextDocumentSyncCapability::Kind(
+                TextDocumentSyncKind::INCREMENTAL,
+            )),
+            // Notebook sync supplies cell order and replaces `textDocument/did*`
+            // notifications for selected R cells. Positron also exposes Quarto
+            // and R Markdown documents as `quarto-cells` notebooks.
+            notebook_document_sync: Some(OneOf::Left(NotebookDocumentSyncOptions {
+                notebook_selector: vec![r_cells_of("jupyter-notebook"), r_cells_of("quarto-cells")],
+                save: None,
+            })),
+            selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
+            hover_provider: Some(HoverProviderCapability::from(true)),
+            completion_provider: Some(CompletionOptions {
+                resolve_provider: Some(true),
+                trigger_characters: Some(vec!["$".to_string(), "@".to_string(), ":".to_string()]),
+                work_done_progress_options: Default::default(),
+                all_commit_characters: None,
+                completion_item: Some(CompletionOptionsCompletionItem {
+                    label_details_support: Some(true),
+                }),
+            }),
+            signature_help_provider: Some(SignatureHelpOptions {
+                trigger_characters: Some(vec!["(".to_string(), ",".to_string(), "=".to_string()]),
+                retrigger_characters: None,
+                work_done_progress_options: WorkDoneProgressOptions {
+                    work_done_progress: None,
+                },
+            }),
+            definition_provider: Some(OneOf::Left(true)),
+            type_definition_provider: None,
+            implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
+            references_provider: Some(OneOf::Left(true)),
+            rename_provider: Some(OneOf::Right(RenameOptions {
+                prepare_provider: Some(true),
+                work_done_progress_options: WorkDoneProgressOptions {
+                    work_done_progress: None,
+                },
+            })),
+            document_symbol_provider: Some(OneOf::Left(true)),
+            folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+            workspace_symbol_provider: Some(OneOf::Left(true)),
+            execute_command_provider: Some(ExecuteCommandOptions {
+                commands: vec![],
+                work_done_progress_options: Default::default(),
+            }),
+            code_action_provider: lsp_state.capabilities.code_action_provider_capability(),
+            workspace: Some(WorkspaceServerCapabilities {
+                workspace_folders: Some(WorkspaceFoldersServerCapabilities {
+                    supported: Some(true),
+                    change_notifications: Some(OneOf::Left(true)),
+                }),
+                // We don't register `file_operations`. Disk changes reach us
+                // through `didChangeWatchedFiles` from every source (editor, git,
+                // terminal), so it's the single channel that keeps the index
+                // current. A rename arrives there as delete + create.
+                file_operations: None,
+            }),
+            document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
+                first_trigger_character: String::from("\n"),
+                more_trigger_character: None,
+            }),
+            ..ServerCapabilities::default()
+        }),
+        offset_encoding: None,
+    };
+
+    Ok(result)
+}
+
+fn r_cells_of(notebook_type: &str) -> NotebookSelector {
+    NotebookSelector::ByNotebook {
+        notebook: Notebook::String(notebook_type.to_string()),
+        cells: Some(vec![NotebookCellSelector {
+            language: String::from("r"),
+        }]),
+    }
+}
+
+/// Resolve the effective workspace folders from `InitializeParams`.
+///
+/// We read only `workspaceFolders`, the modern field , without falling back to
+/// the deprecated `rootUri`. An empty or absent list means single-file mode.
+/// A folder that isn't a `file:` URI, or whose path we can't make sense of, is
+/// silently dropped: it never backs a directory we could scan.
+pub(super) fn effective_workspace_paths(params: &InitializeParams) -> Vec<AbsPathBuf> {
+    params
+        .workspace_folders
+        .iter()
+        .flatten()
+        .filter_map(|folder| folder.uri.to_url().log_err())
+        .filter_map(|url| AbsPathBuf::from_url(&url))
+        .collect()
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) async fn handle_initialized<H: Handlers>(
+    client: &tower_lsp_server::Client,
+    lsp_state: &mut LspState,
+    state: &mut WorldState,
+    events_tx: &TokioUnboundedSender<Event<H>>,
+) {
+    // Register capabilities to the client
+    let mut regs: Vec<Registration> = vec![];
+
+    // The contents of editor-owned R files come from `textDocument/did*`. Their
+    // disk events still register files that exist on disk, but never remove
+    // them while open. `DESCRIPTION` and environment sentinels trigger rescans
+    // even when open in the editor.
+    let watchers = vec![
+        FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/*.{R,r}".to_string()),
+            kind: None,
+        },
+        FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/DESCRIPTION".to_string()),
+            kind: None,
+        },
+        FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/{.Rprofile,.Renviron}".to_string()),
+            kind: None,
+        },
+    ];
+    regs.push(Registration {
+        id: uuid::Uuid::new_v4().to_string(),
+        method: String::from(DID_CHANGE_WATCHED_FILES),
+        register_options: Some(
+            serde_json::to_value(DidChangeWatchedFilesRegistrationOptions { watchers }).unwrap(),
+        ),
+    });
+
+    if lsp_state.capabilities.relative_pattern_support() {
+        regs.extend(lsp_state.library_watchers.register(state.db()));
+    } else {
+        crate::log_info!(
+            "Installed packages are not watched: the client doesn't support relative watcher patterns"
+        );
+    }
+
+    if lsp_state
+        .capabilities
+        .dynamic_registration_for_did_change_configuration()
+    {
+        // The `didChangeConfiguration` request instructs the client to send
+        // a notification when the tracked settings have changed.
+        //
+        // Note that some settings, such as editor indentation properties, may be
+        // changed by extensions or by the user without changing the actual
+        // underlying setting. Unfortunately we don't receive updates in that case.
+
+        for setting in GLOBAL_SETTINGS {
+            regs.push(Registration {
+                id: uuid::Uuid::new_v4().to_string(),
+                method: String::from("workspace/didChangeConfiguration"),
+                register_options: Some(serde_json::json!({ "section": setting.key })),
+            });
+        }
+        regs.push(Registration {
+            id: uuid::Uuid::new_v4().to_string(),
+            method: String::from("workspace/didChangeConfiguration"),
+            register_options: Some(
+                serde_json::json!({ "section": LEGACY_R_DIAGNOSTICS_ENABLE_SETTING }),
+            ),
+        });
+        for setting in DOCUMENT_SETTINGS {
+            regs.push(Registration {
+                id: uuid::Uuid::new_v4().to_string(),
+                method: String::from("workspace/didChangeConfiguration"),
+                register_options: Some(serde_json::json!({ "section": setting.key })),
+            });
+        }
+    }
+
+    client.register_capability(regs).await.log_err();
+    lsp_state.library_watchers.activate();
+
+    update_config(
+        open_file_wire_uris(state),
+        client,
+        &lsp_state.capabilities,
+        state,
+    )
+    .await
+    .log_err();
+
+    // Release the startup gate after attempting to load client configuration.
+    // Packages seen so far will be queued now if the scheduler is activated.
+    lsp_state.source_scheduler.config_arrived();
+
+    // Say once why nothing will be fetched, if that's the case.
+    if !state.config.oak.source_fetching_enabled {
+        crate::log_info!("Source fetching is disabled by `oak.sourceFetching.enabled`");
+    } else if source_fetching_disabled_by_ci() {
+        crate::log_info!(
+            "Source fetching is disabled on CI. Set {OAK_SOURCE_FETCHING_ENABLED_ENV_VAR}=1 to enable it."
+        );
+    } else if !lsp_state.source_scheduler.has_handler() {
+        // The specific reason (no R executable, or a handler that failed to
+        // build) was logged to the kernel log.
+        crate::log_info!("Source fetching is unavailable, no source handler was built");
+    }
+
+    lsp_state.source_scheduler.schedule(
+        state.db(),
+        &state.config.oak,
+        &lsp_state.source_pool,
+        events_tx,
+    );
+}
+
+/// Tracks registration requests for [`library_watchers()`] as
+/// [`LibraryRoots`](oak_db::LibraryRoots) changes. Replacement unregisters the
+/// stored id before requesting a new registration. Client failures are logged,
+/// not retried until the library paths change again.
+#[derive(Debug, Default)]
+pub(crate) struct LibraryWatcherRegistration {
+    /// Whether [`handle_initialized()`] has attempted initial registration.
+    /// Earlier library changes are included in that initial request rather
+    /// than sent before the client's `initialized` notification.
+    active: bool,
+
+    /// Id of the last registration built, even if the client rejected it.
+    /// `None` until one is built, after it is taken for unregistration, or when
+    /// there are no watchers or serialization fails.
+    id: Option<String>,
+
+    /// Paths used to build the last registration, in `LibraryRoots` order.
+    /// Updated even when no request is sent or the client rejects it.
+    paths: Vec<FilePath>,
+}
+
+impl LibraryWatcherRegistration {
+    /// Record the current library paths before building a registration, so
+    /// failures do not cause a retry on every event. Return `None` when there
+    /// are no watchers or serialization fails.
+    fn register(&mut self, db: &dyn Db) -> Option<Registration> {
+        let roots = db.library_roots().roots(db);
+        self.paths = roots.iter().map(|root| root.path(db).clone()).collect();
+        self.id = None;
+
+        let watchers = library_watchers(db);
+        if watchers.is_empty() {
+            return None;
+        }
+        let options = serde_json::to_value(DidChangeWatchedFilesRegistrationOptions { watchers })
+            .log_err()?;
+
+        let id = uuid::Uuid::new_v4().to_string();
+        self.id = Some(id.clone());
+        Some(Registration {
+            id,
+            method: String::from(DID_CHANGE_WATCHED_FILES),
+            register_options: Some(options),
+        })
+    }
+
+    fn unregister(&mut self) -> Option<Unregistration> {
+        let id = self.id.take()?;
+        Some(Unregistration {
+            id,
+            method: String::from(DID_CHANGE_WATCHED_FILES),
+        })
+    }
+
+    fn activate(&mut self) {
+        self.active = true;
+    }
+
+    fn is_current(&self, db: &dyn Db) -> bool {
+        let roots = db.library_roots().roots(db);
+        self.paths.iter().eq(roots.iter().map(|root| root.path(db)))
+    }
+}
+
+/// Replace library watchers when the ordered library paths change. Wait for
+/// [`handle_initialized()`] to attempt initial registration, and require
+/// relative pattern support to watch libraries outside the workspace.
+///
+/// Failed client requests are logged, but the new paths remain recorded. Only
+/// another path change triggers a replacement attempt.
+pub(crate) async fn update_library_watchers(
+    client: &tower_lsp_server::Client,
+    lsp_state: &mut LspState,
+    state: &WorldState,
+) {
+    if !lsp_state.capabilities.relative_pattern_support() {
+        return;
+    }
+    let registration = &mut lsp_state.library_watchers;
+    if !registration.active || registration.is_current(state.db()) {
+        return;
+    }
+
+    // Register before unregistering, so libraries in both lists stay watched
+    // throughout. Events in the overlap arrive twice, and rescans coalesce them.
+    let old_registration = registration.unregister();
+    if let Some(new_registration) = registration.register(state.db()) {
+        client
+            .register_capability(vec![new_registration])
+            .await
+            .log_err();
+    }
+    if let Some(unregistration) = old_registration {
+        client
+            .unregister_capability(vec![unregistration])
+            .await
+            .log_err();
+    }
+}
+
+/// Watch direct library entries, which installs and removals replace, create,
+/// or delete, including renv's package links.
+///
+/// `*` keeps watching flat in VS Code and Positron. A pattern containing `/` or
+/// `**`, such as `*/DESCRIPTION`, would require recursive watching of package
+/// contents. This deliberately misses changes inside an existing package directory.
+///
+/// Keep the stored root path rather than resolving symlinks. These clients report
+/// events under the requested base, and
+/// [`oak_scan::ScanScheduler::apply_watcher_events()`] matches that stored path.
+pub(super) fn library_watchers(db: &dyn Db) -> Vec<FileSystemWatcher> {
+    db.library_roots()
+        .roots(db)
+        .iter()
+        .filter_map(|root| root.path(db).to_url().to_uri().log_err())
+        .map(|base_uri| FileSystemWatcher {
+            glob_pattern: GlobPattern::Relative(RelativePattern {
+                base_uri: OneOf::Right(base_uri),
+                pattern: String::from("*"),
+            }),
+            kind: None,
+        })
+        .collect()
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_open(
+    params: DidOpenTextDocumentParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let contents = params.text_document.text;
+    let wire_uri = params.text_document.uri;
+    let path = wire_uri.to_document_path()?;
+    let version = params.text_document.version;
+
+    let file = state.db_mut().upsert_editor(path.clone(), contents);
+    state.insert_open_file(wire_uri, path, file, Some(version));
+
+    // NOTE: Do we need to call `update_config()` here?
+    // update_config(vec![uri]).await;
+
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_change<H: Handlers>(
+    params: DidChangeTextDocumentParams,
+    handlers: &mut H,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let path = params.text_document.uri.to_document_path()?;
+    let new_version = params.text_document.version;
+    let encoding = state.config.position_encoding;
+
+    let file = state.open_file(&path)?;
+
+    // Reject out-of-order change notifications. The spec allows version numbers
+    // to skip values but requires them to increase monotonically. A lower
+    // version means we've lost sync and can't keep our state consistent.
+    // Currently panicking, but in principle we should shut the LSP down in an
+    // orderly fashion.
+    if let Some(old_version) = file.version() {
+        if new_version < old_version {
+            panic!(
+                "out-of-sync change notification: currently at {old_version}, got {new_version}"
+            );
+        }
+    }
+
+    // Fold the edits into the new buffer text and push it into `oak`
+    let new_contents = apply_content_changes(
+        file.source_text(state.db()).as_str(),
+        &params.content_changes,
+        encoding,
+    );
+    state.db_mut().upsert_editor(path.clone(), new_contents);
+
+    state.open_file_mut(&path)?.set_version(Some(new_version));
+
+    handlers.did_change_document(&path);
+
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_close(
+    params: DidCloseTextDocumentParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let wire_uri = params.text_document.uri;
+    let path = wire_uri.to_document_path()?;
+
+    // Publish empty set of diagnostics to clear them
+    crate::publish_diagnostics(DiagnosticsPublication {
+        path: path.clone(),
+        uri: wire_uri.clone(),
+        diagnostics: Vec::new(),
+        version: None,
+    });
+
+    state.open_files.remove(&path).ok_or(anyhow!(
+        "Failed to remove document for URI: {}",
+        wire_uri.as_str()
+    ))?;
+
+    state.db_mut().close_editor(&path);
+
+    crate::log_info!(
+        "did_close(): closed document with URI: '{}'.",
+        wire_uri.as_str()
+    );
+
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_open_notebook(
+    params: DidOpenNotebookDocumentParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    for text_document in params.cell_text_documents {
+        did_open(DidOpenTextDocumentParams { text_document }, state)?;
+    }
+
+    let path = params.notebook_document.uri.to_document_path()?;
+    let cells = params
+        .notebook_document
+        .cells
+        .iter()
+        .map(|cell| cell.document.to_document_path())
+        .collect::<anyhow::Result<Vec<FilePath>>>()?;
+    state.notebooks.insert(path.clone(), cells);
+
+    push_notebook_cells(state, &path)
+}
+
+/// Excludes cells without synced text, such as Markdown cells, because only
+/// entries in `open_files` have a [`File`] to register with oak.
+fn push_notebook_cells(state: &mut WorldState, path: &FilePath) -> anyhow::Result<()> {
+    let Some(cell_paths) = state.notebooks.get(path) else {
+        return Err(anyhow!("Unknown notebook {path}"));
+    };
+    let cells: Vec<File> = cell_paths
+        .iter()
+        .filter_map(|cell| state.open_files.get(cell))
+        .map(|open_file| open_file.file())
+        .collect();
+
+    state.db_mut().set_notebook_cells(path.clone(), cells);
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_change_notebook<H: Handlers>(
+    params: DidChangeNotebookDocumentParams,
+    handlers: &mut H,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let path = params.notebook_document.uri.to_document_path()?;
+
+    // Ignore unopened notebooks because the client sends edits to every
+    // matching server even when `filterCells()` excluded the notebook on open.
+    if !state.notebooks.contains_key(&path) {
+        log::trace!("Ignoring change to notebook {path}, which is not open");
+        return Ok(());
+    }
+
+    let Some(cells) = params.change.cells else {
+        return Ok(());
+    };
+
+    if let Some(structure) = cells.structure {
+        for text_document in structure.did_open.into_iter().flatten() {
+            did_open(DidOpenTextDocumentParams { text_document }, state)?;
+        }
+        apply_cell_splice(state, &path, &structure.array)?;
+        for text_document in structure.did_close.into_iter().flatten() {
+            did_close(DidCloseTextDocumentParams { text_document }, state)?;
+        }
+
+        // Cell membership and the set of synced buffers only change here, so
+        // text-only edits skip the oak update entirely.
+        push_notebook_cells(state, &path)?;
+    }
+
+    for content in cells.text_content.into_iter().flatten() {
+        let params = DidChangeTextDocumentParams {
+            text_document: content.document,
+            content_changes: content.changes,
+        };
+        did_change(params, handlers, state)?;
+    }
+
+    Ok(())
+}
+
+fn apply_cell_splice(
+    state: &mut WorldState,
+    path: &FilePath,
+    array: &NotebookCellArrayChange,
+) -> anyhow::Result<()> {
+    let inserted = array
+        .cells
+        .iter()
+        .flatten()
+        .map(|cell| cell.document.to_document_path())
+        .collect::<anyhow::Result<Vec<FilePath>>>()?;
+
+    let Some(cells) = state.notebooks.get_mut(path) else {
+        return Err(anyhow!("Unknown notebook {path}"));
+    };
+
+    let start = array.start as usize;
+    let end = start + array.delete_count as usize;
+    if end > cells.len() {
+        return Err(anyhow!(
+            "Cell splice {start}..{end} is out of range for notebook {path} with {len} cells",
+            len = cells.len()
+        ));
+    }
+
+    cells.splice(start..end, inserted);
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_close_notebook(
+    params: DidCloseNotebookDocumentParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let path = params.notebook_document.uri.to_document_path()?;
+
+    // Forget the order before closing the cells, so no query sees a notebook
+    // that lists closed cells.
+    let known_cells = state.notebooks.remove(&path).unwrap_or_default();
+    state.db_mut().close_notebook(&path);
+
+    // Include remembered cells because deleting the last R cell closes the
+    // notebook, but the client's close notification omits that deleted cell.
+    // Checking `open_files` below prevents closing a cell twice.
+    let mut cells = params
+        .cell_text_documents
+        .iter()
+        .map(|text_document| text_document.uri.to_document_path())
+        .collect::<anyhow::Result<Vec<FilePath>>>()?;
+    cells.extend(known_cells);
+
+    for cell in cells {
+        let Some(open_file) = state.open_files.get(&cell) else {
+            continue;
+        };
+        let text_document = TextDocumentIdentifier {
+            uri: open_file.wire_uri().clone(),
+        };
+        did_close(DidCloseTextDocumentParams { text_document }, state)?;
+    }
+
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_change_watched_files<H: Handlers>(
+    params: DidChangeWatchedFilesParams,
+    state: &mut WorldState,
+    lsp_state: &mut LspState,
+    events_tx: &TokioUnboundedSender<Event<H>>,
+) -> anyhow::Result<()> {
+    // The change type is dropped: the scheduler reconciles each path against
+    // the disk when it applies.
+    let paths: Vec<FilePath> = params
+        .changes
+        .iter()
+        .filter_map(|change| change.uri.to_document_path().log_err())
+        .collect();
+
+    // Request resolution from watcher paths, not scan completions.
+    // `apply_watcher_events()` can skip scans when a sentinel edit leaves
+    // environment discovery unchanged.
+    lsp_state.environment_scheduler.rerun_for_sentinels(
+        state.db(),
+        &paths,
+        &lsp_state.environment_pool,
+        events_tx,
+    );
+
+    let requests = lsp_state
+        .oak_scheduler
+        .apply_watcher_events(state.db_mut(), paths);
+    dispatch_scan_requests(&lsp_state.scan_pool, events_tx, requests);
+
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_change_workspace_folders<H: Handlers>(
+    params: DidChangeWorkspaceFoldersParams,
+    state: &mut WorldState,
+    lsp_state: &mut LspState,
+    events_tx: &TokioUnboundedSender<Event<H>>,
+) -> anyhow::Result<()> {
+    let removed: HashSet<AbsPathBuf> = params
+        .event
+        .removed
+        .iter()
+        .filter_map(|f| f.uri.to_url().log_err())
+        .filter_map(|url| AbsPathBuf::from_url(&url))
+        .collect();
+    state
+        .workspace
+        .folders
+        .retain(|path| !removed.contains(path));
+
+    for folder in params.event.added {
+        let Some(url) = folder.uri.to_url().log_err() else {
+            continue;
+        };
+        let Some(path) = AbsPathBuf::from_url(&url) else {
+            continue;
+        };
+        if !state.workspace.folders.contains(&path) {
+            state.workspace.folders.push(path);
+        }
+    }
+
+    dispatch_workspace_scan(state, lsp_state, events_tx);
+    Ok(())
+}
+
+/// Update scan roots from `state.workspace.folders`. Dispatch scans for files
+/// entering or leaving workspace scope, and resolve the environments of new
+/// roots.
+fn dispatch_workspace_scan<H: Handlers>(
+    state: &mut WorldState,
+    lsp_state: &mut LspState,
+    events_tx: &TokioUnboundedSender<Event<H>>,
+) {
+    let folders = to_std_paths(&state.workspace.folders);
+    let requests = lsp_state
+        .oak_scheduler
+        .set_workspace_paths(state.db_mut(), &folders);
+    dispatch_scan_requests(&lsp_state.scan_pool, events_tx, requests);
+
+    lsp_state.environment_scheduler.reconcile(
+        state.db_mut(),
+        &lsp_state.environment_pool,
+        events_tx,
+    );
+}
+
+/// Convert workspace folders to the `std::path::PathBuf`s the scan scheduler
+/// takes.
+fn to_std_paths(paths: &[AbsPathBuf]) -> Vec<PathBuf> {
+    paths
+        .iter()
+        .map(|path| path.as_path().as_std_path().to_path_buf())
+        .collect()
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) async fn did_change_configuration(
+    _params: DidChangeConfigurationParams,
+    client: &tower_lsp_server::Client,
+    capabilities: &Capabilities,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    // The notification params sometimes contain data but it seems in practice
+    // we should just ignore it. Instead we need to pull the settings again for
+    // all URI of interest.
+
+    // Note that the client sends notifications for settings for which we have
+    // declared interest in. This registration is done in `handle_initialized()`.
+
+    let was_enabled = state.config.oak.source_fetching_enabled;
+
+    let result = update_config(open_file_wire_uris(state), client, capabilities, state).await;
+
+    // Report only changes after startup. `handle_initialized()` reports the initial state.
+    if state.config.oak.source_fetching_enabled != was_enabled {
+        let state_name = if state.config.oak.source_fetching_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        };
+        crate::log_info!("Source fetching {state_name} by `oak.sourceFetching.enabled`");
+    }
+
+    result
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_change_formatting_options(
+    path: &FilePath,
+    opts: &FormattingOptions,
+    state: &mut WorldState,
+) {
+    let Ok(doc) = state.open_file_mut(path) else {
+        return;
+    };
+
+    // The information provided in formatting requests is more up-to-date
+    // than the user settings because it also includes changes made to the
+    // configuration of particular editors. However the former is less rich
+    // than the latter: it does not allow the tab size to differ from the
+    // indent size, as in the R core sources. So we just ignore the less
+    // rich updates in this case.
+    if doc.config().indent.indent_size != doc.config().indent.tab_width {
+        return;
+    }
+
+    let indent = &mut doc.config_mut().indent;
+    indent.indent_size = opts.tab_size as usize;
+    indent.tab_width = opts.tab_size as usize;
+    indent.indent_style = indent_style_from_lsp(opts.insert_spaces);
+
+    // TODO:
+    // `trim_trailing_whitespace`
+    // `trim_final_newlines`
+    // `insert_final_newline`
+}
+
+async fn update_config(
+    open_files: Vec<(FilePath, Uri)>,
+    client: &tower_lsp_server::Client,
+    capabilities: &Capabilities,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    // Keep track of existing config to detect whether it was changed
+    let diagnostics_config = state.config.diagnostics.clone();
+    let oak_config = state.config.oak.clone();
+
+    let pulled = if capabilities.workspace_configuration() {
+        pull_config(open_files, client, state).await
+    } else {
+        crate::log_info!(
+            "Client can't answer `workspace/configuration`, keeping the settings from `initializationOptions`"
+        );
+        Ok(LspSettings::default())
+    };
+
+    // A failed pull supplies no values, but must not discard environment or
+    // initialization options.
+    let (client_settings, pull_result) = match pulled {
+        Ok(options) => (options, Ok(())),
+        Err(err) => (LspSettings::default(), Err(err)),
+    };
+    state.resolve_config(client_settings);
+
+    // `config` is not an Oak input, so we manually bump the revision to refresh
+    // diagnostics and rerun source scheduling. This queues already discovered
+    // packages when source fetching is re-enabled.
+    if state.config.diagnostics != diagnostics_config || state.config.oak != oak_config {
+        tracing::info!("Bumping salsa revision after configuration changed");
+        state.bump_revision();
+    }
+
+    pull_result
+}
+
+/// Pull global and document settings with `workspace/configuration`. Document
+/// settings update their documents, while global settings form a layer to
+/// resolve.
+async fn pull_config(
+    open_files: Vec<(FilePath, Uri)>,
+    client: &tower_lsp_server::Client,
+    state: &mut WorldState,
+) -> anyhow::Result<LspSettings> {
+    // Build the configuration request for global and document settings
+    let mut items: Vec<_> = vec![];
+
+    // This should be first because we first handle the global settings below,
+    // splitting them off the response array
+    let mut global_items: Vec<_> = GLOBAL_SETTINGS
+        .iter()
+        .map(|mapping| lsp_types::ConfigurationItem {
+            scope_uri: None,
+            section: Some(mapping.key.to_string()),
+        })
+        .collect();
+    global_items.push(lsp_types::ConfigurationItem {
+        scope_uri: None,
+        section: Some(LEGACY_R_DIAGNOSTICS_ENABLE_SETTING.to_string()),
+    });
+    let global_items_len = global_items.len();
+
+    // For document items we create a n_uris * n_document_settings array that we'll
+    // handle by batch in a double loop over URIs and document settings
+    let mut document_items: Vec<_> = open_files
+        .iter()
+        .flat_map(|(_path, uri)| {
+            DOCUMENT_SETTINGS
+                .iter()
+                .map(move |mapping| lsp_types::ConfigurationItem {
+                    scope_uri: Some(uri.clone()),
+                    section: Some(mapping.key.to_string()),
+                })
+        })
+        .collect();
+
+    // Concatenate everything into a flat array that we'll send in one request
+    items.append(&mut global_items);
+    items.append(&mut document_items);
+
+    // The response better match the number of items we send in
+    let n_items = items.len();
+
+    let mut configs = client.configuration(items).await?;
+
+    if configs.len() != n_items {
+        return Err(anyhow!(
+            "Unexpected number of retrieved configurations: {}/{}",
+            configs.len(),
+            n_items
+        ));
+    }
+
+    let document_configs = configs.split_off(global_items_len);
+    let global_configs = configs;
+
+    let mut global_options = LspSettings::default();
+    let mut global_config_values = global_configs.into_iter();
+    for setting in GLOBAL_SETTINGS {
+        let Some(value) = global_config_values.next() else {
+            break;
+        };
+        (setting.set)(&mut global_options, value);
+    }
+    let legacy_diagnostics_enabled = global_config_values
+        .next()
+        .and_then(|value| value.as_bool());
+    combine_diagnostics_enable_settings(&mut global_options, legacy_diagnostics_enabled);
+
+    let mut remaining = document_configs;
+
+    for (path, _uri) in open_files {
+        // Need to juggle a bit because `split_off()` returns the tail of the
+        // split and updates the vector with the head
+        let tail = remaining.split_off(DOCUMENT_SETTINGS.len());
+        let head = std::mem::replace(&mut remaining, tail);
+
+        for (mapping, value) in DOCUMENT_SETTINGS.iter().zip(head) {
+            if let Ok(doc) = state.open_file_mut(&path) {
+                (mapping.set)(doc.config_mut(), value);
+            }
+        }
+    }
+
+    Ok(global_options)
+}

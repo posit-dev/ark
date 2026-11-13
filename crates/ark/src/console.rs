@@ -143,6 +143,8 @@ pub(crate) use console_repl::KernelInfo;
 use console_repl::PendingInputs;
 use console_repl::ReadConsolePendingAction;
 pub use console_repl::SessionMode;
+use oak_lsp::main_loop::Event;
+use oak_lsp::main_loop::TokioUnboundedSender;
 
 use crate::comm_handler::ConsoleComm;
 use crate::comm_handler::EnvironmentChanged;
@@ -158,8 +160,6 @@ use crate::lsp::host::ConsoleInputs;
 use crate::lsp::host::DidCloseVirtualDocumentParams;
 use crate::lsp::host::DidOpenVirtualDocumentParams;
 use crate::lsp::host::KernelNotification;
-use crate::lsp::main_loop::Event;
-use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::modules;
 use crate::modules::ARK_ENVS;
 use crate::plots::graphics_device;

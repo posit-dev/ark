@@ -7,13 +7,13 @@
 
 use std::cell::OnceCell;
 
+use legacy_ide::treesitter::node_find_containing_call;
 use oak_db::File;
+use oak_lsp::state::WorldState;
 use tree_sitter::Node;
 
 use crate::lsp::completions::function_context::FunctionContext;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::state::WorldState;
-use crate::treesitter::node_find_containing_call;
 pub(crate) struct CompletionContext<'a> {
     pub(crate) document_context: &'a DocumentContext<'a>,
     /// The document being completed, in `state`'s database.

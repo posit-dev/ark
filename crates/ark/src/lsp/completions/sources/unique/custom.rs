@@ -5,13 +5,14 @@
 //
 //
 
+use legacy_ide::treesitter::node_in_string;
+
 use crate::lsp::call_arguments::call_arguments_at;
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::request::ArgumentPosition;
 use crate::lsp::completions::request::CustomRequest;
 use crate::lsp::completions::sources::utils::call_node_position_type;
 use crate::lsp::completions::sources::utils::CallNodePositionType;
-use crate::treesitter::node_in_string;
 
 /// Collects what the session needs to look up custom completion callbacks for
 /// the argument under the cursor. Whether a callback applies is only known in
@@ -68,7 +69,8 @@ pub(super) fn custom_request(context: &CompletionContext) -> anyhow::Result<Opti
 
 #[cfg(test)]
 mod tests {
-    use crate::fixtures::point_from_cursor;
+    use legacy_ide::fixtures::point_from_cursor;
+
     use crate::lsp::call_arguments::CallArguments;
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::request::ArgumentPosition;

@@ -21,6 +21,7 @@ ark.workspace = true
 crossbeam.workspace = true
 dap = { workspace = true, features = ["client"] }
 harp.workspace = true
+legacy_ide = { workspace = true, features = ["testing"] }
 libc.workspace = true
 log.workspace = true
 regex.workspace = true

@@ -1,0 +1,128 @@
+use std::collections::HashMap;
+use std::sync::mpsc::Receiver;
+use std::sync::mpsc::Sender;
+use std::sync::Mutex;
+use std::time::Duration;
+
+use super::utils::write_sources;
+use crate::sources::SourceHandler;
+use crate::sources::SourceRequest;
+use crate::sources::SourceResponse;
+
+/// A test [`SourceHandler`] that serves canned behavior per package name and records
+/// every call, so tests can count the number of calls. The handler is shared (as the
+/// `Arc<dyn SourceHandler>` the `SourceScheduler` holds and the clone the test keeps), so
+/// `calls` is a plain `Mutex`.
+pub struct TestSourceHandler {
+    /// Owns the cache directory that `Success` writes per-package sources into.
+    sources: tempfile::TempDir,
+    /// Per-package canned behavior.
+    behavior: HashMap<String, TestBehavior>,
+    /// Each request passed to `handle`, in call order.
+    calls: Mutex<Vec<SourceRequest>>,
+}
+
+// Canned behavior to perform when a particular package is requested
+pub enum TestBehavior {
+    /// Write these `(basename, contents)` files into the package's source dir
+    /// and return `Success(dir)`.
+    Success(Vec<(&'static str, &'static str)>),
+    Failure,
+    Panic,
+    /// Park on a [`Gate`] until the test releases it, then fail. Lets a test hold a
+    /// source worker for as long as it wants.
+    Gated(Gate),
+    /// Park on a [`Gate`] like [`TestBehavior::Gated`], then succeed like
+    /// [`TestBehavior::Success`] with these files.
+    GatedSuccess(Gate, Vec<(&'static str, &'static str)>),
+}
+
+/// The handler side of a rendezvous with the test. `handle()` announces that it has
+/// started, then parks until the test lets go.
+pub struct Gate {
+    entered_tx: Sender<()>,
+    release_rx: Mutex<Receiver<()>>,
+}
+
+/// Build a gate reporting through `entered_tx`, the test's single shared sender, once
+/// its `handle()` call starts running. Callers building several gates for the same test
+/// pass clones of the same sender, so the test can count entries across all of them
+/// without knowing which one got in first. Each gate still gets its own release channel:
+/// a shared release receiver would serialise the waiters instead of letting them all
+/// park at once. The gate stays shut for as long as the returned sender is alive.
+pub fn gate(entered_tx: Sender<()>) -> (Gate, Sender<()>) {
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+
+    let gate = Gate {
+        entered_tx,
+        release_rx: Mutex::new(release_rx),
+    };
+    (gate, release_tx)
+}
+
+/// Block until `count` gates sharing `entered_rx` have entered `handle()`. The
+/// gates hold clones of the sender, so the channel never disconnects: without
+/// a deadline, a test whose fetches were never dispatched would block forever
+/// instead of failing.
+pub fn wait_for_entries(entered_rx: &Receiver<()>, count: usize) {
+    const TIMEOUT: Duration = Duration::from_secs(30);
+    for entered in 0..count {
+        if entered_rx.recv_timeout(TIMEOUT).is_err() {
+            panic!("Only {entered} of {count} gated fetches started within {TIMEOUT:?}");
+        }
+    }
+}
+
+impl Gate {
+    pub fn wait(&self) {
+        if self.entered_tx.send(()).is_err() {
+            return;
+        }
+        match self.release_rx.lock().unwrap().recv() {
+            // `Err` means the test dropped the release end, which also lets us through
+            Ok(()) | Err(_) => (),
+        }
+    }
+}
+
+impl TestSourceHandler {
+    pub fn new(behavior: HashMap<String, TestBehavior>) -> Self {
+        Self {
+            sources: tempfile::tempdir().unwrap(),
+            behavior,
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// The requests passed to `handle`, in call order, for the test to assert on.
+    pub fn calls(&self) -> &Mutex<Vec<SourceRequest>> {
+        &self.calls
+    }
+}
+
+impl SourceHandler for TestSourceHandler {
+    fn handle(&self, request: &SourceRequest) -> SourceResponse {
+        self.calls.lock().unwrap().push(request.clone());
+
+        match self.behavior.get(request.name()) {
+            Some(TestBehavior::Success(files)) => {
+                let dir = self.sources.path().join(request.name());
+                write_sources(&dir, files);
+                SourceResponse::fetched(dir)
+            },
+            Some(TestBehavior::Failure) => SourceResponse::Failure,
+            Some(TestBehavior::Panic) => panic!("Test panic in a source worker"),
+            Some(TestBehavior::Gated(gate)) => {
+                gate.wait();
+                SourceResponse::Failure
+            },
+            Some(TestBehavior::GatedSuccess(gate, files)) => {
+                gate.wait();
+                let dir = self.sources.path().join(request.name());
+                write_sources(&dir, files);
+                SourceResponse::fetched(dir)
+            },
+            None => panic!("Unknown test package {}", request.name()),
+        }
+    }
+}

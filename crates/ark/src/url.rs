@@ -7,8 +7,7 @@
 
 use aether_path::FilePath;
 use amalthea::wire::execute_request::CodeLocation;
-
-use crate::lsp::indexer::DEBUGGER_VIRTUAL_DOC_SCHEME;
+use legacy_ide::indexer::DEBUGGER_VIRTUAL_DOC_SCHEME;
 
 /// Extract a canonical [`FilePath`] from a [`CodeLocation`].
 pub fn file_path_from_code_location(loc: &CodeLocation) -> FilePath {

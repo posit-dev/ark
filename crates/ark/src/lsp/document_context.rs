@@ -9,7 +9,14 @@ use aether_lsp_utils::proto::PositionEncoding;
 #[cfg(test)]
 use aether_path::FilePath;
 #[cfg(test)]
+use legacy_ide::db::FileLegacyExt;
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::NodeType;
+use legacy_ide::treesitter::NodeTypeExt;
+#[cfg(test)]
 use oak_db::File;
+#[cfg(test)]
+use oak_lsp::state::WorldState;
 #[cfg(test)]
 use oak_scan::DbScan;
 use tree_sitter::Node;
@@ -18,14 +25,7 @@ use tree_sitter::Point;
 use url::Url;
 
 #[cfg(test)]
-use crate::lsp::db::FileLegacyExt;
-#[cfg(test)]
-use crate::lsp::state::WorldState;
-use crate::lsp::traits::node::NodeExt;
-#[cfg(test)]
 use crate::panic;
-use crate::treesitter::NodeType;
-use crate::treesitter::NodeTypeExt;
 
 #[derive(Debug)]
 pub struct DocumentContext<'a> {
@@ -192,10 +192,11 @@ pub(crate) fn test_document_context(
 
 #[cfg(test)]
 mod tests {
+    use legacy_ide::fixtures::point_from_cursor;
+    use legacy_ide::treesitter::NodeType;
+    use legacy_ide::treesitter::NodeTypeExt;
+
     use super::*;
-    use crate::fixtures::point_from_cursor;
-    use crate::treesitter::NodeType;
-    use crate::treesitter::NodeTypeExt;
 
     #[test]
     fn test_document_context_start_of_document() {

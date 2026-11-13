@@ -5,20 +5,20 @@
 //
 //
 
+use legacy_ide::coordinates::lsp_position_from_tree_sitter_point;
+use legacy_ide::coordinates::lsp_range_from_tree_sitter_range;
+use legacy_ide::traits::node::NodeExt;
+use legacy_ide::treesitter::node_find_parent_call;
+use legacy_ide::treesitter::BinaryOperatorType;
+use legacy_ide::treesitter::NodeType;
+use legacy_ide::treesitter::NodeTypeExt;
+use legacy_ide::treesitter::UnaryOperatorType;
 use stdext::result::ResultExt;
 use tower_lsp_server::ls_types as lsp_types;
 use tower_lsp_server::ls_types::Range;
 use tree_sitter::Node;
 
-use crate::lsp::coordinates::lsp_position_from_tree_sitter_point;
-use crate::lsp::coordinates::lsp_range_from_tree_sitter_range;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::node_find_parent_call;
-use crate::treesitter::BinaryOperatorType;
-use crate::treesitter::NodeType;
-use crate::treesitter::NodeTypeExt;
-use crate::treesitter::UnaryOperatorType;
 
 /// Represents how a function is being used in an expression
 #[derive(Clone, Debug, PartialEq)]
