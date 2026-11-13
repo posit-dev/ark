@@ -53,13 +53,13 @@ use crate::lsp::backend::LspNotification;
 use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::RequestResponse;
 use crate::lsp::diagnostics::generate_diagnostics;
+use crate::lsp::diagnostics::NO_R_EXECUTABLE;
 use crate::lsp::diagnostics::WORKSPACE_ENVIRONMENT_FIXES;
 use crate::lsp::environments::unresolved_database;
 use crate::lsp::environments::EnvironmentRequest;
 use crate::lsp::environments::EnvironmentResolver;
 use crate::lsp::environments::EnvironmentScheduler;
 use crate::lsp::environments::RProcessResolver;
-use crate::lsp::environments::NO_R_EXECUTABLE;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::AuxiliaryEvent;
 use crate::lsp::main_loop::Event;
@@ -1040,10 +1040,13 @@ fn open_file_diagnostics(state: &GlobalState, path: &Path) -> Vec<Diagnostic> {
     let file_path = FilePath::from_path_buf(path.to_path_buf()).unwrap();
     let open_file = world.open_file(&file_path).unwrap();
     generate_diagnostics(
+        world.db(),
         open_file.file(),
-        world.snapshot(),
-        false,
         open_file.wire_uri(),
+        &world.config.diagnostics,
+        world.config.position_encoding,
+        &world.console_scopes,
+        false,
     )
 }
 

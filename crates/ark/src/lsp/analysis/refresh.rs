@@ -128,7 +128,19 @@ fn refresh_diagnostics(
     let now = std::time::Instant::now();
     lsp::log_info!("Generating diagnostics for file: {}", uri.as_str());
 
-    let diagnostics = generate_diagnostics(file.file(), state, testthat, &uri);
+    let diagnostics = generate_diagnostics(
+        state.db(),
+        file.file(),
+        &uri,
+        &state.config.diagnostics,
+        state.config.position_encoding,
+        &state.console_scopes,
+        testthat,
+    );
+
+    // Drop the snapshot before logging and building the publication so
+    // main-loop writes do not wait for that work.
+    drop(state);
 
     lsp::log_info!(
         "Finished diagnostics for file: {} in {:.0?}",

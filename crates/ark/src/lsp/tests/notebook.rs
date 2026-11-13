@@ -148,10 +148,18 @@ fn cell_file(state: &WorldState, handle: usize) -> oak_db::File {
 
 fn cell_diagnostic_messages(state: &WorldState, handle: usize) -> Vec<String> {
     let file = cell_file(state, handle);
-    generate_diagnostics(file, state.snapshot(), false, &cell_uri(handle))
-        .into_iter()
-        .map(|diagnostic| diagnostic.message)
-        .collect()
+    generate_diagnostics(
+        state.db(),
+        file,
+        &cell_uri(handle),
+        &state.config.diagnostics,
+        state.config.position_encoding,
+        &state.console_scopes,
+        false,
+    )
+    .into_iter()
+    .map(|diagnostic| diagnostic.message)
+    .collect()
 }
 
 /// Notebook cells use the workspace environment rather than the default.

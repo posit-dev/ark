@@ -31,11 +31,15 @@ impl LspHarness {
         let _boundary = panic::test_boundary();
 
         let open_file = self.state.open_file(path)?;
+        let HarnessSnapshot(snapshot) = snapshot;
         Ok(generate_diagnostics(
+            snapshot.db(),
             open_file.file(),
-            snapshot.0,
-            is_testthat_path(path),
             open_file.wire_uri(),
+            &snapshot.config.diagnostics,
+            snapshot.config.position_encoding,
+            &snapshot.console_scopes,
+            is_testthat_path(path),
         ))
     }
 }

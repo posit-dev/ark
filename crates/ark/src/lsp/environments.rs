@@ -37,6 +37,7 @@ use oak_scan::DbScan;
 use oak_scan::LibraryListing;
 
 use crate::lsp;
+use crate::lsp::diagnostics::NO_R_EXECUTABLE;
 use crate::lsp::io_pool::IoPool;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::TokioUnboundedSender;
@@ -44,9 +45,6 @@ use crate::lsp::main_loop::TokioUnboundedSender;
 /// Timeout passed to the R subprocess runner. A hung `.Rprofile` would
 /// otherwise block the single `oak-env` thread and all queued resolutions.
 pub(crate) const RESOLUTION_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Failure recorded by each resolution job when no R executable was found.
-pub(crate) const NO_R_EXECUTABLE: &str = "no R executable was found";
 
 /// Writes the subprocess's `.libPaths()` to the file named by the first trailing
 /// argument, one UTF-8 path per line.

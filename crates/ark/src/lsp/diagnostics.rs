@@ -31,14 +31,11 @@ use tree_sitter::Node;
 use tree_sitter::Point;
 use tree_sitter::Range;
 
-use crate::lsp;
-use crate::lsp::analysis::WorldStateSnapshot;
 use crate::lsp::db::ArkDb;
 use crate::lsp::db::FileArkExt;
 use crate::lsp::declarations::top_level_declare;
 use crate::lsp::diagnostics_syntax::missing_namespace_rhs_diagnostics;
 use crate::lsp::diagnostics_syntax::syntax_diagnostics;
-use crate::lsp::environments::NO_R_EXECUTABLE;
 use crate::lsp::indexer;
 use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::traits::node::NodeExt;
@@ -152,19 +149,25 @@ impl<'a> DiagnosticContext<'a> {
     }
 }
 
+/// Diagnose `file`. Related information locations point to `uri`.
+///
+/// `session_scopes` lists names in the global environment and each environment
+/// on the search path, in that order. All names count as defined symbols,
+/// regardless of their environment.
 pub(crate) fn generate_diagnostics(
+    db: &dyn ArkDb,
     file: File,
-    state: WorldStateSnapshot,
-    testthat: bool,
     uri: &Uri,
+    config: &DiagnosticsConfig,
+    encoding: PositionEncoding,
+    session_scopes: &[Vec<String>],
+    testthat: bool,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
-    if !state.config.diagnostics.enable {
+    if !config.enable {
         return diagnostics;
     }
-
-    let db = state.db();
 
     // Library files are foreign code the user can't fix (installed packages,
     // fetched CRAN/base sources), so diagnostics don't apply (even though
@@ -185,7 +188,6 @@ pub(crate) fn generate_diagnostics(
         return diagnostics;
     }
 
-    let encoding = state.config.position_encoding;
     let mut context = DiagnosticContext::new(db, file, encoding, uri);
 
     // All cells share the notebook's environment, so only the first cell reports
@@ -262,7 +264,7 @@ pub(crate) fn generate_diagnostics(
     }
 
     // Add per-environment session symbols
-    for scope in state.console_scopes.iter() {
+    for scope in session_scopes {
         for name in scope.iter() {
             context
                 .session_symbols
@@ -289,7 +291,7 @@ pub(crate) fn generate_diagnostics(
     }
 
     // Collect diagnostics from `oak_db`'s semantic index
-    match oak_diagnostics(&context, state.config.diagnostics.experimental) {
+    match oak_diagnostics(&context, config.experimental) {
         Ok(mut oak_diagnostics) => diagnostics.append(&mut oak_diagnostics),
         Err(err) => log::error!("Error while generating oak diagnostics: {err:?}"),
     }
@@ -374,6 +376,11 @@ fn existing_startup_files(dir: &Utf8Path) -> Vec<String> {
         .map(|path| path.to_string())
         .collect()
 }
+
+/// Failure message for environment resolution when no R executable is found.
+/// [`environment_failure_diagnostic()`] matches this exact text to omit startup
+/// file hints and recommend restarting R after installing it.
+pub(crate) const NO_R_EXECUTABLE: &str = "no R executable was found";
 
 pub(crate) const WORKSPACE_ENVIRONMENT_FIXES: &str = "Edits to .Rprofile or .Renviron in this directory are picked up automatically. Other fixes, such as installing R or renv, or editing ~/.Rprofile, take effect after you restart R.";
 
@@ -1062,7 +1069,7 @@ fn recurse_call(
         "library" | "require" => {
             // Track symbols exported by `library()` or `require()` calls
             if let Err(err) = handle_package_attach_call(node, context) {
-                lsp::log_warn!("Can't handle attach call: {err:?}");
+                log::warn!("Can't handle attach call: {err:?}");
             }
         },
         _ => {},
@@ -1374,43 +1381,73 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
+    use aether_lsp_utils::proto::PositionEncoding;
     use aether_path::FilePath;
+    use biome_line_index::WideEncoding;
     use harp::eval::RParseEvalOptions;
     use harp::RFunction;
     use oak_db::DbInputs;
+    use oak_db::File;
     use oak_db::OakDatabase;
     use oak_db::SourceDb;
     use oak_scan::DbScan;
+    use oak_scan::ScanScheduler;
     use tempfile::TempDir;
     use tower_lsp_server::ls_types as lsp_types;
     use tower_lsp_server::ls_types::Position;
+    use tower_lsp_server::ls_types::Uri;
 
+    use super::DiagnosticsConfig;
     use super::DEFAULT_ENVIRONMENT_FIXES;
+    use super::NO_R_EXECUTABLE;
     use crate::console::console_scopes;
-    use crate::lsp::environments::NO_R_EXECUTABLE;
-    use crate::lsp::state::WorldState;
-    use crate::lsp::tests::state_handlers::set_workspace_paths;
     use crate::lsp::traits::url::UrlExt;
-    use crate::panic;
     use crate::r_task;
 
-    fn generate_diagnostics(code: &str, state: &WorldState) -> Vec<lsp_types::Diagnostic> {
-        let _boundary = panic::test_boundary();
+    #[derive(Default)]
+    struct TestState {
+        db: OakDatabase,
+        session_scopes: Vec<Vec<String>>,
+        config: DiagnosticsConfig,
+    }
+
+    impl TestState {
+        fn with_db(db: OakDatabase) -> Self {
+            Self {
+                db,
+                ..Default::default()
+            }
+        }
+
+        fn diagnose(&self, file: File, uri: &Uri) -> Vec<lsp_types::Diagnostic> {
+            super::generate_diagnostics(
+                &self.db,
+                file,
+                uri,
+                &self.config,
+                PositionEncoding::Wide(WideEncoding::Utf16),
+                &self.session_scopes,
+                false,
+            )
+        }
+    }
+
+    fn generate_diagnostics(code: &str, state: &TestState) -> Vec<lsp_types::Diagnostic> {
         let url = url::Url::parse("file:///test.R").unwrap();
         let uri = url.to_uri().unwrap();
         let file = oak_db::File::new(
-            state.db(),
+            &state.db,
             FilePath::from_url(&url),
             oak_db::FileRevision::zero(),
             Some(code.to_string()),
             None,
         );
-        super::generate_diagnostics(file, state.snapshot(), false, &uri)
+        state.diagnose(file, &uri)
     }
 
     /// Use the test R session's library paths and console scopes so diagnostics
     /// recognize its installed packages and global and search-path symbols.
-    fn current_state() -> WorldState {
+    fn current_state() -> TestState {
         let library_paths: Vec<String> = RFunction::new("base", ".libPaths")
             .call()
             .unwrap()
@@ -1421,9 +1458,19 @@ mod tests {
         let mut db = OakDatabase::new();
         db.set_library_paths(&library_paths);
 
-        let mut state = WorldState::with_db(db);
-        state.console_scopes = console_scopes();
+        let mut state = TestState::with_db(db);
+        state.session_scopes = console_scopes();
         state
+    }
+
+    /// Scan `paths` as the workspace folders until no scan is pending.
+    fn set_workspace_paths(db: &mut OakDatabase, paths: &[PathBuf]) {
+        let mut scheduler = ScanScheduler::new();
+        let mut requests = scheduler.set_workspace_paths(db, paths);
+        while let Some(request) = requests.pop() {
+            let result = request.run();
+            requests.extend(scheduler.apply_scan_completed(db, result));
+        }
     }
 
     /// Install a package named `name` exporting `exports` into the library
@@ -1841,8 +1888,8 @@ foo
         // Whereas `current_state()` returns a state with the base package
         // attached, this world state only contains `mockpkg` as an installed
         // package and `library()` on the search path.
-        let mut state = WorldState::with_db(db);
-        state.console_scopes = vec![vec!["library".to_string()]];
+        let mut state = TestState::with_db(db);
+        state.session_scopes = vec![vec!["library".to_string()]];
 
         // Test that exported symbols are recognized
         let code = "
@@ -1912,8 +1959,8 @@ foo
         let mut db = OakDatabase::new();
         db.set_library_paths(&[library.path().to_path_buf()]);
 
-        let mut state = WorldState::with_db(db);
-        state.console_scopes = vec![vec!["library".to_string()]];
+        let mut state = TestState::with_db(db);
+        state.session_scopes = vec![vec!["library".to_string()]];
 
         // Code with two library calls at different points
         let code = "
@@ -1950,8 +1997,8 @@ foo
         let mut db = OakDatabase::new();
         db.set_library_paths(&[library.path().to_path_buf()]);
 
-        let mut state = WorldState::with_db(db);
-        state.console_scopes = vec![vec!["require".to_string()]];
+        let mut state = TestState::with_db(db);
+        state.session_scopes = vec![vec!["require".to_string()]];
 
         let code = "
                     foo()
@@ -1973,7 +2020,7 @@ foo
 
         let mut db = OakDatabase::new();
         db.set_library_paths(&[library.path().to_path_buf()]);
-        let state = WorldState::with_db(db);
+        let state = TestState::with_db(db);
 
         let diagnostics = generate_diagnostics("mockpkg::foo", &state);
         assert!(diagnostics.is_empty());
@@ -1981,7 +2028,7 @@ foo
 
     #[test]
     fn test_namespace_unknown_package_flagged() {
-        let state = WorldState::with_db(OakDatabase::new());
+        let state = TestState::with_db(OakDatabase::new());
 
         for code in ["mockpkg::foo", "mockpkg:::foo"] {
             let diagnostics = generate_diagnostics(code, &state);
@@ -2002,8 +2049,8 @@ foo
         )
         .unwrap();
 
-        let mut state = WorldState::with_db(OakDatabase::new());
-        set_workspace_paths(&mut state, &[workspace.path().to_path_buf()]);
+        let mut state = TestState::with_db(OakDatabase::new());
+        set_workspace_paths(&mut state.db, &[workspace.path().to_path_buf()]);
 
         let diagnostics = generate_diagnostics("devpkg::foo", &state);
         assert!(diagnostics.is_empty());
@@ -2018,8 +2065,8 @@ foo
 
         // Simulate a world state with the penguins package installed and
         // `library()` on the search path
-        let mut state = WorldState::with_db(db);
-        state.console_scopes = vec![vec!["library".to_string()]];
+        let mut state = TestState::with_db(db);
+        state.session_scopes = vec![vec!["library".to_string()]];
 
         let code = r#"
                 library(penguins)
@@ -2064,11 +2111,11 @@ foo
         db.set_package_sources(package, &pkg_dir.join("R"));
         let file = *package.files(&db).first().unwrap();
 
-        let state = WorldState::with_db(db);
+        let state = TestState::with_db(db);
 
         let url = url::Url::parse("file:///a.R").unwrap();
         let uri = url.to_uri().unwrap();
-        let diagnostics = super::generate_diagnostics(file, state.snapshot(), false, &uri);
+        let diagnostics = state.diagnose(file, &uri);
         assert!(diagnostics.is_empty());
     }
 
@@ -2081,7 +2128,7 @@ foo
             let text = "f <- function() local({ x <- 1 })\nlocal <- identity\n";
 
             let mut state = current_state();
-            state.config.diagnostics.experimental = true;
+            state.config.experimental = true;
             let diagnostics = generate_diagnostics(text, &state);
 
             // This snippet doesn't trip any of the legacy tree-sitter checks:
@@ -2126,10 +2173,10 @@ foo
     /// out-of-scope diagnostic for `foo`.
     const SYNTAX_AND_SEMANTIC: &str = "foo\n1 }\n";
 
-    /// [`WorldState::default()`] starts with the default environment resolved
+    /// [`OakDatabase::new()`] starts with the default environment resolved
     /// to an empty library list, so semantic checks run without starting R.
     fn full_diagnostics() -> Vec<lsp_types::Diagnostic> {
-        generate_diagnostics(SYNTAX_AND_SEMANTIC, &WorldState::default())
+        generate_diagnostics(SYNTAX_AND_SEMANTIC, &TestState::default())
     }
 
     #[test]
@@ -2144,7 +2191,7 @@ foo
     fn test_unresolved_environment_gives_syntax_diagnostics_only() {
         let mut db = OakDatabase::new();
         db.mark_default_environment_unresolved();
-        let state = WorldState::with_db(db);
+        let state = TestState::with_db(db);
 
         let diagnostics = generate_diagnostics(SYNTAX_AND_SEMANTIC, &state);
         assert_eq!(diagnostics, full_diagnostics()[..1].to_vec());
@@ -2156,7 +2203,7 @@ foo
     fn test_unresolved_environment_reports_missing_namespace_rhs() {
         let mut db = OakDatabase::new();
         db.mark_default_environment_unresolved();
-        let state = WorldState::with_db(db);
+        let state = TestState::with_db(db);
 
         let messages: Vec<String> = generate_diagnostics("f(base::)\nutils::\n", &state)
             .into_iter()
@@ -2177,19 +2224,18 @@ foo
         let script = workspace.path().join("a.R");
         std::fs::write(&script, SYNTAX_AND_SEMANTIC).unwrap();
 
-        let mut state = WorldState::with_db(OakDatabase::new());
-        set_workspace_paths(&mut state, &[workspace.path().to_path_buf()]);
-        state.db_mut().reconcile_environments();
+        let mut db = OakDatabase::new();
+        set_workspace_paths(&mut db, &[workspace.path().to_path_buf()]);
+        db.reconcile_environments();
 
         let file_path = FilePath::from_path_buf(script.clone()).unwrap();
-        let file = state.db().file_by_path(&file_path).unwrap();
-        let environment = file.environment(state.db());
-        state
-            .db_mut()
-            .record_environment_failure(environment, String::from(NO_R_EXECUTABLE));
+        let file = db.file_by_path(&file_path).unwrap();
+        let environment = file.environment(&db);
+        db.record_environment_failure(environment, String::from(NO_R_EXECUTABLE));
+        let state = TestState::with_db(db);
 
         let uri = url::Url::from_file_path(&script).unwrap().to_uri().unwrap();
-        let diagnostics = super::generate_diagnostics(file, state.snapshot(), false, &uri);
+        let diagnostics = state.diagnose(file, &uri);
         assert_eq!(
             diagnostics[0].message,
             format!(
@@ -2209,7 +2255,7 @@ foo
         db.mark_default_environment_unresolved();
         let default = db.default_environment();
         db.record_environment_failure(default, String::from("no R executable was found"));
-        let mut state = WorldState::with_db(db);
+        let mut state = TestState::with_db(db);
 
         let diagnostics = generate_diagnostics(SYNTAX_AND_SEMANTIC, &state);
         let [failure, syntax] = diagnostics.as_slice() else {
@@ -2231,7 +2277,7 @@ foo
         );
         assert_eq!(*syntax, full_diagnostics()[0]);
 
-        state.db_mut().resolve_environment(default, Vec::new());
+        state.db.resolve_environment(default, Vec::new());
         let diagnostics = generate_diagnostics(SYNTAX_AND_SEMANTIC, &state);
         assert_eq!(diagnostics, full_diagnostics());
     }
@@ -2244,7 +2290,7 @@ foo
             default,
             String::from("R exited with status 1:\nError: boom\nExecution halted"),
         );
-        let mut state = WorldState::with_db(db);
+        let mut state = TestState::with_db(db);
 
         let diagnostics = generate_diagnostics(SYNTAX_AND_SEMANTIC, &state);
         let [failure, rest @ ..] = diagnostics.as_slice() else {
@@ -2268,7 +2314,7 @@ foo
         );
         assert_eq!(rest.to_vec(), full_diagnostics());
 
-        state.db_mut().resolve_environment(default, Vec::new());
+        state.db.resolve_environment(default, Vec::new());
         let diagnostics = generate_diagnostics(SYNTAX_AND_SEMANTIC, &state);
         assert_eq!(diagnostics, full_diagnostics());
     }
@@ -2284,22 +2330,23 @@ foo
         std::fs::write(&rprofile, "stop('boom')\n").unwrap();
         std::fs::write(&script, SYNTAX_AND_SEMANTIC).unwrap();
 
-        let mut state = WorldState::with_db(OakDatabase::new());
-        set_workspace_paths(&mut state, &[workspace.path().to_path_buf()]);
-        state.db_mut().reconcile_environments();
+        let mut db = OakDatabase::new();
+        set_workspace_paths(&mut db, &[workspace.path().to_path_buf()]);
+        db.reconcile_environments();
 
         let file_path = FilePath::from_path_buf(script.clone()).unwrap();
-        let file = state.db().file_by_path(&file_path).unwrap();
-        let environment = file.environment(state.db());
-        assert_ne!(environment, state.db().default_environment());
-        state.db_mut().record_environment_failure(
+        let file = db.file_by_path(&file_path).unwrap();
+        let environment = file.environment(&db);
+        assert_ne!(environment, db.default_environment());
+        db.record_environment_failure(
             environment,
             String::from("R exited with status 1:\nError: boom\nExecution halted"),
         );
+        let state = TestState::with_db(db);
 
         let uri = url::Url::from_file_path(&script).unwrap().to_uri().unwrap();
-        let failure_message = |state: &WorldState| {
-            let diagnostics = super::generate_diagnostics(file, state.snapshot(), false, &uri);
+        let failure_message = |state: &TestState| {
+            let diagnostics = state.diagnose(file, &uri);
             assert_eq!(diagnostics.len(), 2);
             diagnostics[0].message.clone()
         };
