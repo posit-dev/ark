@@ -169,18 +169,13 @@ async fn test_primitive_stubs_land_with_fetching_off() {
 
     let (_lib, db) = library_with_base();
     let client = TestClient::new(&[(OAK_SOURCE_FETCHING_ENABLED_SETTING, json!(false))]).await;
-    // A guard can't be held across `.await`, so each synchronous db section
-    // gets its own.
-    let mut state = {
-        let _boundary = panic::test_boundary();
-        GlobalState::from_parts(
-            client.client(),
-            world_with_source_fetching(db),
-            LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-                .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
-                .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar.clone()))),
-        )
-    };
+    let mut state = GlobalState::from_parts(
+        client.client(),
+        world_with_source_fetching(db),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(SourceScheduler::new(Some(handler.clone())))
+            .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar.clone()))),
+    );
 
     let workspace = tempfile::tempdir().unwrap();
     let (event, _response_rx) = initialize(workspace.path());
@@ -204,16 +199,13 @@ async fn test_primitive_stubs_land_when_base_fetch_fails() {
     )])));
 
     let (_lib, db) = library_with_base();
-    let mut state = {
-        let _boundary = panic::test_boundary();
-        GlobalState::from_parts(
-            test_client(),
-            world_with_source_fetching(db),
-            LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-                .with_source_scheduler(source_scheduler_for_test(handler.clone()))
-                .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar_with_stubs()))),
-        )
-    };
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        world_with_source_fetching(db),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(source_scheduler_for_test(handler.clone()))
+            .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar_with_stubs()))),
+    );
 
     let workspace = tempfile::tempdir().unwrap();
     write_sources(workspace.path(), &[("use.R", "base::sum(1)\n")]);
@@ -245,16 +237,13 @@ async fn test_base_archive_and_stubs_both_land() {
     )])));
 
     let (_lib, db) = library_with_base();
-    let mut state = {
-        let _boundary = panic::test_boundary();
-        GlobalState::from_parts(
-            test_client(),
-            world_with_source_fetching(db),
-            LspState::new(tokio::sync::mpsc::unbounded_channel().0)
-                .with_source_scheduler(source_scheduler_for_test(handler))
-                .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar_with_stubs()))),
-        )
-    };
+    let mut state = GlobalState::from_parts(
+        test_client(),
+        world_with_source_fetching(db),
+        LspState::new(tokio::sync::mpsc::unbounded_channel().0)
+            .with_source_scheduler(source_scheduler_for_test(handler))
+            .with_sidecar_scheduler(SidecarScheduler::new(Some(sidecar_with_stubs()))),
+    );
 
     let workspace = tempfile::tempdir().unwrap();
     write_sources(workspace.path(), &[("use.R", "base::sum(1)\n")]);
@@ -263,6 +252,7 @@ async fn test_base_archive_and_stubs_both_land() {
         .handle_event_to_quiescence(did_change_workspace_folders(workspace.path()))
         .await;
 
+    // A guard can't be held across `.await`, so it's entered after the last one
     let _boundary = panic::test_boundary();
     let db = state.world().db();
     let base = db.package_by_name("base").unwrap();

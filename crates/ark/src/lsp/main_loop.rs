@@ -489,7 +489,7 @@ impl GlobalState {
         // Transmission channel for the main loop events. Shared with the
         // tower-lsp backend and the Jupyter kernel.
         let (events_tx, events_rx) = tokio_unbounded_channel::<Event>();
-        let last_refreshed_revision = salsa::plumbing::current_revision(world.db());
+        let last_refreshed_revision = world.revision();
 
         Self {
             world,
@@ -1035,7 +1035,7 @@ impl GlobalState {
     /// failed or interrupted events and prevents duplicate refreshes when the
     /// revision is unchanged.
     fn refresh_if_due(&mut self) {
-        let revision = salsa::plumbing::current_revision(self.world.db());
+        let revision = self.world.revision();
         if revision == self.last_refreshed_revision {
             return;
         }
@@ -1059,7 +1059,7 @@ impl GlobalState {
         self.schedule_sidecar();
 
         lsp::log_info!("World state revision advanced");
-        self.last_refreshed_revision = salsa::plumbing::current_revision(self.world.db());
+        self.last_refreshed_revision = self.world.revision();
         self.refresh_deferred_since = None;
 
         let tasks = self.lsp_state.diagnostics.refresh_all(
@@ -1274,8 +1274,6 @@ impl GlobalState {
     /// and re-check it while waiting, since the pool can go idle without
     /// sending an event.
     pub(crate) fn is_settled(&self) -> bool {
-        let _boundary = panic::test_boundary();
-
         if self.lsp_state.oak_scheduler.has_pending_scans() ||
             self.lsp_state.source_scheduler.has_pending() ||
             self.lsp_state.sidecar_scheduler.has_pending() ||
@@ -1286,7 +1284,7 @@ impl GlobalState {
 
         // A refresh deferred by `refresh_if_due()` is pending work even though
         // nothing has been queued for it yet.
-        let revision = salsa::plumbing::current_revision(self.world.db());
+        let revision = self.world.revision();
         if revision != self.last_refreshed_revision {
             return false;
         }
@@ -1337,8 +1335,7 @@ impl GlobalState {
     /// a pump that stops here would miss work the scan made due. Pumping
     /// can't stall: a deferral implies a queued event.
     fn refresh_owed(&self) -> bool {
-        let _boundary = panic::test_boundary();
-        salsa::plumbing::current_revision(self.world.db()) != self.last_refreshed_revision
+        self.world.revision() != self.last_refreshed_revision
     }
 
     /// Pump events until no source request is pending, ignoring pending scans.
@@ -2073,12 +2070,12 @@ mod tests {
     #[test]
     fn test_oak_write_advances_revision() {
         let mut state = WorldState::default();
-        let before = salsa::plumbing::current_revision(state.db());
+        let before = state.revision();
         state.db_mut().upsert_editor(
             FilePath::from_url(&Url::parse("file:///a.R").unwrap()),
             "x <- 1".to_string(),
         );
-        let after = salsa::plumbing::current_revision(state.db());
+        let after = state.revision();
         assert_ne!(before, after);
     }
 
@@ -2088,9 +2085,9 @@ mod tests {
     #[test]
     fn test_bump_revision_advances_revision() {
         let mut state = WorldState::default();
-        let before = salsa::plumbing::current_revision(state.db());
+        let before = state.revision();
         state.bump_revision();
-        let after = salsa::plumbing::current_revision(state.db());
+        let after = state.revision();
         assert_ne!(before, after);
     }
 }

@@ -132,6 +132,13 @@ impl WorldState {
         &mut self.db
     }
 
+    /// The oak database's current revision. Unlike [`Self::db()`], this
+    /// asserts no recovery boundary: reading the revision runs no query, so it
+    /// can't panic on a cycle or a cancellation.
+    pub(crate) fn revision(&self) -> salsa::plumbing::Revision {
+        salsa::plumbing::current_revision(&self.db)
+    }
+
     /// Resolve [`Self::config`] from environment, pulled client, and
     /// initialization options. Earlier layers override later ones, and missing
     /// values use defaults.

@@ -833,7 +833,7 @@ fn test_library_entry_event_makes_installed_package_resolvable() {
 #[test]
 fn test_console_inputs_advance_revision() {
     let mut state = WorldState::default();
-    let before = salsa::plumbing::current_revision(state.db());
+    let before = state.revision();
 
     did_change_console_inputs(
         ConsoleInputs {
@@ -843,6 +843,6 @@ fn test_console_inputs_advance_revision() {
     )
     .unwrap();
 
-    let after = salsa::plumbing::current_revision(state.db());
+    let after = state.revision();
     assert_ne!(before, after);
 }
