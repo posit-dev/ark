@@ -46,12 +46,10 @@ use crate::lsp::main_loop::LspState;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers::did_change;
-use crate::lsp::state_handlers::did_change_console_inputs;
 use crate::lsp::state_handlers::did_close;
 use crate::lsp::state_handlers::did_open;
 use crate::lsp::state_handlers::effective_workspace_paths;
 use crate::lsp::state_handlers::library_watchers;
-use crate::lsp::state_handlers::ConsoleInputs;
 use crate::lsp::traits::url::UriExt;
 use crate::lsp::traits::url::UrlExt;
 
@@ -823,26 +821,4 @@ fn test_library_entry_event_makes_installed_package_resolvable() {
     let pkg = state.db().package_by_name("pkg").unwrap();
     let root = state.db().library_roots().roots(state.db())[0];
     assert_eq!(root.packages(state.db()), &vec![pkg]);
-}
-
-/// A console-inputs push carries no oak write, but diagnostics read the console
-/// scopes it updates. The handler advances the oak revision so the main loop's
-/// central refresh (and its snapshot barrier) fires. Pin that: reverting to a
-/// direct refresh that doesn't bump the revision would silently stop the
-/// central refresh and let a stale-scope pass publish last.
-#[test]
-fn test_console_inputs_advance_revision() {
-    let mut state = WorldState::default();
-    let before = state.revision();
-
-    did_change_console_inputs(
-        ConsoleInputs {
-            console_scopes: vec![vec!["foo".to_string()]],
-        },
-        &mut state,
-    )
-    .unwrap();
-
-    let after = state.revision();
-    assert_ne!(before, after);
 }

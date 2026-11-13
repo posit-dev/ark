@@ -30,6 +30,7 @@ pub mod handlers;
 pub mod harness;
 pub mod help;
 pub mod help_topic;
+pub mod host;
 pub mod hover;
 pub mod indent;
 pub mod indexer;

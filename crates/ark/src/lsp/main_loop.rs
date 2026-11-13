@@ -68,6 +68,8 @@ use crate::lsp::environments::EnvironmentResolver;
 use crate::lsp::environments::EnvironmentScheduler;
 use crate::lsp::environments::RProcessResolver;
 use crate::lsp::handlers;
+use crate::lsp::host;
+use crate::lsp::host::ConsoleInputs;
 use crate::lsp::io_pool::IoPool;
 use crate::lsp::sidecar::OakSidecarHandler;
 use crate::lsp::sidecar::SidecarCompleted;
@@ -82,7 +84,6 @@ use crate::lsp::sources::SourceResponse;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
-use crate::lsp::state_handlers::ConsoleInputs;
 use crate::lsp::state_handlers::LibraryWatcherRegistration;
 use crate::lsp::traits::url::UriExt;
 use crate::lsp::watchdog::Watchdog;
@@ -863,7 +864,7 @@ impl GlobalState {
 
                 match notif {
                     KernelNotification::DidChangeConsoleInputs(inputs) => {
-                        state_handlers::did_change_console_inputs(inputs, &mut self.world)?;
+                        host::did_change_console_inputs(inputs, &mut self.world)?;
                     },
                     KernelNotification::DidOpenVirtualDocument(params) => {
                         state_handlers::did_open_virtual_document(params, &mut self.world)?;
@@ -1027,8 +1028,9 @@ impl GlobalState {
     ///
     /// Revision tracking covers writes to diagnostics dependencies, including
     /// workspace symbols, imports, and resolved definitions, without requiring
-    /// each writer to request a refresh. Config and console state live outside
-    /// oak, so their handlers call [`WorldState::bump_revision()`] to invalidate
+    /// each writer to request a refresh. Config and session scopes live outside
+    /// oak, so `update_config()` and [`WorldState::set_session_scopes()`] call
+    /// [`WorldState::bump_revision()`] to invalidate
     /// diagnostics through the same mechanism.
     ///
     /// Tracking the last refreshed revision keeps deferred work pending across
@@ -2079,9 +2081,9 @@ mod tests {
         assert_ne!(before, after);
     }
 
-    /// Console-scope and config changes live outside oak, so they lean on
-    /// `bump_revision` to advance the revision and trigger the same central
-    /// refresh. This pins that the synthetic write actually moves the revision.
+    /// Session scopes and config are not oak inputs. Their changes rely on
+    /// `bump_revision()` advancing the revision to trigger the central
+    /// diagnostics refresh.
     #[test]
     fn test_bump_revision_advances_revision() {
         let mut state = WorldState::default();

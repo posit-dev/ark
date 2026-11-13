@@ -16,6 +16,7 @@ use super::sidecar_handler::TestSidecarHandler;
 use super::utils::did_change_watched_file;
 use super::utils::initialize;
 use super::utils::DescriptionWriter;
+use crate::lsp::host::ConsoleInputs;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
@@ -23,7 +24,6 @@ use crate::lsp::main_loop::KernelNotification;
 use crate::lsp::sidecar::OakSidecarHandler;
 use crate::lsp::sidecar::SidecarHandler;
 use crate::lsp::sidecar::SidecarRequest;
-use crate::lsp::state_handlers::ConsoleInputs;
 use crate::panic;
 
 #[test]

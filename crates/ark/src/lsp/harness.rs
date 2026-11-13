@@ -94,10 +94,11 @@ impl LspHarness {
         self.state.workspace = Workspace { folders };
     }
 
-    /// Accept explicit console scopes for resolving base symbols because
-    /// obtaining real scopes requires an R session.
-    pub fn set_console_scopes(&mut self, scopes: Vec<Vec<String>>) {
-        self.state.console_scopes = scopes;
+    /// Supply names that diagnostics treat as defined without an R session.
+    /// Each inner vector contains one environment's names.
+    pub fn set_session_scopes(&mut self, scopes: Vec<Vec<String>>) {
+        let _boundary = panic::test_boundary();
+        self.state.set_session_scopes(scopes);
     }
 
     /// Register an editor buffer without scheduling the work that a `didOpen`

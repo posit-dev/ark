@@ -658,7 +658,7 @@ fn build_world_base(fixtures: &Fixtures, cache: &SourceCache) -> anyhow::Result<
 
     let mut world = LspHarness::new(db);
     world.set_workspace_folders(vec![fixtures.workspace_folder()]);
-    world.set_console_scopes(session_scopes().clone());
+    world.set_session_scopes(session_scopes().clone());
 
     Ok(world)
 }

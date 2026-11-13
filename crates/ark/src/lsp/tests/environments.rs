@@ -1045,7 +1045,7 @@ fn open_file_diagnostics(state: &GlobalState, path: &Path) -> Vec<Diagnostic> {
         open_file.wire_uri(),
         &world.config.diagnostics,
         world.config.position_encoding,
-        &world.console_scopes,
+        world.session_scopes(),
         false,
     )
 }

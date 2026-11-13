@@ -90,17 +90,6 @@ const DID_CHANGE_WATCHED_FILES: &str = "workspace/didChangeWatchedFiles";
 
 // Handlers that mutate the world state
 
-/// Information sent from the kernel to the LSP after each top-level evaluation.
-#[derive(Debug)]
-pub struct ConsoleInputs {
-    /// List of console scopes, from innermost (global or debug) to outermost
-    /// scope. Currently the scopes are vectors of symbol names. TODO: In the
-    /// future, we should send structural information like search path, and let
-    /// the LSP query us for the contents so that the LSP can cache the
-    /// information.
-    pub console_scopes: Vec<Vec<String>>,
-}
-
 // Handlers taking exclusive references to global state
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -1000,23 +989,6 @@ async fn pull_config(
     }
 
     Ok(global_options)
-}
-
-#[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn did_change_console_inputs(
-    inputs: ConsoleInputs,
-    state: &mut WorldState,
-) -> anyhow::Result<()> {
-    state.console_scopes = inputs.console_scopes;
-
-    // We currently rely on global console scopes for diagnostics, in particular
-    // during package development in conjunction with `devtools::load_all()`.
-    // Ideally diagnostics would not rely on these though, and we wouldn't need
-    // to refresh from here. The scopes live outside oak so we bump the revision
-    // manually, causing diagnostics to get refreshed on the next tick.
-    state.bump_revision();
-
-    Ok(())
 }
 
 #[tracing::instrument(level = "info", skip_all)]

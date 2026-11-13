@@ -167,10 +167,10 @@ impl Drop for AbortReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lsp::host::ConsoleInputs;
     use crate::lsp::main_loop::init_aux_for_test;
     use crate::lsp::main_loop::AuxiliaryEvent;
     use crate::lsp::main_loop::KernelNotification;
-    use crate::lsp::state_handlers::ConsoleInputs;
 
     /// The aborting hook makes a panic outside all recovery boundaries fail the
     /// test process instead of only ending the worker thread.

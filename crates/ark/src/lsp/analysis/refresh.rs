@@ -134,7 +134,7 @@ fn refresh_diagnostics(
         &uri,
         &state.config.diagnostics,
         state.config.position_encoding,
-        &state.console_scopes,
+        &state.session_scopes,
         testthat,
     );
 

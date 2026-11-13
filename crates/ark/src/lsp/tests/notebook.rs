@@ -132,7 +132,7 @@ fn penguins_state(library: &tempfile::TempDir) -> WorldState {
     db.set_library_paths(&[library.path().to_path_buf()]);
 
     let mut state = WorldState::with_db(db);
-    state.console_scopes = vec![vec!["library".to_string()]];
+    state.set_session_scopes(vec![vec!["library".to_string()]]);
     state
 }
 
@@ -154,7 +154,7 @@ fn cell_diagnostic_messages(state: &WorldState, handle: usize) -> Vec<String> {
         &cell_uri(handle),
         &state.config.diagnostics,
         state.config.position_encoding,
-        &state.console_scopes,
+        state.session_scopes(),
         false,
     )
     .into_iter()

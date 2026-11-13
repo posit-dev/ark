@@ -19,7 +19,7 @@ use crate::lsp::state::WorldState;
 pub(crate) struct WorldStateSnapshot {
     /// Private so readers can only reach it through [`Self::db`].
     db: OakDatabase,
-    pub(crate) console_scopes: Vec<Vec<String>>,
+    pub(crate) session_scopes: Vec<Vec<String>>,
     pub(crate) config: LspConfig,
 }
 
@@ -34,7 +34,7 @@ impl WorldState {
     pub(crate) fn snapshot(&self) -> WorldStateSnapshot {
         WorldStateSnapshot {
             db: self.db().snapshot(),
-            console_scopes: self.console_scopes.clone(),
+            session_scopes: self.session_scopes().to_vec(),
             config: self.config.clone(),
         }
     }

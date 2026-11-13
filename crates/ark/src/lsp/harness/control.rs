@@ -38,7 +38,7 @@ impl LspHarness {
             open_file.wire_uri(),
             &snapshot.config.diagnostics,
             snapshot.config.position_encoding,
-            &snapshot.console_scopes,
+            &snapshot.session_scopes,
             is_testthat_path(path),
         ))
     }

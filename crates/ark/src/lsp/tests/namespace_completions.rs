@@ -40,6 +40,7 @@ use crate::lsp::environments::unresolved_database;
 use crate::lsp::environments::EnvironmentRequest;
 use crate::lsp::environments::EnvironmentResolver;
 use crate::lsp::environments::EnvironmentScheduler;
+use crate::lsp::host::ConsoleInputs;
 use crate::lsp::main_loop::init_aux_for_test;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
@@ -48,7 +49,6 @@ use crate::lsp::main_loop::LspState;
 use crate::lsp::sidecar::SidecarScheduler;
 use crate::lsp::sources::SourceScheduler;
 use crate::lsp::state::WorldState;
-use crate::lsp::state_handlers::ConsoleInputs;
 
 const FOO_SOURCES: &[(&str, &str)] = &[("foo.R", "foo <- function() 1\n")];
 

@@ -75,3 +75,17 @@ fn test_wire_uri_non_open_file_encodes_reserved_characters() {
         .parse::<Uri>()
         .is_err());
 }
+
+/// Session scopes are not oak inputs. `set_session_scopes()` must advance the
+/// revision so the main loop schedules diagnostics with the updated scopes.
+#[test]
+fn test_set_session_scopes_advances_revision() {
+    let mut state = WorldState::default();
+    let before = state.revision();
+
+    state.set_session_scopes(vec![vec!["foo".to_string()]]);
+
+    let after = state.revision();
+    assert_ne!(before, after);
+    assert_eq!(state.session_scopes(), [vec!["foo".to_string()]]);
+}

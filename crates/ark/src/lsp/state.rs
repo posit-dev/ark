@@ -48,11 +48,11 @@ pub(crate) struct WorldState {
     /// Maps a `String` uri to the contents of the document
     pub(crate) virtual_documents: HashMap<String, String>,
 
-    /// The scopes for the console. This currently contains a list (outer `Vec`)
-    /// of names (inner `Vec`) within the environments on the search path, starting
-    /// from the global environment and ending with the base package. Eventually
-    /// this might also be populated with the scope for the current environment
-    /// in debug sessions (not implemented yet).
+    /// Names from the host's R session, with one inner vector per environment
+    /// in search-path order, from the global environment to the base package.
+    /// Empty for a host without a session. Selected debug-frame scopes are not
+    /// included. Private so every change goes through
+    /// [`Self::set_session_scopes()`] and schedules a diagnostics refresh.
     ///
     /// This is currently one of the main sources of known symbols for
     /// diagnostics. In the future we should better delineate interactive
@@ -62,14 +62,10 @@ pub(crate) struct WorldState {
     /// examined for diagnostics should be fully determined by variable bindings
     /// and imports (code-first diagnostics).
     ///
-    /// In the future this should probably become more complex with a list of
-    /// either symbol names (as is now the case) or named environments, such as
-    /// `pkg:ggplot2`. Storing named environments here will allow the LSP to
-    /// retrieve the symbols in a pull fashion (the whole console scopes are
-    /// currently pushed to the LSP), and cache the symbols with Salsa. The
-    /// performance is not currently an issue but this could change once we do
-    /// more analysis of symbols in the search path.
-    pub(crate) console_scopes: Vec<Vec<String>>,
+    /// The host pushes all symbol names rather than environment identities.
+    /// TODO: Represent named environments such as `pkg:ggplot2` so the LSP can
+    /// query their symbols on demand and cache them with Salsa.
+    session_scopes: Vec<Vec<String>>,
 
     pub(crate) config: LspConfig,
 
@@ -152,12 +148,25 @@ impl WorldState {
 
     /// Advance the oak revision without changing any oak input.
     ///
-    /// Currently used for state that lives on `WorldState` but not in the Oak
-    /// DB (e.g. console scopes and the diagnostics config). The revision bump
-    /// invalidates in-flight background workers (e.g. diagnostics), and
-    /// triggers a diagnostic refresh.
+    /// Session scopes and diagnostics configuration live on `WorldState`,
+    /// outside the oak database. The revision bump cancels background readers
+    /// holding older snapshots and schedules a diagnostics refresh in the main loop.
     pub(crate) fn bump_revision(&mut self) {
         self.db_mut().synthetic_write(salsa::Durability::LOW);
+    }
+
+    pub(crate) fn session_scopes(&self) -> &[Vec<String>] {
+        &self.session_scopes
+    }
+
+    /// Replace the session scopes that diagnostics treat as defined names.
+    ///
+    /// The scopes are not oak inputs, so [`Self::bump_revision()`] schedules a
+    /// diagnostics refresh in the main loop and cancels background readers
+    /// holding snapshots of the previous scopes.
+    pub(crate) fn set_session_scopes(&mut self, scopes: Vec<Vec<String>>) {
+        self.session_scopes = scopes;
+        self.bump_revision();
     }
 
     pub(crate) fn open_file_mut(&mut self, path: &FilePath) -> anyhow::Result<&mut OpenFile> {
