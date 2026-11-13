@@ -68,9 +68,14 @@ macro_rules! log_warn {
 macro_rules! log_error {
     ($($arg:tt)+) => ($crate::lsp::_log!(tower_lsp_server::ls_types::MessageType::ERROR, $($arg)+))
 }
+// `cfg!(test)` is evaluated in the crate that invokes the macro, so the unit
+// tests of every calling crate skip the client channel, which no unit test
+// connects.
 macro_rules! _log {
     ($lvl:expr, $($arg:tt)+) => ({
-        $crate::lsp::main_loop::log($lvl, format!($($arg)+));
+        if !cfg!(test) {
+            $crate::lsp::main_loop::log($lvl, format!($($arg)+));
+        }
     });
 }
 
