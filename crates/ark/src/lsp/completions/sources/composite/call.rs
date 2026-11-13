@@ -16,8 +16,8 @@ use crate::lsp::completions::request::CallRequest;
 use crate::lsp::completions::sources::utils::call_node_position_type;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
 use crate::lsp::completions::sources::utils::CallNodePositionType;
+use crate::lsp::coordinates::lsp_position_from_tree_sitter_point;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
 use crate::lsp::traits::node::NodeExt;
 
 /// Recognizes an argument name position in a call. With a pipe root, the

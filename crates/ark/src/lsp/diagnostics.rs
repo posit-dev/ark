@@ -31,13 +31,13 @@ use tree_sitter::Node;
 use tree_sitter::Point;
 use tree_sitter::Range;
 
+use crate::lsp::coordinates::lsp_range_from_tree_sitter_range;
 use crate::lsp::db::ArkDb;
 use crate::lsp::db::FileArkExt;
 use crate::lsp::declarations::top_level_declare;
 use crate::lsp::diagnostics_syntax::missing_namespace_rhs_diagnostics;
 use crate::lsp::diagnostics_syntax::syntax_diagnostics;
 use crate::lsp::indexer;
-use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::BinaryOperatorType;
@@ -1401,7 +1401,6 @@ mod tests {
     use super::DEFAULT_ENVIRONMENT_FIXES;
     use super::NO_R_EXECUTABLE;
     use crate::console::console_scopes;
-    use crate::lsp::traits::url::UrlExt;
     use crate::r_task;
 
     #[derive(Default)]
@@ -1434,7 +1433,7 @@ mod tests {
 
     fn generate_diagnostics(code: &str, state: &TestState) -> Vec<lsp_types::Diagnostic> {
         let url = url::Url::parse("file:///test.R").unwrap();
-        let uri = url.to_uri().unwrap();
+        let uri: Uri = url.as_str().parse().unwrap();
         let file = oak_db::File::new(
             &state.db,
             FilePath::from_url(&url),
@@ -2114,7 +2113,7 @@ foo
         let state = TestState::with_db(db);
 
         let url = url::Url::parse("file:///a.R").unwrap();
-        let uri = url.to_uri().unwrap();
+        let uri: Uri = url.as_str().parse().unwrap();
         let diagnostics = state.diagnose(file, &uri);
         assert!(diagnostics.is_empty());
     }
@@ -2234,7 +2233,8 @@ foo
         db.record_environment_failure(environment, String::from(NO_R_EXECUTABLE));
         let state = TestState::with_db(db);
 
-        let uri = url::Url::from_file_path(&script).unwrap().to_uri().unwrap();
+        let url = url::Url::from_file_path(&script).unwrap();
+        let uri: Uri = url.as_str().parse().unwrap();
         let diagnostics = state.diagnose(file, &uri);
         assert_eq!(
             diagnostics[0].message,
@@ -2344,7 +2344,8 @@ foo
         );
         let state = TestState::with_db(db);
 
-        let uri = url::Url::from_file_path(&script).unwrap().to_uri().unwrap();
+        let url = url::Url::from_file_path(&script).unwrap();
+        let uri: Uri = url.as_str().parse().unwrap();
         let failure_message = |state: &TestState| {
             let diagnostics = state.diagnose(file, &uri);
             assert_eq!(diagnostics.len(), 2);

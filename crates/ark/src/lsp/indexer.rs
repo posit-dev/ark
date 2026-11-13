@@ -10,6 +10,7 @@ use std::sync::LazyLock;
 
 use aether_lsp_utils::proto::to_proto;
 use aether_lsp_utils::proto::PositionEncoding;
+use aether_path::FilePath;
 use oak_db::File;
 use regex::Regex;
 use stdext::result::ResultExt;
@@ -19,7 +20,6 @@ use tower_lsp_server::ls_types::Range;
 use tree_sitter::Node;
 use tree_sitter::Query;
 
-use crate::lsp;
 use crate::lsp::db::ArkDb;
 use crate::lsp::db::FileArkExt;
 use crate::lsp::traits::node::NodeExt;
@@ -27,7 +27,6 @@ use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 use crate::treesitter::TsQuery;
-use crate::url::FilePathExt;
 
 #[derive(Clone, Debug, PartialEq, Eq, salsa::SalsaValue)]
 pub enum IndexEntryData {
@@ -130,7 +129,7 @@ fn file_index(db: &dyn ArkDb, file: File) -> FileIndex {
 
     for node in root.children(&mut cursor) {
         if let Err(err) = index_node(contents, &node, &mut entries) {
-            lsp::log_error!("Can't index document: {err:?}");
+            log::error!("Can't index document: {err:?}");
         }
     }
 
@@ -142,9 +141,8 @@ fn file_index(db: &dyn ArkDb, file: File) -> FileIndex {
     FileIndex { symbols }
 }
 
-/// Visit every workspace symbol across all indexable files. Callers that need a
-/// URI for messages to the frontend can resolve it from `File` via
-/// `WorldState::wire_uri`.
+/// Visit every workspace symbol across all indexable files. The callback
+/// receives the defining `File`, so callers can resolve its frontend URI.
 pub(crate) fn map(db: &dyn ArkDb, mut callback: impl FnMut(File, &str, &IndexEntry)) {
     for &file in oak_db::workspace_files(db) {
         if !is_indexable(db, file) {
@@ -186,10 +184,19 @@ pub(crate) fn warm(db: &dyn ArkDb) {
     }
 }
 
-// Exclude `ark://` virtual documents because they show foreign code the user
-// cannot edit.
 fn is_indexable(db: &dyn ArkDb, file: File) -> bool {
-    !file.path(db).is_ark_virtual_doc()
+    !is_debugger_virtual_doc(file.path(db))
+}
+
+/// URI scheme for code without a file on disk, such as namespace functions
+/// displayed by Ark's debugger or `View()`.
+pub(crate) const DEBUGGER_VIRTUAL_DOC_SCHEME: &str = "ark";
+
+/// Debugger virtual documents reach the database through `didOpen`, but show
+/// code the user cannot edit. Exclude their definitions from workspace symbols.
+fn is_debugger_virtual_doc(path: &FilePath) -> bool {
+    path.as_virtual()
+        .is_some_and(|uri| uri.as_url().scheme() == DEBUGGER_VIRTUAL_DOC_SCHEME)
 }
 
 fn index_insert(index: &mut rustc_hash::FxHashMap<String, IndexEntry>, entry: IndexEntry) {
@@ -386,11 +393,11 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::lsp::open_file::test_open_file;
+    use crate::lsp::db::test_file;
 
     macro_rules! test_index {
         ($code:expr) => {
-            let (db, file) = test_open_file($code);
+            let (db, file) = test_file($code);
             let tree = file.tree_sitter(&db);
             let contents = file.source_text(&db);
             let root = tree.root_node();

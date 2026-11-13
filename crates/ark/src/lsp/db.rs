@@ -70,3 +70,18 @@ pub(crate) fn parse_tree_sitter(text: &str) -> tree_sitter::Tree {
     // returns `None`.
     parser.parse(text, None).unwrap()
 }
+
+/// A database holding one file, `file:///test.R`, with contents `code`.
+#[cfg(test)]
+pub(crate) fn test_file(code: &str) -> (OakDatabase, File) {
+    let db = OakDatabase::new();
+    let url = url::Url::parse("file:///test.R").unwrap();
+    let file = File::new(
+        &db,
+        aether_path::FilePath::from_url(&url),
+        oak_db::FileRevision::zero(),
+        Some(code.to_string()),
+        None,
+    );
+    (db, file)
+}

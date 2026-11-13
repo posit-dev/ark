@@ -83,28 +83,8 @@ impl Capabilities {
         self.code_action_literal_support
     }
 
-    // Currently only used for testing
-    #[cfg(test)]
-    pub(crate) fn with_code_action_literal_support(
-        mut self,
-        code_action_literal_support: bool,
-    ) -> Self {
-        self.code_action_literal_support = code_action_literal_support;
-        self
-    }
-
     pub(crate) fn workspace_edit_document_changes(&self) -> bool {
         self.workspace_edit_document_changes
-    }
-
-    // Currently only used for testing
-    #[cfg(test)]
-    pub(crate) fn with_workspace_edit_document_changes(
-        mut self,
-        workspace_edit_document_changes: bool,
-    ) -> Self {
-        self.workspace_edit_document_changes = workspace_edit_document_changes;
-        self
     }
 
     /// Whether the client accepts `RelativePattern` watcher registrations.

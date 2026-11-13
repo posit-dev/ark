@@ -8,6 +8,8 @@
 use aether_path::FilePath;
 use amalthea::wire::execute_request::CodeLocation;
 
+use crate::lsp::indexer::DEBUGGER_VIRTUAL_DOC_SCHEME;
+
 /// Extract a canonical [`FilePath`] from a [`CodeLocation`].
 pub fn file_path_from_code_location(loc: &CodeLocation) -> FilePath {
     FilePath::from_url(&loc.uri)
@@ -27,7 +29,7 @@ pub trait FilePathExt {
 impl FilePathExt for FilePath {
     fn is_ark_virtual_doc(&self) -> bool {
         self.as_virtual()
-            .is_some_and(|uri| uri.as_url().scheme() == "ark")
+            .is_some_and(|uri| uri.as_url().scheme() == DEBUGGER_VIRTUAL_DOC_SCHEME)
     }
 
     fn should_diagnose(&self) -> bool {

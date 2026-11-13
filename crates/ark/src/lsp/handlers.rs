@@ -16,6 +16,7 @@ use tower_lsp_server::ls_types::CompletionList;
 use tower_lsp_server::ls_types::CompletionParams;
 use tower_lsp_server::ls_types::CompletionResponse;
 use tower_lsp_server::ls_types::DocumentOnTypeFormattingParams;
+use tower_lsp_server::ls_types::DocumentSymbol;
 use tower_lsp_server::ls_types::DocumentSymbolParams;
 use tower_lsp_server::ls_types::DocumentSymbolResponse;
 use tower_lsp_server::ls_types::FoldingRange;
@@ -52,6 +53,9 @@ use crate::lsp::completions::resolve_completion;
 use crate::lsp::completions::resolve_target;
 use crate::lsp::completions::static_completions;
 use crate::lsp::completions::RCompletionReplies;
+use crate::lsp::coordinates::lsp_range_from_tree_sitter_range;
+use crate::lsp::coordinates::tree_sitter_point_from_lsp_position;
+use crate::lsp::coordinates::tree_sitter_range_from_lsp_range;
 use crate::lsp::db::FileArkExt;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::find_references::find_references;
@@ -65,9 +69,6 @@ use crate::lsp::indent::indent_edit;
 use crate::lsp::input_boundaries::InputBoundariesParams;
 use crate::lsp::input_boundaries::InputBoundariesResponse;
 use crate::lsp::main_loop::LspState;
-use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
-use crate::lsp::open_file::tree_sitter_point_from_lsp_position;
-use crate::lsp::open_file::tree_sitter_range_from_lsp_range;
 use crate::lsp::rename;
 use crate::lsp::selection_range::convert_selection_range_from_tree_sitter_to_lsp;
 use crate::lsp::selection_range::selection_range;
@@ -101,7 +102,15 @@ pub(crate) fn handle_symbol(
     params: WorkspaceSymbolParams,
     state: &WorldState,
 ) -> LspResult<Option<Vec<SymbolInformation>>> {
-    symbols::symbols(&params, state).map(Some).or_else(|err| {
+    symbols::symbols(
+        state.db(),
+        &params,
+        state.config.position_encoding,
+        state.config.workspace_symbols.include_comment_sections,
+        |file| state.wire_uri(file),
+    )
+    .map(Some)
+    .or_else(|err| {
         // Missing doc: Why are we not propagating errors to the frontend?
         lsp::log_error!("{err:?}");
         Ok(None)
@@ -113,13 +122,30 @@ pub(crate) fn handle_document_symbol(
     params: DocumentSymbolParams,
     state: &WorldState,
 ) -> LspResult<Option<DocumentSymbolResponse>> {
-    symbols::document_symbols(state, &params)
+    document_symbols(&params, state)
         .map(|res| Some(DocumentSymbolResponse::Nested(res)))
         .or_else(|err| {
             // Missing doc: Why are we not propagating errors to the frontend?
             lsp::log_error!("{err:?}");
             Ok(None)
         })
+}
+
+/// Document lookup errors reach `handle_document_symbol()`, which logs them
+/// and returns `None`. `symbols::document_symbols()` logs collection errors
+/// itself and returns an empty symbol list.
+fn document_symbols(
+    params: &DocumentSymbolParams,
+    state: &WorldState,
+) -> anyhow::Result<Vec<DocumentSymbol>> {
+    let path = params.text_document.uri.to_document_path()?;
+    let file = state.open_file(&path)?.file();
+    symbols::document_symbols(
+        state.db(),
+        file,
+        state.config.position_encoding,
+        state.config.symbols.include_assignments_in_blocks,
+    )
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -514,8 +540,21 @@ pub(crate) fn handle_code_action(
     let encoding = state.config.position_encoding;
     let range = tree_sitter_range_from_lsp_range(params.range, file.line_index(db), encoding)?;
 
-    let actions = code_actions(db, file.file(), range, &lsp_state.capabilities);
-    let response = actions.into_response(db, file, encoding, &lsp_state.capabilities);
+    let capabilities = &lsp_state.capabilities;
+    let actions = code_actions(
+        db,
+        file.file(),
+        range,
+        capabilities.code_action_literal_support(),
+    );
+    let response = actions.into_response(
+        db,
+        file.file(),
+        file.wire_uri(),
+        file.version(),
+        encoding,
+        capabilities.workspace_edit_document_changes(),
+    );
 
     if response.is_empty() {
         Ok(None)

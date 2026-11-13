@@ -9,8 +9,8 @@ use tower_lsp_server::ls_types::Diagnostic;
 use tree_sitter::Node;
 use tree_sitter::Range;
 
+use crate::lsp::coordinates::lsp_range_from_tree_sitter_range;
 use crate::lsp::diagnostics::DiagnosticContext;
-use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::NodeType;
@@ -458,19 +458,21 @@ mod tests {
     use aether_lsp_utils::proto::PositionEncoding;
     use tower_lsp_server::ls_types::Diagnostic;
     use tower_lsp_server::ls_types::Position;
+    use tower_lsp_server::ls_types::Uri;
 
+    use crate::lsp::db::test_file;
+    use crate::lsp::db::FileArkExt;
     use crate::lsp::diagnostics::DiagnosticContext;
     use crate::lsp::diagnostics_syntax::syntax_diagnostics;
-    use crate::lsp::open_file::test_open_file;
 
     const ENCODING: PositionEncoding =
         PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
 
     fn text_diagnostics(text: &str) -> Vec<Diagnostic> {
-        let (db, open_file) = test_open_file(text);
-        let context = DiagnosticContext::new(&db, open_file.file(), ENCODING, open_file.wire_uri());
-        let diagnostics =
-            syntax_diagnostics(open_file.tree_sitter(&db).root_node(), &context).unwrap();
+        let (db, file) = test_file(text);
+        let uri: Uri = "file:///test.R".parse().unwrap();
+        let context = DiagnosticContext::new(&db, file, ENCODING, &uri);
+        let diagnostics = syntax_diagnostics(file.tree_sitter(&db).root_node(), &context).unwrap();
         diagnostics
     }
 

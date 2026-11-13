@@ -16,10 +16,8 @@ use tower_lsp_server::ls_types as lsp_types;
 use tree_sitter::Point;
 use tree_sitter::Range;
 
-use crate::lsp::capabilities::Capabilities;
+use crate::lsp::coordinates::lsp_position_from_tree_sitter_point;
 use crate::lsp::db::ArkDb;
-use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
-use crate::lsp::open_file::OpenFile;
 
 mod roxygen;
 
@@ -68,15 +66,18 @@ pub(crate) struct CodeActions {
 }
 
 /// Compute the code actions for `range`.
+///
+/// If `code_action_literal_support` is false, the client cannot accept
+/// `CodeAction` literals, so no actions are offered.
 pub(crate) fn code_actions(
     db: &dyn ArkDb,
     file: File,
     range: Range,
-    capabilities: &Capabilities,
+    code_action_literal_support: bool,
 ) -> CodeActions {
     let mut actions = CodeActions::new();
 
-    if let Some(action) = roxygen::to_code_action(db, file, range, capabilities) {
+    if let Some(action) = roxygen::to_code_action(db, file, range, code_action_literal_support) {
         actions.add_action(action);
     }
 
@@ -94,19 +95,22 @@ impl CodeActions {
         self.actions.push(action);
     }
 
-    /// Assemble into the LSP response. This is the boundary where the `OpenFile`
-    /// and the position encoding enter. It converts the tree-sitter coordinates
-    /// into LSP `TextEdit`s and stamps each edit with the document's wire `Uri`
-    /// and version.
+    /// Convert tree-sitter edits to LSP coordinates using `file`'s line index
+    /// and `encoding`, and associate them with `uri`.
+    ///
+    /// If `workspace_edit_document_changes` is true, include `version` in
+    /// `WorkspaceEdit::document_changes`. Otherwise, use the unversioned
+    /// `WorkspaceEdit::changes` map.
     pub(crate) fn into_response(
         self,
         db: &dyn Db,
-        file: &OpenFile,
+        file: File,
+        uri: &lsp_types::Uri,
+        version: Option<i32>,
         encoding: PositionEncoding,
-        capabilities: &Capabilities,
+        workspace_edit_document_changes: bool,
     ) -> lsp_types::CodeActionResponse {
         let line_index = file.line_index(db);
-        let uri = file.wire_uri().clone();
 
         self.actions
             .into_iter()
@@ -129,9 +133,9 @@ impl CodeActions {
 
                 let workspace_edit = code_action_workspace_text_edit(
                     uri.clone(),
-                    file.version(),
+                    version,
                     edits,
-                    capabilities,
+                    workspace_edit_document_changes,
                 );
 
                 Some(lsp_types::CodeActionOrCommand::CodeAction(code_action(
@@ -167,9 +171,9 @@ pub(crate) fn code_action_workspace_text_edit(
     uri: lsp_types::Uri,
     version: Option<i32>,
     edits: Vec<lsp_types::TextEdit>,
-    capabilities: &Capabilities,
+    workspace_edit_document_changes: bool,
 ) -> lsp_types::WorkspaceEdit {
-    if capabilities.workspace_edit_document_changes() {
+    if workspace_edit_document_changes {
         // Prefer the versioned `DocumentChanges` feature
         let edit = lsp_types::TextDocumentEdit {
             text_document: lsp_types::OptionalVersionedTextDocumentIdentifier { uri, version },

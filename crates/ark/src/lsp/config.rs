@@ -6,6 +6,8 @@ use serde_json::Value;
 use stdext::env_flag_opt;
 
 use crate::lsp::diagnostics::DiagnosticsConfig;
+use crate::lsp::indent::IndentStyle;
+use crate::lsp::indent::IndentationConfig;
 
 pub struct Setting<T> {
     pub key: &'static str,
@@ -232,35 +234,6 @@ pub struct WorkspaceSymbolsConfig {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct DocumentConfig {
     pub indent: IndentationConfig,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct IndentationConfig {
-    /// Whether to insert spaces of tabs for one level of indentation.
-    pub indent_style: IndentStyle,
-
-    /// The number of spaces for one level of indentation.
-    pub indent_size: usize,
-
-    /// The width of a tab. There may be projects with an `indent_size` of 4 and
-    /// a `tab_width` of 8 (e.g. GNU R).
-    pub tab_width: usize,
-}
-
-#[derive(PartialEq, Serialize, Deserialize, Clone, Debug)]
-pub enum IndentStyle {
-    Tab,
-    Space,
-}
-
-impl Default for IndentationConfig {
-    fn default() -> Self {
-        Self {
-            indent_style: IndentStyle::Space,
-            indent_size: 2,
-            tab_width: 2,
-        }
-    }
 }
 
 pub(crate) fn indent_style_from_lsp(insert_spaces: bool) -> IndentStyle {

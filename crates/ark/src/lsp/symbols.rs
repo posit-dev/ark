@@ -14,23 +14,21 @@ use oak_db::File;
 use stdext::result::ResultExt;
 use stdext::unwrap::IntoResult;
 use tower_lsp_server::ls_types::DocumentSymbol;
-use tower_lsp_server::ls_types::DocumentSymbolParams;
 use tower_lsp_server::ls_types::Location;
 use tower_lsp_server::ls_types::Range;
 use tower_lsp_server::ls_types::SymbolInformation;
 use tower_lsp_server::ls_types::SymbolKind;
+use tower_lsp_server::ls_types::Uri;
 use tower_lsp_server::ls_types::WorkspaceSymbolParams;
 use tree_sitter::Node;
 
+use crate::lsp::coordinates::lsp_position_from_tree_sitter_point;
 use crate::lsp::db::ArkDb;
 use crate::lsp::db::FileArkExt;
 use crate::lsp::indexer;
 use crate::lsp::indexer::IndexEntryData;
-use crate::lsp::open_file::lsp_position_from_tree_sitter_point;
-use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::string::StringExt;
-use crate::lsp::traits::url::UriExt;
 use crate::treesitter::point_end_of_previous_row;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
@@ -60,13 +58,19 @@ fn new_symbol_node(
     symbol
 }
 
+/// Workspace symbols that fuzzy-match `params.query`.
+///
+/// `wire_uri()` supplies the frontend URI for each symbol's defining file.
+/// If URI resolution fails, log the error and skip the symbol. Include comment
+/// sections only when `include_comment_sections` is true.
 pub(crate) fn symbols(
+    db: &dyn ArkDb,
     params: &WorkspaceSymbolParams,
-    state: &WorldState,
+    encoding: PositionEncoding,
+    include_comment_sections: bool,
+    wire_uri: impl Fn(File) -> anyhow::Result<Uri>,
 ) -> anyhow::Result<Vec<SymbolInformation>> {
     let query = &params.query;
-    let db = state.db();
-    let encoding = state.config.position_encoding;
     let mut info: Vec<SymbolInformation> = Vec::new();
 
     indexer::map(db, |file, symbol, entry| {
@@ -78,7 +82,7 @@ pub(crate) fn symbols(
             return;
         };
 
-        let Some(uri) = state.wire_uri(file).log_err() else {
+        let Some(uri) = wire_uri(file).log_err() else {
             return;
         };
 
@@ -95,7 +99,7 @@ pub(crate) fn symbols(
             },
 
             IndexEntryData::Section { level: _, title } => {
-                if state.config.workspace_symbols.include_comment_sections {
+                if include_comment_sections {
                     info.push(SymbolInformation {
                         name: title.to_string(),
                         kind: SymbolKind::STRING,
@@ -160,21 +164,23 @@ impl CollectContext {
     }
 }
 
+/// Document symbols of `file`. If `include_assignments_in_blocks` is true,
+/// include non-function assignments inside calls and function bodies as well
+/// as top-level assignments. Function definitions are included regardless.
 pub(crate) fn document_symbols(
-    state: &WorldState,
-    params: &DocumentSymbolParams,
+    db: &dyn ArkDb,
+    file: File,
+    encoding: PositionEncoding,
+    include_assignments_in_blocks: bool,
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
-    let path = params.text_document.uri.to_document_path()?;
-    let file = state.open_file(&path)?.file();
-    let db = state.db();
     let ast = file.tree_sitter(db);
 
     // Start walking from the root node
     let root_node = ast.root_node();
     let mut result = Vec::new();
 
-    let mut ctx = CollectContext::new(state.config.position_encoding);
-    ctx.include_assignments_in_blocks = state.config.symbols.include_assignments_in_blocks;
+    let mut ctx = CollectContext::new(encoding);
+    ctx.include_assignments_in_blocks = include_assignments_in_blocks;
 
     // Extract and process all symbols from the AST
     if let Err(err) = collect_symbols(&mut ctx, db, file, &root_node, &mut result) {
@@ -795,26 +801,25 @@ pub(crate) fn parse_comment_as_section(comment: &str) -> Option<(usize, String)>
 #[cfg(test)]
 mod tests {
     use aether_lsp_utils::proto::PositionEncoding;
+    use oak_db::OakDatabase;
     use oak_scan::DbScan;
     use tower_lsp_server::ls_types::Position;
 
     use super::*;
-    use crate::lsp::config::LspConfig;
-    use crate::lsp::config::WorkspaceSymbolsConfig;
-    use crate::lsp::util::test_path;
+    use crate::lsp::db::test_file;
 
     const ENCODING: PositionEncoding =
         PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
 
     fn test_symbol(code: &str) -> Vec<DocumentSymbol> {
-        let (db, file) = crate::lsp::open_file::test_open_file(code);
+        let (db, file) = test_file(code);
         let node = file.tree_sitter(&db).root_node();
 
         let mut symbols = Vec::new();
         collect_symbols(
             &mut CollectContext::new(ENCODING),
             &db,
-            file.file(),
+            file,
             &node,
             &mut symbols,
         )
@@ -1167,7 +1172,7 @@ outer <- 4
 
     #[test]
     fn test_symbol_nested_assignments_enabled() {
-        let (db, file) = crate::lsp::open_file::test_open_file(
+        let (db, file) = test_file(
             "
 local({
   inner1 <- 1
@@ -1185,7 +1190,7 @@ outer <- 4
         ctx.include_assignments_in_blocks = true;
 
         let mut symbols = Vec::new();
-        collect_symbols(ctx, &db, file.file(), &node, &mut symbols).unwrap();
+        collect_symbols(ctx, &db, file, &node, &mut symbols).unwrap();
 
         insta::assert_debug_snapshot!(symbols);
     }
@@ -1195,24 +1200,17 @@ outer <- 4
         fn run(include_comment_sections: bool) -> Vec<String> {
             let code = "# Section ----\nfoo <- 1";
 
-            let config = LspConfig {
-                workspace_symbols: WorkspaceSymbolsConfig {
-                    include_comment_sections,
-                },
-                ..Default::default()
-            };
-            let mut state = WorldState::default();
-            state.config = config;
-            let uri = test_path("test.R");
-            state
-                .db_mut()
-                .upsert_editor(aether_path::FilePath::from_url(&uri), code.to_string());
+            let mut db = OakDatabase::new();
+            let url = url::Url::parse("file:///test.R").unwrap();
+            db.upsert_editor(aether_path::FilePath::from_url(&url), code.to_string());
 
             let params = WorkspaceSymbolParams {
                 query: "Section".to_string(),
                 ..Default::default()
             };
-            let result = super::symbols(&params, &state).unwrap();
+            let wire_uri = |_file| Ok(url.as_str().parse::<Uri>()?);
+            let result =
+                super::symbols(&db, &params, ENCODING, include_comment_sections, wire_uri).unwrap();
 
             result.into_iter().map(|s| s.name).collect()
         }

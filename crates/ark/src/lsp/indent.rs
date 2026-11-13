@@ -1,15 +1,42 @@
 use anyhow::anyhow;
 use oak_db::File;
+use serde::Deserialize;
+use serde::Serialize;
 
-use crate::lsp::backend::LspError;
-use crate::lsp::backend::LspResult;
-use crate::lsp::config::IndentStyle;
-use crate::lsp::config::IndentationConfig;
 use crate::lsp::db::ArkDb;
 use crate::lsp::db::FileArkExt;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct IndentationConfig {
+    /// Whether to insert spaces of tabs for one level of indentation.
+    pub indent_style: IndentStyle,
+
+    /// The number of spaces for one level of indentation.
+    pub indent_size: usize,
+
+    /// The width of a tab. There may be projects with an `indent_size` of 4 and
+    /// a `tab_width` of 8 (e.g. GNU R).
+    pub tab_width: usize,
+}
+
+#[derive(PartialEq, Serialize, Deserialize, Clone, Debug)]
+pub enum IndentStyle {
+    Tab,
+    Space,
+}
+
+impl Default for IndentationConfig {
+    fn default() -> Self {
+        Self {
+            indent_style: IndentStyle::Space,
+            indent_size: 2,
+            tab_width: 2,
+        }
+    }
+}
 
 /// An indentation correction in tree-sitter coordinates.
 pub(crate) struct IndentEdit {
@@ -33,7 +60,7 @@ pub(crate) fn indent_edit(
     file: File,
     config: &IndentationConfig,
     line: usize,
-) -> LspResult<Option<Vec<IndentEdit>>> {
+) -> anyhow::Result<Option<Vec<IndentEdit>>> {
     let text = file.source_text(db).as_str();
     let ast = file.tree_sitter(db);
 
@@ -44,7 +71,7 @@ pub(crate) fn indent_edit(
         text.chars().filter(|c| *c == '\n').count() + 1
     };
     if line >= line_count {
-        return Err(LspError::Anyhow(anyhow!("`line` is OOB")));
+        return Err(anyhow!("`line` is OOB"));
     }
 
     let indent_pos = tree_sitter::Point {
@@ -376,18 +403,19 @@ mod tests {
     use aether_lsp_utils::proto::from_proto;
     use aether_lsp_utils::proto::PositionEncoding;
     use biome_line_index::WideEncoding;
+    use oak_db::File;
     use oak_db::OakDatabase;
     use salsa::Setter;
     use stdext::assert_match;
     use tower_lsp_server::ls_types::TextEdit;
 
-    use crate::lsp::config::IndentStyle;
-    use crate::lsp::config::IndentationConfig;
+    use crate::lsp::coordinates::lsp_range_from_tree_sitter_range;
+    use crate::lsp::db::test_file;
     use crate::lsp::indent::indent_edit;
     use crate::lsp::indent::new_line_indent;
     use crate::lsp::indent::IndentEdit;
-    use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
-    use crate::lsp::open_file::OpenFile;
+    use crate::lsp::indent::IndentStyle;
+    use crate::lsp::indent::IndentationConfig;
 
     // NOTE: If we keep adding tests we might want to switch to snapshot tests
 
@@ -402,7 +430,7 @@ mod tests {
     fn apply_text_edits(
         edits: Vec<IndentEdit>,
         db: &mut OakDatabase,
-        file: &OpenFile,
+        file: File,
         encoding: PositionEncoding,
     ) {
         let line_index = file.line_index(&*db).clone();
@@ -417,20 +445,20 @@ mod tests {
         let mut contents = file.source_text(&*db).clone();
         let mut line_index = line_index;
         from_proto::apply_text_edits(&mut contents, edits, &mut line_index, encoding);
-        file.file().set_source_text_override(db).to(Some(contents));
+        file.set_source_text_override(db).to(Some(contents));
     }
 
     #[test]
     fn test_line_indent_oob() {
-        let (db, file) = crate::lsp::open_file::test_open_file("");
+        let (db, file) = test_file("");
         assert_match!(
-            indent_edit(&db, file.file(), &file.config().indent, 1),
+            indent_edit(&db, file, &IndentationConfig::default(), 1),
             Err(_)
         );
 
-        let (db, file) = crate::lsp::open_file::test_open_file("\n");
+        let (db, file) = test_file("\n");
         assert_match!(
-            indent_edit(&db, file.file(), &file.config().indent, 2),
+            indent_edit(&db, file, &IndentationConfig::default(), 2),
             Err(_)
         );
     }
@@ -441,44 +469,43 @@ mod tests {
         // there is before the first newline
         // https://github.com/posit-dev/positron/issues/5258
         let text = String::from("  \nx");
-        let (db, file) = crate::lsp::open_file::test_open_file(&text);
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 1).unwrap();
+        let (db, file) = test_file(&text);
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1).unwrap();
         assert!(edit.is_none());
 
         let text = String::from("\r\nx");
-        let (db, file) = crate::lsp::open_file::test_open_file(&text);
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 1).unwrap();
+        let (db, file) = test_file(&text);
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1).unwrap();
         assert!(edit.is_none());
     }
 
     #[test]
     fn test_line_indent_chains() {
-        let (mut db, file) =
-            crate::lsp::open_file::test_open_file("foo +\n  bar +\n    baz + qux |>\nfoofy()");
+        let (mut db, file) = test_file("foo +\n  bar +\n    baz + qux |>\nfoofy()");
 
         // Indenting the first two lines doesn't change the text
         assert_match!(
-            indent_edit(&db, file.file(), &file.config().indent, 0),
+            indent_edit(&db, file, &IndentationConfig::default(), 0),
             Ok(None)
         );
         assert_match!(
-            indent_edit(&db, file.file(), &file.config().indent, 1),
+            indent_edit(&db, file, &IndentationConfig::default(), 1),
             Ok(None)
         );
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(
             file.source_text(&db),
             "foo +\n  bar +\n  baz + qux |>\nfoofy()"
         );
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 3)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 3)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(
             file.source_text(&db),
             "foo +\n  bar +\n  baz + qux |>\n  foofy()"
@@ -487,13 +514,12 @@ mod tests {
 
     #[test]
     fn test_line_indent_chains_trailing_space() {
-        let (mut db, file) =
-            crate::lsp::open_file::test_open_file("foo +\n  bar(\n    x\n  ) +\n    baz\n  ");
+        let (mut db, file) = test_file("foo +\n  bar(\n    x\n  ) +\n    baz\n  ");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 4)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 4)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(
             file.source_text(&db),
             "foo +\n  bar(\n    x\n  ) +\n  baz\n  "
@@ -503,152 +529,150 @@ mod tests {
     #[test]
     fn test_line_indent_chains_outdent() {
         let text = String::from("1 +\n  2\n");
-        let (db, file) = crate::lsp::open_file::test_open_file(&text);
+        let (db, file) = test_file(&text);
 
         assert_match!(
-            indent_edit(&db, file.file(), &file.config().indent, 2),
+            indent_edit(&db, file, &IndentationConfig::default(), 2),
             Ok(None)
         );
     }
 
     #[test]
     fn test_line_indent_chains_deep() {
-        let (mut db, file) = crate::lsp::open_file::test_open_file("deep()()[] +\n    deep()()[]");
+        let (mut db, file) = test_file("deep()()[] +\n    deep()()[]");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 0).unwrap();
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 0).unwrap();
         assert!(edit.is_none());
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "deep()()[] +\n  deep()()[]");
     }
 
     #[test]
     fn test_line_indent_chains_deep_newlines() {
         // With newlines in the way
-        let (mut db, file) = crate::lsp::open_file::test_open_file("deep(\n)()[] +\ndeep(\n)()[]");
+        let (mut db, file) = test_file("deep(\n)()[] +\ndeep(\n)()[]");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 0).unwrap();
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 0).unwrap();
         assert!(edit.is_none());
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "deep(\n)()[] +\n  deep(\n)()[]");
     }
 
     #[test]
     fn test_line_indent_chains_calls() {
-        let (mut db, file) = crate::lsp::open_file::test_open_file("foo() +\n  bar() +\nbaz()");
+        let (mut db, file) = test_file("foo() +\n  bar() +\nbaz()");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "foo() +\n  bar() +\n  baz()");
 
         // Indenting the first two lines doesn't change the text
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 0).unwrap();
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 0).unwrap();
         assert!(edit.is_none());
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 1).unwrap();
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1).unwrap();
         assert!(edit.is_none());
 
-        let (db, file) = crate::lsp::open_file::test_open_file("foo(\n) +\n  bar");
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 0).unwrap();
+        let (db, file) = test_file("foo(\n) +\n  bar");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 0).unwrap();
         assert!(edit.is_none());
     }
 
     #[test]
     fn test_line_indent_braced_expression() {
-        let (mut db, file) = crate::lsp::open_file::test_open_file("{\nbar\n}");
+        let (mut db, file) = test_file("{\nbar\n}");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "{\n  bar\n}");
 
-        let (mut db, file) = crate::lsp::open_file::test_open_file("function() {\nbar\n}");
+        let (mut db, file) = test_file("function() {\nbar\n}");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "function() {\n  bar\n}");
     }
 
     #[test]
     fn test_line_indent_braced_expression_closing() {
-        let (mut db, file) = crate::lsp::open_file::test_open_file("{\n  }");
+        let (mut db, file) = test_file("{\n  }");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "{\n}");
     }
 
     #[test]
     fn test_line_indent_braced_expression_closing_multiline() {
         // https://github.com/posit-dev/positron/issues/3484
-        let (mut db, file) = crate::lsp::open_file::test_open_file("{\n\n    }");
+        let (mut db, file) = test_file("{\n\n    }");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "{\n  \n}");
     }
 
     #[test]
     fn test_line_indent_braced_expression_multiline() {
-        let (mut db, file) =
-            crate::lsp::open_file::test_open_file("function(\n        ) {\nfoo\n}");
+        let (mut db, file) = test_file("function(\n        ) {\nfoo\n}");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "function(\n        ) {\n  foo\n}");
     }
 
     #[test]
     fn test_line_indent_braced_expression_multiline_empty() {
-        let (mut db, file) = crate::lsp::open_file::test_open_file("function(\n        ) {\n\n}");
+        let (mut db, file) = test_file("function(\n        ) {\n\n}");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "function(\n        ) {\n  \n}");
     }
 
     #[test]
     fn test_line_indent_minimum() {
         // https://github.com/posit-dev/positron/issues/1683
-        let (mut db, file) = crate::lsp::open_file::test_open_file("function() {\n  ({\n  }\n)\n}");
+        let (mut db, file) = test_file("function() {\n  ({\n  }\n)\n}");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 3)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 3)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "function() {\n  ({\n  }\n  )\n}");
     }
 
     #[test]
     fn test_line_indent_minimum_nested() {
         // Nested R function test with multiple levels of nesting
-        let (mut db, file) =
-            crate::lsp::open_file::test_open_file("{\n  {\n    ({\n    }\n  )\n  }\n}");
+        let (mut db, file) = test_file("{\n  {\n    ({\n    }\n  )\n  }\n}");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 4)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 4)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(
             file.source_text(&db),
             "{\n  {\n    ({\n    }\n    )\n  }\n}"
@@ -658,10 +682,10 @@ mod tests {
     #[test]
     fn test_line_indent_function_opening_brace_own_line() {
         let text = String::from("object <- function()\n{\n  body\n}");
-        let (db, file) = crate::lsp::open_file::test_open_file(&text);
+        let (db, file) = test_file(&text);
 
         assert_match!(
-            indent_edit(&db, file.file(), &file.config().indent, 1).unwrap(),
+            indent_edit(&db, file, &IndentationConfig::default(), 1).unwrap(),
             None
         );
     }
@@ -669,13 +693,12 @@ mod tests {
     #[test]
     fn test_line_indent_arguments() {
         // https://github.com/posit-dev/positron/issues/5754
-        let (mut db, file) =
-            crate::lsp::open_file::test_open_file("mtcars |>\n  ggplot(aes(x = qsec,\n  y = hp))");
+        let (mut db, file) = test_file("mtcars |>\n  ggplot(aes(x = qsec,\n  y = hp))");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(
             file.source_text(&db),
             "mtcars |>\n  ggplot(aes(x = qsec,\n    y = hp))"
@@ -685,112 +708,106 @@ mod tests {
     #[test]
     fn test_line_indent_arguments_closing_after_comma() {
         // Enter after `x = qsec,` with auto-closed delimiters
-        let (mut db, file) =
-            crate::lsp::open_file::test_open_file("mtcars |>\n  ggplot(aes(x = qsec,\n  ))");
+        let (mut db, file) = test_file("mtcars |>\n  ggplot(aes(x = qsec,\n  ))");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(
             file.source_text(&db),
             "mtcars |>\n  ggplot(aes(x = qsec,\n    ))"
         );
 
         // Also with a comment in between
-        let (mut db, file) = crate::lsp::open_file::test_open_file("foo(x, # comment\n)");
+        let (mut db, file) = test_file("foo(x, # comment\n)");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "foo(x, # comment\n  )");
     }
 
     #[test]
     fn test_line_indent_arguments_after_outdent() {
         let text = String::from("fun_call(parameter = (\n  stuff\n),\nargument)");
-        let (db, file) = crate::lsp::open_file::test_open_file(&text);
+        let (db, file) = test_file(&text);
         assert_match!(
-            indent_edit(&db, file.file(), &file.config().indent, 3),
+            indent_edit(&db, file, &IndentationConfig::default(), 3),
             Ok(None)
         );
 
-        let (mut db, file) = crate::lsp::open_file::test_open_file(
-            "fun_call(function() {\n  body\n},\n    argument)",
-        );
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 3)
+        let (mut db, file) = test_file("fun_call(function() {\n  body\n},\n    argument)");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 3)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(
             file.source_text(&db),
             "fun_call(function() {\n  body\n},\nargument)"
         );
 
         // A previous argument at the regular indentation doesn't lower it
-        let (mut db, file) =
-            crate::lsp::open_file::test_open_file("foo(\n  bar(\n    x\n  ),\nbaz)");
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 4)
+        let (mut db, file) = test_file("foo(\n  bar(\n    x\n  ),\nbaz)");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 4)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "foo(\n  bar(\n    x\n  ),\n  baz)");
 
         // The previous argument starts on an outdented line but ends on a
         // line at the regular indentation
-        let (mut db, file) =
-            crate::lsp::open_file::test_open_file("foo(\na = bar(\n  x\n  ),\n    b)");
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 4)
+        let (mut db, file) = test_file("foo(\na = bar(\n  x\n  ),\n    b)");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 4)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "foo(\na = bar(\n  x\n  ),\nb)");
     }
 
     #[test]
     fn test_line_indent_arguments_after_multiline_string() {
         // The string's last line is content, not an outdent
-        let (mut db, file) = crate::lsp::open_file::test_open_file("foo(\n  \"abc\ndef\",\nx)");
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 3)
+        let (mut db, file) = test_file("foo(\n  \"abc\ndef\",\nx)");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 3)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "foo(\n  \"abc\ndef\",\n  x)");
 
         // Raw string
-        let (mut db, file) = crate::lsp::open_file::test_open_file("foo(\n  r\"(abc\ndef)\",\nx)");
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 3)
+        let (mut db, file) = test_file("foo(\n  r\"(abc\ndef)\",\nx)");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 3)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "foo(\n  r\"(abc\ndef)\",\n  x)");
 
         // The string starts on an outdented line, which still counts
-        let (mut db, file) = crate::lsp::open_file::test_open_file("foo(\na = \"abc\ndef\",\n  x)");
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 3)
+        let (mut db, file) = test_file("foo(\na = \"abc\ndef\",\n  x)");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 3)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "foo(\na = \"abc\ndef\",\nx)");
 
         // The string starts on the line of the opening delimiter
-        let (mut db, file) = crate::lsp::open_file::test_open_file("foo(\"abc\ndef\",\nx)");
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+        let (mut db, file) = test_file("foo(\"abc\ndef\",\nx)");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "foo(\"abc\ndef\",\n  x)");
     }
 
     #[test]
     fn test_line_indent_parameters_after_outdent() {
-        let (mut db, file) =
-            crate::lsp::open_file::test_open_file("function(\na = c(\n  1\n  ),\n    b) NULL");
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 4)
+        let (mut db, file) = test_file("function(\na = c(\n  1\n  ),\n    b) NULL");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 4)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(
             file.source_text(&db),
             "function(\na = c(\n  1\n  ),\nb) NULL"
@@ -806,10 +823,9 @@ mod tests {
             indent_size: 2,
             tab_width: 4,
         };
-        let (mut db, file) =
-            crate::lsp::open_file::test_open_file("mtcars |>\n\tggplot(aes(x = qsec,\n\t))");
-        let edit = indent_edit(&db, file.file(), &tab_cfg, 2).unwrap().unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        let (mut db, file) = test_file("mtcars |>\n\tggplot(aes(x = qsec,\n\t))");
+        let edit = indent_edit(&db, file, &tab_cfg, 2).unwrap().unwrap();
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(
             file.source_text(&db),
             "mtcars |>\n\tggplot(aes(x = qsec,\n\t  ))"
@@ -818,65 +834,65 @@ mod tests {
 
     #[test]
     fn test_line_indent_subset2() {
-        let (mut db, file) = crate::lsp::open_file::test_open_file("  x[[1,\n  ]]");
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+        let (mut db, file) = test_file("  x[[1,\n  ]]");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "  x[[1,\n    ]]");
 
-        let (mut db, file) = crate::lsp::open_file::test_open_file("  x[[1\n    ]]");
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+        let (mut db, file) = test_file("  x[[1\n    ]]");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "  x[[1\n  ]]");
     }
 
     #[test]
     fn test_line_indent_arguments_omitted() {
         // No argument node precedes the closing delimiter, only a comma
-        let (mut db, file) = crate::lsp::open_file::test_open_file("x[,\n]");
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+        let (mut db, file) = test_file("x[,\n]");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "x[,\n  ]");
     }
 
     #[test]
     fn test_line_indent_parameters() {
-        let (mut db, file) = crate::lsp::open_file::test_open_file("  f <- function(a,\nb) {\n  }");
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 1)
+        let (mut db, file) = test_file("  f <- function(a,\nb) {\n  }");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 1)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "  f <- function(a,\n    b) {\n  }");
 
-        let (mut db, file) = crate::lsp::open_file::test_open_file("function(\n  a\n    ) {\n}");
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+        let (mut db, file) = test_file("function(\n  a\n    ) {\n}");
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "function(\n  a\n) {\n}");
     }
 
     #[test]
     fn test_line_indent_arguments_closing() {
-        let (mut db, file) = crate::lsp::open_file::test_open_file("  foo(\n    x\n    )");
+        let (mut db, file) = test_file("  foo(\n    x\n    )");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "  foo(\n    x\n  )");
 
-        let (mut db, file) = crate::lsp::open_file::test_open_file("x[\n  1\n  ]");
+        let (mut db, file) = test_file("x[\n  1\n  ]");
 
-        let edit = indent_edit(&db, file.file(), &file.config().indent, 2)
+        let edit = indent_edit(&db, file, &IndentationConfig::default(), 2)
             .unwrap()
             .unwrap();
-        apply_text_edits(edit, &mut db, &file, ENCODING);
+        apply_text_edits(edit, &mut db, file, ENCODING);
         assert_eq!(file.source_text(&db), "x[\n  1\n]");
     }
 
@@ -927,11 +943,11 @@ mod tests {
     #[test]
     fn test_indent_snapshot() {
         let orig = read_text_asset("lsp/snapshots/indent.R");
-        let (mut db, file) = crate::lsp::open_file::test_open_file(&orig);
+        let (mut db, file) = test_file(&orig);
         let n_lines = file.source_text(&db).matches('\n').count();
         for i in 0..n_lines {
-            if let Some(edit) = indent_edit(&db, file.file(), &file.config().indent, i).unwrap() {
-                apply_text_edits(edit, &mut db, &file, ENCODING);
+            if let Some(edit) = indent_edit(&db, file, &IndentationConfig::default(), i).unwrap() {
+                apply_text_edits(edit, &mut db, file, ENCODING);
             }
         }
         let result = file.source_text(&db).to_string();

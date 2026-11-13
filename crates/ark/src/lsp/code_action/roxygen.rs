@@ -1,12 +1,11 @@
 use oak_db::File;
 use tower_lsp_server::ls_types as lsp_types;
 
-use crate::lsp::capabilities::Capabilities;
 use crate::lsp::code_action::CodeActionEdit;
 use crate::lsp::code_action::CodeActionTextEdit;
+use crate::lsp::coordinates::get_line;
 use crate::lsp::db::ArkDb;
 use crate::lsp::db::FileArkExt;
-use crate::lsp::open_file::get_line;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeTypeExt;
@@ -23,9 +22,9 @@ pub(crate) fn to_code_action(
     db: &dyn ArkDb,
     file: File,
     range: tree_sitter::Range,
-    capabilities: &Capabilities,
+    code_action_literal_support: bool,
 ) -> Option<CodeActionEdit> {
-    if !capabilities.code_action_literal_support() {
+    if !code_action_literal_support {
         return None;
     }
 
@@ -190,9 +189,8 @@ mod tests {
 
     use super::roxygen_documentation;
     use crate::fixtures::point_and_offset_from_cursor;
-    use crate::lsp::capabilities::Capabilities;
     use crate::lsp::code_action::code_actions;
-    use crate::lsp::open_file::test_open_file;
+    use crate::lsp::db::test_file;
 
     const ENCODING: PositionEncoding =
         PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
@@ -212,9 +210,9 @@ mod tests {
 
     fn roxygen_documentation_test(text: &str, position: Position) -> String {
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, file) = test_open_file(&text);
+        let (db, file) = test_file(&text);
 
-        let edit = roxygen_documentation(&db, file.file(), point_range(point, offset)).unwrap();
+        let edit = roxygen_documentation(&db, file, point_range(point, offset)).unwrap();
 
         // The edit is a zero-width insertion at the function name, in tree-sitter
         // coordinates. The test inputs are ASCII, so the column matches the LSP character.
@@ -284,9 +282,9 @@ outer <- function(a, b = 2) {
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, file) = test_open_file(&text);
+        let (db, file) = test_file(&text);
 
-        let edit = roxygen_documentation(&db, file.file(), point_range(point, offset));
+        let edit = roxygen_documentation(&db, file, point_range(point, offset));
         assert!(edit.is_none());
     }
 
@@ -298,9 +296,9 @@ f@n <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, file) = test_open_file(&text);
+        let (db, file) = test_file(&text);
 
-        let edit = roxygen_documentation(&db, file.file(), point_range(point, offset));
+        let edit = roxygen_documentation(&db, file, point_range(point, offset));
         assert!(edit.is_none());
     }
 
@@ -312,33 +310,25 @@ fn@ <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, file) = test_open_file(&text);
+        let (db, file) = test_file(&text);
 
-        let edit = roxygen_documentation(&db, file.file(), point_range(point, offset));
+        let edit = roxygen_documentation(&db, file, point_range(point, offset));
         assert!(edit.is_none());
     }
 
     #[test]
     fn test_no_action_without_code_action_literal_support() {
-        // NOTE: `with_code_action_literal_support(false)`
-        let capabilities = Capabilities::default()
-            .with_code_action_literal_support(false)
-            .with_workspace_edit_document_changes(true);
+        let uri: Uri = "file:///test.R".parse().unwrap();
 
         let text = "
 f@n <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, open_file) = test_open_file(&text);
+        let (db, file) = test_file(&text);
 
-        let actions = code_actions(
-            &db,
-            open_file.file(),
-            point_range(point, offset),
-            &capabilities,
-        )
-        .into_response(&db, &open_file, ENCODING, &capabilities);
+        let actions = code_actions(&db, file, point_range(point, offset), false)
+            .into_response(&db, file, &uri, None, ENCODING, true);
         assert!(actions.is_empty());
     }
 
@@ -346,25 +336,15 @@ f@n <- function(a, b) {}
     fn test_uses_hash_map_of_text_edits_without_document_changes_support() {
         let uri: Uri = "file:///test.R".parse().unwrap();
 
-        // NOTE: `with_workspace_edit_document_changes(false)`
-        let capabilities = Capabilities::default()
-            .with_code_action_literal_support(true)
-            .with_workspace_edit_document_changes(false);
-
         let text = "
 f@n <- function(a, b) {}
         ";
 
         let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
-        let (db, open_file) = test_open_file(&text);
+        let (db, file) = test_file(&text);
 
-        let mut actions = code_actions(
-            &db,
-            open_file.file(),
-            point_range(point, offset),
-            &capabilities,
-        )
-        .into_response(&db, &open_file, ENCODING, &capabilities);
+        let mut actions = code_actions(&db, file, point_range(point, offset), true)
+            .into_response(&db, file, &uri, None, ENCODING, false);
         assert_eq!(actions.len(), 1);
 
         let CodeActionOrCommand::CodeAction(action) = actions.pop().unwrap() else {
