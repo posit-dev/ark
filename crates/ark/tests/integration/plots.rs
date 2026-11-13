@@ -1155,6 +1155,50 @@ stopifnot(id1 == id2)
     frontend.recv_shell_execute_reply();
 }
 
+/// Positron path: layers drawn on a page just before the next page starts
+/// reach that page's comm as an update.
+///
+/// `plot.default()` holds the device while it calls `plot.new()`, so the red
+/// point on page 1 is recorded while rendering is held. Its update must still
+/// be sent on page 1's comm after the hold is released
+/// (posit-dev/positron#17240).
+#[test]
+fn test_positron_held_layers_update_previous_page() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    let code = r#"
+local({
+    plot(1:10)
+    points(5, 5, col = "red")
+    plot(1:5)
+    points(3, 3, col = "blue")
+})
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let open1 = frontend.recv_iopub_comm_open();
+    let open2 = frontend.recv_iopub_comm_open();
+    assert_ne!(open1.comm_id, open2.comm_id);
+
+    // Page 1 gets its held update once `plot.default()` releases the hold,
+    // with a fresh rendering of the finished page
+    let update1 = frontend.recv_iopub_comm_msg();
+    assert_eq!(update1.comm_id, open1.comm_id);
+    assert_eq!(update1.data["method"], "update");
+    assert!(update1.data["params"]["pre_render"]["data"].is_string());
+
+    // Page 2 gets its update when the request completes
+    let update2 = frontend.recv_iopub_comm_msg();
+    assert_eq!(update2.comm_id, open2.comm_id);
+
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
 /// Positron path: `layout()` + multi-plot works like `par(mfrow)`.
 ///
 /// Same as `test_positron_par_multi_panel` but with `layout()` inside a

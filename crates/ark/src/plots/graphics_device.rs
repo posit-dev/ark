@@ -165,6 +165,23 @@ pub(crate) struct DeviceContext {
     /// negative, but we try to be extra safe.
     should_render: Cell<bool>,
 
+    /// Tracks whether the current page has a recording that we have not yet
+    /// notified the frontend about because rendering was held.
+    ///
+    /// Set when [DeviceContext::process_current_page] defers a notification. Reset once
+    /// the notification is sent, or when a new page starts. At that point the old page
+    /// moves to `held_pages` if the frontend has seen it, and is dropped otherwise.
+    is_notification_deferred: Cell<bool>,
+
+    /// Earlier pages that still need an update once rendering is released.
+    ///
+    /// Code that holds the device around `plot.new()`, for example
+    /// `plot.default()` or `bxp()`, means the `before.plot.new` hook can only
+    /// record the previous page and defer its notification. When the new page then starts, we move the previous page
+    /// here so its final state still reaches the frontend after the hold is
+    /// released, instead of being lost when `id` changes (posit-dev/positron#17240).
+    held_pages: RefCell<Vec<PlotId>>,
+
     /// The ID associated with the current plot page.
     ///
     /// Used for looking up a recorded plot so we can replay it with different graphics
@@ -217,6 +234,8 @@ impl DeviceContext {
             is_new_page: Cell::new(true),
             is_drawing: Cell::new(false),
             should_render: Cell::new(true),
+            is_notification_deferred: Cell::new(false),
+            held_pages: RefCell::new(Vec::new()),
             id: RefCell::new(Self::new_id()),
             comm_ids: RefCell::new(HashMap::new()),
             plot_contexts: RefCell::new(HashMap::new()),
@@ -361,6 +380,12 @@ impl DeviceContext {
     /// [ps_graphics_before_plot_new()] instead.
     #[tracing::instrument(level = "trace", skip_all)]
     fn hook_new_page(&self) {
+        // Only pages the frontend has already seen are owed an update. A page
+        // that was never shown stays hidden, so `dev.hold()` still suppresses
+        // intermediate pages.
+        if self.is_notification_deferred.replace(false) && !self.is_new_page.get() {
+            self.held_pages.borrow_mut().push(self.id());
+        }
         self.new_positron_page()
     }
 
@@ -538,6 +563,7 @@ impl DeviceContext {
 
     #[tracing::instrument(level = "trace", skip(self))]
     fn on_plot_closed(&self, id: &PlotId) {
+        self.held_pages.borrow_mut().retain(|held| held != id);
         self.comm_ids.borrow_mut().remove(id);
         self.plot_contexts.borrow_mut().remove(id);
 
@@ -570,6 +596,28 @@ impl DeviceContext {
     /// Uses execution context stored via `graphics_on_execute_request()`.
     #[tracing::instrument(level = "trace", skip_all)]
     pub(crate) fn process_changes(self: &Rc<Self>, console: &Console) {
+        // Take the held pages before we render anything. Rendering replays a
+        // recording on another device, which deactivates ours and calls back
+        // into `process_changes()`. Those nested calls must not render the same
+        // held pages again. Because of that nested call, the current page is
+        // always sent before the held updates, so a new page's display or comm
+        // open reaches the frontend before the earlier page's update. Frontends
+        // match updates by display ID or comm ID, so this order is fine.
+        let held_pages = if self.should_render.get() {
+            std::mem::take(&mut *self.held_pages.borrow_mut())
+        } else {
+            Vec::new()
+        };
+
+        self.process_current_page(console);
+
+        for id in held_pages {
+            log::trace!("Processing held changes for plot `id` {id}");
+            self.process_update_plot(&id, console);
+        }
+    }
+
+    fn process_current_page(self: &Rc<Self>, console: &Console) {
         let id = self.id();
 
         if !self.has_changes.get() {
@@ -599,10 +647,12 @@ impl DeviceContext {
             // Keep `has_changes` set so we re-enter this branch after the hold
             // is released (via `hook_holdflush`) and send the notification then.
             log::trace!("Deferring notification for plot `id` {id} (rendering held)");
+            self.is_notification_deferred.replace(true);
             return;
         }
 
         self.has_changes.replace(false);
+        self.is_notification_deferred.replace(false);
 
         if self.is_new_page.replace(false) {
             self.process_new_plot(&id, console);
