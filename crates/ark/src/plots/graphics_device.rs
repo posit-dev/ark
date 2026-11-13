@@ -1076,34 +1076,6 @@ macro_rules! with_device {
     }};
 }
 
-/// Like [with_device!], but for a `pDevDesc` instead of a `pGEDevDesc`.
-macro_rules! with_dev_desc {
-    ($value:expr, | $name:ident | $block:block) => {{
-        let version = libr::R_GE_getVersion();
-        if version == 13 {
-            let $name = $value as *mut libr::DevDescVersion13;
-            $block;
-        } else if version == 14 {
-            let $name = $value as *mut libr::DevDescVersion14;
-            $block;
-        } else if version == 15 {
-            let $name = $value as *mut libr::DevDescVersion15;
-            $block;
-        } else if version == 16 {
-            let $name = $value as *mut libr::DevDescVersion16;
-            $block;
-        } else if version == 17 {
-            let $name = $value as *mut libr::DevDescVersion17;
-            $block;
-        } else {
-            panic!(
-                "R graphics engine version {} is not supported by this version of Positron.",
-                version
-            )
-        };
-    }};
-}
-
 /// Set the bounds of `ge_device` to `size` (in CSS pixels). Returns `true` if
 /// the bounds changed.
 ///
@@ -1440,12 +1412,12 @@ unsafe extern "C-unwind" fn callback_size(
     top: *mut f64,
     dev: pDevDesc,
 ) {
-    with_dev_desc!(dev, |dev| {
-        *left = (*dev).left;
-        *right = (*dev).right;
-        *bottom = (*dev).bottom;
-        *top = (*dev).top;
-    });
+    // The bounds are the first fields of every `DevDesc` version
+    let bounds = dev as *mut libr::DevDescBounds;
+    *left = (*bounds).left;
+    *right = (*bounds).right;
+    *bottom = (*bounds).bottom;
+    *top = (*bounds).top;
 }
 
 unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
