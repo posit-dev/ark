@@ -32,8 +32,8 @@ use tree_sitter::Point;
 use tree_sitter::Range;
 
 use crate::lsp::coordinates::lsp_range_from_tree_sitter_range;
-use crate::lsp::db::ArkDb;
-use crate::lsp::db::FileArkExt;
+use crate::lsp::db::FileLegacyExt;
+use crate::lsp::db::LegacyDb;
 use crate::lsp::declarations::top_level_declare;
 use crate::lsp::diagnostics_syntax::missing_namespace_rhs_diagnostics;
 use crate::lsp::diagnostics_syntax::syntax_diagnostics;
@@ -56,7 +56,7 @@ pub struct DiagnosticsConfig {
 
 #[derive(Clone)]
 pub struct DiagnosticContext<'a> {
-    pub(crate) db: &'a dyn ArkDb,
+    pub(crate) db: &'a dyn LegacyDb,
     pub(crate) file: File,
     pub(crate) encoding: PositionEncoding,
     pub(crate) uri: &'a Uri,
@@ -97,7 +97,7 @@ impl<'a> DiagnosticContext<'a> {
     }
 
     pub(crate) fn new(
-        db: &'a dyn ArkDb,
+        db: &'a dyn LegacyDb,
         file: File,
         encoding: PositionEncoding,
         uri: &'a Uri,
@@ -155,7 +155,7 @@ impl<'a> DiagnosticContext<'a> {
 /// on the search path, in that order. All names count as defined symbols,
 /// regardless of their environment.
 pub(crate) fn generate_diagnostics(
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     uri: &Uri,
     config: &DiagnosticsConfig,
@@ -310,7 +310,10 @@ pub(crate) fn generate_diagnostics(
 /// For workspace environments, check `.Rprofile` and `.Renviron` on disk when
 /// generating the diagnostic, so the hint reflects files created or deleted
 /// since the failed run.
-fn environment_failure_diagnostic(db: &dyn ArkDb, environment: Environment) -> Option<Diagnostic> {
+fn environment_failure_diagnostic(
+    db: &dyn LegacyDb,
+    environment: Environment,
+) -> Option<Diagnostic> {
     let error = environment.last_error(db).as_deref()?;
 
     let (severity, consequence) = match environment.status(db) {

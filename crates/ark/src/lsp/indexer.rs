@@ -20,8 +20,8 @@ use tower_lsp_server::ls_types::Range;
 use tree_sitter::Node;
 use tree_sitter::Query;
 
-use crate::lsp::db::ArkDb;
-use crate::lsp::db::FileArkExt;
+use crate::lsp::db::FileLegacyExt;
+use crate::lsp::db::LegacyDb;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
@@ -83,7 +83,7 @@ pub struct IndexEntry {
 /// the file's line index from the db. Returns `None` if the points fall outside
 /// the line index, in which case the symbol is dropped from the results.
 pub(crate) fn index_range_to_lsp_range(
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     range: IndexRange,
     encoding: PositionEncoding,
@@ -119,7 +119,7 @@ pub(crate) struct FileIndex {
 
 /// Extract a file's workspace symbols.
 #[salsa::tracked(returns(ref))]
-fn file_index(db: &dyn ArkDb, file: File) -> FileIndex {
+fn file_index(db: &dyn LegacyDb, file: File) -> FileIndex {
     let tree = file.tree_sitter(db);
     let contents = file.source_text(db).as_str();
 
@@ -143,7 +143,7 @@ fn file_index(db: &dyn ArkDb, file: File) -> FileIndex {
 
 /// Visit every workspace symbol across all indexable files. The callback
 /// receives the defining `File`, so callers can resolve its frontend URI.
-pub(crate) fn map(db: &dyn ArkDb, mut callback: impl FnMut(File, &str, &IndexEntry)) {
+pub(crate) fn map(db: &dyn LegacyDb, mut callback: impl FnMut(File, &str, &IndexEntry)) {
     for &file in oak_db::workspace_files(db) {
         if !is_indexable(db, file) {
             continue;
@@ -159,7 +159,7 @@ pub(crate) fn map(db: &dyn ArkDb, mut callback: impl FnMut(File, &str, &IndexEnt
 /// [`file_index()`] changes, avoiding a workspace-wide traversal for every
 /// diagnostics pass.
 #[salsa::tracked(returns(ref))]
-pub(crate) fn workspace_symbol_names(db: &dyn ArkDb) -> rustc_hash::FxHashSet<String> {
+pub(crate) fn workspace_symbol_names(db: &dyn LegacyDb) -> rustc_hash::FxHashSet<String> {
     let mut names = rustc_hash::FxHashSet::default();
 
     map(db, |_file, _symbol, entry| match &entry.data {
@@ -178,13 +178,13 @@ pub(crate) fn workspace_symbol_names(db: &dyn ArkDb) -> rustc_hash::FxHashSet<St
 /// Call [`file_index()`] for every workspace file. This ensures workspace
 /// symbols are loaded before the user needs to read them (e.g. by looking up a
 /// workspace symbol without any file opened).
-pub(crate) fn warm(db: &dyn ArkDb) {
+pub(crate) fn warm(db: &dyn LegacyDb) {
     for &file in oak_db::workspace_files(db) {
         file_index(db, file);
     }
 }
 
-fn is_indexable(db: &dyn ArkDb, file: File) -> bool {
+fn is_indexable(db: &dyn LegacyDb, file: File) -> bool {
     !is_debugger_virtual_doc(file.path(db))
 }
 
@@ -608,7 +608,7 @@ class <- R6::R6Class(
     fn test_workspace_symbol_names_tracks_edits() {
         use aether_path::FilePath;
 
-        fn sorted_names(db: &dyn ArkDb) -> Vec<String> {
+        fn sorted_names(db: &dyn LegacyDb) -> Vec<String> {
             let mut names: Vec<String> = workspace_symbol_names(db).iter().cloned().collect();
             names.sort();
             names

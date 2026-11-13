@@ -1,10 +1,10 @@
 use oak_db::File;
 use oak_db::OakDatabase;
 
-/// Ark's salsa database view.
+/// The legacy engine's salsa database view.
 ///
-/// Extends oak_db's `Db` with queries we keep on the ark side. Right now that's
-/// just the legacy tree-sitter tree. Defining it here keeps the `tree-sitter`
+/// Extends oak_db's `Db` with the legacy engine's queries: the tree-sitter
+/// tree. Defining it here keeps the `tree-sitter`
 /// dependency out of `oak_db`, which is meant to stay a small shared crate. The
 /// query still memoizes into the same `OakDatabase` storage, keyed on the `File`.
 ///
@@ -12,18 +12,18 @@ use oak_db::OakDatabase;
 /// base crate owns `SourceDatabase`, downstream crates add their own traits on
 /// top.
 #[salsa::db]
-pub(crate) trait ArkDb: oak_db::Db {}
+pub(crate) trait LegacyDb: oak_db::Db {}
 
 #[salsa::db]
-impl ArkDb for OakDatabase {}
+impl LegacyDb for OakDatabase {}
 
-/// Extension trait that adds ark-side query methods to `oak_db::File`.
-pub(crate) trait FileArkExt {
-    fn tree_sitter(self, db: &dyn ArkDb) -> &tree_sitter::Tree;
+/// Extension trait that adds the legacy engine's query methods to `oak_db::File`.
+pub(crate) trait FileLegacyExt {
+    fn tree_sitter(self, db: &dyn LegacyDb) -> &tree_sitter::Tree;
 }
 
-impl FileArkExt for File {
-    fn tree_sitter(self, db: &dyn ArkDb) -> &tree_sitter::Tree {
+impl FileLegacyExt for File {
+    fn tree_sitter(self, db: &dyn LegacyDb) -> &tree_sitter::Tree {
         &tree_sitter_query(db, self).0
     }
 }
@@ -48,7 +48,7 @@ unsafe impl salsa::SalsaValue for TreeSitterTree {}
 /// backdate it (same as `oak_db`'s `semantic_index`). `lru = 128` mirrors
 /// `oak_db::File::parse`.
 #[salsa::tracked(returns(ref), no_eq, lru = 128)]
-fn tree_sitter_query(db: &dyn ArkDb, file: File) -> TreeSitterTree {
+fn tree_sitter_query(db: &dyn LegacyDb, file: File) -> TreeSitterTree {
     TreeSitterTree(parse_tree_sitter(file.source_text(db).as_str()))
 }
 

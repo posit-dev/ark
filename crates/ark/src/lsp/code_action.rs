@@ -17,7 +17,7 @@ use tree_sitter::Point;
 use tree_sitter::Range;
 
 use crate::lsp::coordinates::lsp_position_from_tree_sitter_point;
-use crate::lsp::db::ArkDb;
+use crate::lsp::db::LegacyDb;
 
 mod roxygen;
 
@@ -70,7 +70,7 @@ pub(crate) struct CodeActions {
 /// If `code_action_literal_support` is false, the client cannot accept
 /// `CodeAction` literals, so no actions are offered.
 pub(crate) fn code_actions(
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     range: Range,
     code_action_literal_support: bool,

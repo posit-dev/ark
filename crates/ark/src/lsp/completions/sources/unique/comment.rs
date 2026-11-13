@@ -21,7 +21,7 @@ use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::sources::unique::Recognized;
 use crate::lsp::completions::sources::unique::UniqueCompletions;
 use crate::lsp::completions::types::CompletionData;
-use crate::lsp::db::ArkDb;
+use crate::lsp::db::LegacyDb;
 use crate::lsp::document_context::DocumentContext;
 #[cfg(test)]
 use crate::lsp::document_context::TestDocument;
@@ -43,7 +43,7 @@ static RE_UP_TO_LAST_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r
 
 fn completions_from_comment(
     context: &DocumentContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
 ) -> anyhow::Result<Option<UniqueCompletions>> {
     let node = context.node;
 

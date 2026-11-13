@@ -4,9 +4,9 @@ use tower_lsp_server::ls_types as lsp_types;
 
 use crate::lsp::config::DocumentConfig;
 #[cfg(test)]
-use crate::lsp::db::ArkDb;
+use crate::lsp::db::FileLegacyExt;
 #[cfg(test)]
-use crate::lsp::db::FileArkExt;
+use crate::lsp::db::LegacyDb;
 
 /// An editor-managed buffer: the salsa `File` plus the editor and transport
 /// state that should not cross into the analysis layer.
@@ -46,7 +46,7 @@ impl OpenFile {
     /// helpers hold an `OpenFile` and want the tree directly, so this forwarder
     /// is test-only.
     #[cfg(test)]
-    pub(crate) fn tree_sitter<'db>(&self, db: &'db dyn ArkDb) -> &'db tree_sitter::Tree {
+    pub(crate) fn tree_sitter<'db>(&self, db: &'db dyn LegacyDb) -> &'db tree_sitter::Tree {
         self.file.tree_sitter(db)
     }
 

@@ -18,7 +18,7 @@ use tree_sitter::Point;
 use url::Url;
 
 #[cfg(test)]
-use crate::lsp::db::FileArkExt;
+use crate::lsp::db::FileLegacyExt;
 #[cfg(test)]
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
@@ -29,7 +29,7 @@ use crate::treesitter::NodeTypeExt;
 
 #[derive(Debug)]
 pub struct DocumentContext<'a> {
-    /// We store extracted components of a `File` + `&dyn ArkDb` here because
+    /// We store extracted components of a `File` + `&dyn LegacyDb` here because
     /// the latter can't be sent to the R thread via `r_task()` or `try_r_task()`.
     pub tree: &'a tree_sitter::Tree,
     pub contents: &'a str,

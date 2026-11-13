@@ -14,7 +14,7 @@ use tree_sitter::Range;
 use tree_sitter::Tree;
 
 use crate::lsp::coordinates::lsp_range_from_tree_sitter_range;
-use crate::lsp::db::ArkDb;
+use crate::lsp::db::LegacyDb;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
@@ -108,7 +108,7 @@ fn range_default(node: Node) -> Range {
 }
 
 pub(crate) fn convert_selection_range_from_tree_sitter_to_lsp(
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     encoding: PositionEncoding,
     selection: SelectionRange,

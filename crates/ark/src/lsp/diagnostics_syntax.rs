@@ -461,7 +461,7 @@ mod tests {
     use tower_lsp_server::ls_types::Uri;
 
     use crate::lsp::db::test_file;
-    use crate::lsp::db::FileArkExt;
+    use crate::lsp::db::FileLegacyExt;
     use crate::lsp::diagnostics::DiagnosticContext;
     use crate::lsp::diagnostics_syntax::syntax_diagnostics;
 

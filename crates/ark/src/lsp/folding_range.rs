@@ -15,10 +15,10 @@ use tower_lsp_server::ls_types::FoldingRangeKind;
 
 use super::symbols::parse_comment_as_section;
 use crate::lsp::coordinates::get_line;
-use crate::lsp::db::ArkDb;
-use crate::lsp::db::FileArkExt;
+use crate::lsp::db::FileLegacyExt;
+use crate::lsp::db::LegacyDb;
 
-pub(crate) fn folding_range(db: &dyn ArkDb, file: File) -> anyhow::Result<Vec<FoldingRange>> {
+pub(crate) fn folding_range(db: &dyn LegacyDb, file: File) -> anyhow::Result<Vec<FoldingRange>> {
     let mut folding_ranges: Vec<FoldingRange> = Vec::new();
 
     let ast = file.tree_sitter(db);
@@ -44,7 +44,7 @@ pub(crate) fn folding_range(db: &dyn ArkDb, file: File) -> anyhow::Result<Vec<Fo
 }
 
 fn parse_ts_node(
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     cursor: &mut tree_sitter::TreeCursor,
     _depth: usize,
@@ -177,7 +177,7 @@ fn comment_range(start_line: usize, end_line: usize) -> FoldingRange {
     }
 }
 
-fn count_leading_whitespaces(db: &dyn ArkDb, file: File, line_num: usize) -> usize {
+fn count_leading_whitespaces(db: &dyn LegacyDb, file: File, line_num: usize) -> usize {
     let Some(line) = get_line(file.source_text(db).as_str(), file.line_index(db), line_num) else {
         return 0;
     };

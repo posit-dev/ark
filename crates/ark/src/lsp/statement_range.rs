@@ -23,8 +23,8 @@ use tree_sitter::Point;
 use crate::lsp::backend::LspResult;
 use crate::lsp::coordinates::lsp_position_from_tree_sitter_point;
 use crate::lsp::db::parse_tree_sitter;
-use crate::lsp::db::ArkDb;
-use crate::lsp::db::FileArkExt;
+use crate::lsp::db::FileLegacyExt;
+use crate::lsp::db::LegacyDb;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
@@ -104,7 +104,7 @@ impl ArkStatementRangeResponse {
     // which handles all Tree-sitter to LSP conversion at the method boundary
     fn into_lsp_response(
         self,
-        db: &dyn ArkDb,
+        db: &dyn LegacyDb,
         file: File,
         encoding: PositionEncoding,
     ) -> anyhow::Result<StatementRangeResponse> {
@@ -148,7 +148,7 @@ impl ArkStatementRangeResponse {
 static RE_ROXYGEN2_COMMENT: Lazy<Regex> = Lazy::new(|| Regex::new(r"^#+'").unwrap());
 
 pub(crate) fn statement_range(
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     point: Point,
     encoding: PositionEncoding,

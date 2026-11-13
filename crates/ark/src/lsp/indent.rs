@@ -3,8 +3,8 @@ use oak_db::File;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::lsp::db::ArkDb;
-use crate::lsp::db::FileArkExt;
+use crate::lsp::db::FileLegacyExt;
+use crate::lsp::db::LegacyDb;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -56,7 +56,7 @@ pub(crate) struct IndentEdit {
 /// Once we implement a full formatter, indentation will be provided for any
 /// constructs based on the formatter and will be fully consistent with it.
 pub(crate) fn indent_edit(
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     config: &IndentationConfig,
     line: usize,

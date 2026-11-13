@@ -9,7 +9,7 @@ use oak_db::OakDatabase;
 
 use super::catch_cancellation;
 use crate::lsp::config::LspConfig;
-use crate::lsp::db::ArkDb;
+use crate::lsp::db::LegacyDb;
 use crate::lsp::state::WorldState;
 
 /// Read-only snapshot of [`WorldState`] handed to a background reader, so a
@@ -41,10 +41,10 @@ impl WorldState {
 }
 
 impl WorldStateSnapshot {
-    /// Read-only access to the database. Returns `&dyn ArkDb` rather than
-    /// `&OakDatabase` because `dyn ArkDb` is unsized, so a reader can't
+    /// Read-only access to the database. Returns `&dyn LegacyDb` rather than
+    /// `&OakDatabase` because `dyn LegacyDb` is unsized, so a reader can't
     /// `.snapshot()` its way to an owned database and call setters on it.
-    pub(crate) fn db(&self) -> &dyn ArkDb {
+    pub(crate) fn db(&self) -> &dyn LegacyDb {
         stdext::assert_in_catch_boundary!();
         &self.db
     }

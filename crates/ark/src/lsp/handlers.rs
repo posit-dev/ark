@@ -56,7 +56,7 @@ use crate::lsp::completions::RCompletionReplies;
 use crate::lsp::coordinates::lsp_range_from_tree_sitter_range;
 use crate::lsp::coordinates::tree_sitter_point_from_lsp_position;
 use crate::lsp::coordinates::tree_sitter_range_from_lsp_range;
-use crate::lsp::db::FileArkExt;
+use crate::lsp::db::FileLegacyExt;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::find_references::find_references;
 use crate::lsp::folding_range::folding_range;

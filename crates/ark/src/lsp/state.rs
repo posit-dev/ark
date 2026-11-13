@@ -21,7 +21,7 @@ use crate::lsp::traits::url::UrlExt;
 ///
 /// The main loop owns and mutates this. Background readers get a
 /// [`crate::lsp::analysis::WorldStateSnapshot`] instead, which only lends its
-/// database out as `&dyn ArkDb`, so a background thread can't reach a Salsa
+/// database out as `&dyn LegacyDb`, so a background thread can't reach a Salsa
 /// input setter. Snapshots are minted in [`crate::lsp::analysis`] and nowhere
 /// else. This split mirrors rust-analyzer's `GlobalState` and
 /// `GlobalStateSnapshot`.

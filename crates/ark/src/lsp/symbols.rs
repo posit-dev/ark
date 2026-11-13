@@ -23,8 +23,8 @@ use tower_lsp_server::ls_types::WorkspaceSymbolParams;
 use tree_sitter::Node;
 
 use crate::lsp::coordinates::lsp_position_from_tree_sitter_point;
-use crate::lsp::db::ArkDb;
-use crate::lsp::db::FileArkExt;
+use crate::lsp::db::FileLegacyExt;
+use crate::lsp::db::LegacyDb;
 use crate::lsp::indexer;
 use crate::lsp::indexer::IndexEntryData;
 use crate::lsp::traits::node::NodeExt;
@@ -64,7 +64,7 @@ fn new_symbol_node(
 /// If URI resolution fails, log the error and skip the symbol. Include comment
 /// sections only when `include_comment_sections` is true.
 pub(crate) fn symbols(
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     params: &WorkspaceSymbolParams,
     encoding: PositionEncoding,
     include_comment_sections: bool,
@@ -168,7 +168,7 @@ impl CollectContext {
 /// include non-function assignments inside calls and function bodies as well
 /// as top-level assignments. Function definitions are included regardless.
 pub(crate) fn document_symbols(
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     encoding: PositionEncoding,
     include_assignments_in_blocks: bool,
@@ -194,7 +194,7 @@ pub(crate) fn document_symbols(
 /// Collect all document symbols from a node recursively
 fn collect_symbols(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
@@ -257,7 +257,7 @@ fn collect_symbols(
 
 fn collect_if_statement(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
@@ -277,7 +277,7 @@ fn collect_if_statement(
 
 fn collect_for_statement(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
@@ -297,7 +297,7 @@ fn collect_for_statement(
 
 fn collect_while_statement(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
@@ -314,7 +314,7 @@ fn collect_while_statement(
 
 fn collect_repeat_statement(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
@@ -328,7 +328,7 @@ fn collect_repeat_statement(
 
 fn collect_function(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
@@ -390,7 +390,7 @@ fn collect_function(
 ///   (`bar` in this case) would be pulled at top-level.
 fn collect_sections<F>(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
@@ -399,7 +399,7 @@ fn collect_sections<F>(
 where
     F: FnMut(
         &mut CollectContext,
-        &dyn ArkDb,
+        &dyn LegacyDb,
         File,
         &Node,
         &mut Vec<DocumentSymbol>,
@@ -484,7 +484,7 @@ where
 
 fn collect_list_sections(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
@@ -494,7 +494,7 @@ fn collect_list_sections(
 
 fn collect_call(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
@@ -517,7 +517,7 @@ fn collect_call(
 
 fn collect_call_arguments(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
@@ -555,7 +555,7 @@ fn collect_call_arguments(
 
 fn collect_function_parameters(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
@@ -575,7 +575,7 @@ fn collect_function_parameters(
 
 fn collect_method(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     arg_fun: &Node,
     arg_value: &Node,
@@ -610,7 +610,7 @@ fn collect_method(
 // https://github.com/posit-dev/positron/issues/1428
 fn collect_call_test_that(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
@@ -657,7 +657,7 @@ fn collect_call_test_that(
 
 fn collect_assignment(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
@@ -709,7 +709,7 @@ fn collect_assignment(
 
 fn collect_assignment_with_function(
     ctx: &mut CollectContext,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     node: &Node,
     symbols: &mut Vec<DocumentSymbol>,
@@ -753,7 +753,7 @@ fn collect_assignment_with_function(
 fn finalize_section(
     active_sections: &mut Vec<Section>,
     symbols: &mut Vec<DocumentSymbol>,
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     encoding: PositionEncoding,
 ) -> anyhow::Result<()> {

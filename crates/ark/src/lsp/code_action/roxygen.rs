@@ -4,8 +4,8 @@ use tower_lsp_server::ls_types as lsp_types;
 use crate::lsp::code_action::CodeActionEdit;
 use crate::lsp::code_action::CodeActionTextEdit;
 use crate::lsp::coordinates::get_line;
-use crate::lsp::db::ArkDb;
-use crate::lsp::db::FileArkExt;
+use crate::lsp::db::FileLegacyExt;
+use crate::lsp::db::LegacyDb;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeTypeExt;
@@ -19,7 +19,7 @@ pub(crate) struct RoxygenEdit {
 /// Build the "Generate a roxygen template" code action for `range`, if the
 /// cursor is on a documentable function definition.
 pub(crate) fn to_code_action(
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     range: tree_sitter::Range,
     code_action_literal_support: bool,
@@ -41,7 +41,7 @@ pub(crate) fn to_code_action(
 }
 
 pub(crate) fn roxygen_documentation(
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     range: tree_sitter::Range,
 ) -> Option<RoxygenEdit> {

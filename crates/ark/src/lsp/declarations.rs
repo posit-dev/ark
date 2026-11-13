@@ -89,7 +89,7 @@ mod test {
     use stdext::assert_match;
 
     use crate::lsp::db::test_file;
-    use crate::lsp::db::FileArkExt;
+    use crate::lsp::db::FileLegacyExt;
     use crate::lsp::declarations::declare_ark_args;
     use crate::lsp::declarations::top_level_declare;
     use crate::lsp::declarations::top_level_declare_args;

@@ -16,8 +16,8 @@ use tree_sitter::Tree;
 
 use crate::lsp;
 use crate::lsp::backend::LspResult;
-use crate::lsp::db::ArkDb;
-use crate::lsp::db::FileArkExt;
+use crate::lsp::db::FileLegacyExt;
+use crate::lsp::db::LegacyDb;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -41,7 +41,7 @@ pub struct HelpTopicResponse {
 }
 
 pub(crate) fn help_topic(
-    db: &dyn ArkDb,
+    db: &dyn LegacyDb,
     file: File,
     point: Point,
 ) -> LspResult<Option<HelpTopicResponse>> {
