@@ -14,8 +14,7 @@ use aether_lsp_utils::proto::PositionEncoding;
 use anyhow::bail;
 use anyhow::Result;
 use camino::Utf8Path;
-use harp::syntax::is_valid_symbol;
-use harp::syntax::sym_quote_invalid;
+use oak_core::identifier::sym_quote_invalid;
 use oak_db::Environment;
 use oak_db::EnvironmentStatus;
 use oak_db::File;
@@ -265,12 +264,9 @@ pub(crate) fn generate_diagnostics(
     // Add per-environment session symbols
     for scope in state.console_scopes.iter() {
         for name in scope.iter() {
-            if is_valid_symbol(name.as_str()) {
-                context.session_symbols.insert(name.clone());
-            } else {
-                let name = sym_quote_invalid(name.as_str());
-                context.session_symbols.insert(name.clone());
-            }
+            context
+                .session_symbols
+                .insert(sym_quote_invalid(name.as_str()));
         }
     }
 

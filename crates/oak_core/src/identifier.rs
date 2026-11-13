@@ -3,8 +3,24 @@
 //! Language-level facts about what counts as a valid R identifier. Used
 //! by rename, diagnostics, completions, and anything else that needs to
 //! emit or recognise identifier text.
+//!
+//! Two predicates decide whether a name can be written without backticks, and
+//! they disagree on some Unicode names, such as a letter followed by a
+//! combining accent. [`is_valid_identifier()`] backs [`RName`] and rename.
+//! [`is_valid_symbol()`] backs [`sym_quote_invalid()`], which diagnostics use
+//! for session symbols. Pick the one whose output the caller has to agree with.
+
+use std::sync::LazyLock;
 
 use anyhow::anyhow;
+use regex::Regex;
+
+static SYNTACTIC_SYMBOL: LazyLock<Regex> = LazyLock::new(|| {
+    match Regex::new(r"^[\p{L}\p{Nl}.][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}.]*$") {
+        Ok(regex) => regex,
+        Err(err) => panic!("Invalid symbol regex: {err}"),
+    }
+});
 
 /// A validated R name with semantic and source forms.
 ///
@@ -112,6 +128,61 @@ pub fn is_valid_identifier(name: &str) -> bool {
         }
     }
     chars.all(|c| c.is_alphabetic() || c.is_ascii_digit() || c == '.' || c == '_')
+}
+
+/// Whether [`sym_quote_invalid()`] writes `name` without backticks.
+///
+/// This is a quoting policy based on Unicode categories, not a guarantee that
+/// R's parser accepts the name without quotes: R rejects some accepted names
+/// unquoted, such as `e` followed by a combining acute accent.
+///
+/// The character check requires a Unicode letter (`L` or `Nl`) or `.` first.
+/// Later characters may also be combining marks (`Mn` or `Mc`), decimal digits
+/// (`Nd`), or connector punctuation (`Pc`), including `_`. This accepts names
+/// that [`is_valid_identifier()`] rejects, such as a letter followed by a
+/// combining accent or a non-ASCII digit. A leading `.` followed by an ASCII
+/// digit is rejected to distinguish symbols from numeric literals.
+///
+/// `...` and variadic positional accessors such as `..1` and `..2` are accepted
+/// without backticks even though [`is_reserved()`] lists them. All other names
+/// accepted by [`is_reserved()`] are rejected.
+pub fn is_valid_symbol(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+
+    if is_reserved(name) && name != "..." && !is_dot_dot_n(name) {
+        return false;
+    }
+
+    if !SYNTACTIC_SYMBOL.is_match(name) {
+        return false;
+    }
+
+    if name.starts_with('.') {
+        if let Some(second) = name.chars().nth(1) {
+            if second.is_ascii_digit() {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+/// Return `name` unchanged if [`is_valid_symbol()`] accepts it. Otherwise wrap
+/// it in backticks, escaping backslashes and backticks.
+pub fn sym_quote_invalid(name: &str) -> String {
+    if is_valid_symbol(name) {
+        name.to_string()
+    } else {
+        sym_quote(name)
+    }
+}
+
+/// `name` wrapped in backticks, with backslashes and backticks escaped.
+fn sym_quote(name: &str) -> String {
+    format!("`{}`", name.replace('\\', "\\\\").replace('`', "\\`"))
 }
 
 /// R reserved words that cannot be used as identifier names. Source:
@@ -292,5 +363,101 @@ mod tests {
         assert_eq!(RName::parse("a\\b").unwrap().quoted('"'), "\"a\\\\b\"");
         // The other delimiter isn't escaped: a `'` inside a `"`-string is literal.
         assert_eq!(RName::parse("a'b").unwrap().quoted('"'), "\"a'b\"");
+    }
+
+    #[test]
+    fn test_is_valid_symbol_plain() {
+        for name in [
+            ".", "a", "Z", ".foo", "._1", "bar", "baz_baz", "quux.", "hunoz_", "..",
+        ] {
+            assert!(is_valid_symbol(name));
+        }
+        for name in [
+            "", "1", ".1", ".1e5", "1foo", "_", "_foo", "~", "!", "foo bar", "b&ar",
+        ] {
+            assert!(!is_valid_symbol(name));
+        }
+        assert!(!is_valid_symbol("foo\n"));
+    }
+
+    #[test]
+    fn test_is_valid_symbol_reserved_words() {
+        for word in [
+            "if",
+            "else",
+            "for",
+            "while",
+            "repeat",
+            "break",
+            "next",
+            "function",
+            "in",
+            "TRUE",
+            "FALSE",
+            "NULL",
+            "NA",
+            "NA_integer_",
+            "NA_real_",
+            "NA_complex_",
+            "NA_character_",
+            "NaN",
+            "Inf",
+        ] {
+            assert!(!is_valid_symbol(word));
+            assert_eq!(sym_quote_invalid(word), format!("`{word}`"));
+        }
+
+        // Reserved, but R writes them bare
+        for name in ["...", "..1", "..42"] {
+            assert!(is_valid_symbol(name));
+            assert_eq!(sym_quote_invalid(name), name);
+        }
+
+        // Functions and reassignable aliases, not reserved words
+        for name in ["return", "T", "F"] {
+            assert!(is_valid_symbol(name));
+        }
+    }
+
+    #[test]
+    fn test_is_valid_symbol_unicode() {
+        // Letters, including letter numbers (`Nl`)
+        for name in ["μ", "αβ", "文字", "foo_μ", "μ2", ".μ", "Ⅻ"] {
+            assert!(is_valid_symbol(name));
+        }
+
+        // Combining marks, non-ASCII digits and connector punctuation after the
+        // first character, which `is_valid_identifier()` rejects
+        for name in ["e\u{301}", "x\u{661}", ".\u{661}", "foo\u{203f}bar"] {
+            assert!(is_valid_symbol(name));
+            assert!(!is_valid_identifier(name));
+        }
+
+        // None of these may start a symbol
+        for name in ["\u{301}e", "\u{661}x", "\u{203f}foo", "😀"] {
+            assert!(!is_valid_symbol(name));
+            assert_eq!(sym_quote_invalid(name), format!("`{name}`"));
+        }
+    }
+
+    #[test]
+    fn test_sym_quote_escapes() {
+        assert_eq!(sym_quote("a b"), "`a b`");
+        assert_eq!(sym_quote("a`b"), r"`a\`b`");
+        assert_eq!(sym_quote(r"a\b"), r"`a\\b`");
+        assert_eq!(sym_quote("foo"), "`foo`");
+    }
+
+    #[test]
+    fn test_sym_quote_invalid_backticks() {
+        assert_eq!(sym_quote_invalid("foo"), "foo");
+        assert_eq!(sym_quote_invalid("a b"), "`a b`");
+        assert_eq!(sym_quote_invalid("a`b"), r"`a\`b`");
+        assert_eq!(sym_quote_invalid(r"a\b"), r"`a\\b`");
+
+        // A name that is already backtick-wrapped is quoted again, unlike
+        // `RName::parse()`, which strips the wrapping
+        assert_eq!(sym_quote_invalid("`foo`"), r"`\`foo\``");
+        assert_eq!(sym_quote_invalid("``"), r"`\`\``");
     }
 }

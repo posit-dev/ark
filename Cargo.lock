@@ -2703,6 +2703,7 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "biome_rowan",
+ "regex",
 ]
 
 [[package]]

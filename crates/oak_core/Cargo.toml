@@ -17,6 +17,7 @@ workspace = true
 aether_syntax.workspace = true
 anyhow.workspace = true
 biome_rowan.workspace = true
+regex.workspace = true
 
 [dev-dependencies]
 aether_parser.workspace = true
