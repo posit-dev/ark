@@ -1,3 +1,37 @@
+//! The R language server core shared by Ark and Oak.
+//!
+//! This crate provides the following components.
+//!
+//! - LSP transport ([`backend`]) and the main loop ([`main_loop`]).
+//! - Document, workspace and configuration state ([`state`], [`state_handlers`],
+//!   [`config`]).
+//! - Background diagnostics scheduling ([`analysis`]).
+//! - Workspace and library scan scheduling in the main loop, source fetching
+//!   ([`sources`]), package facts from R subprocesses ([`sidecar`]), and R library
+//!   resolution ([`environments`]).
+//! - Shared request handlers that do not require an embedded R session
+//!   ([`handlers`]).
+//!
+//! A host implements [`handlers::Handlers`] to handle custom requests and
+//! events and to override standard requests. Ark overrides completion, hover
+//! and signature help to consult its embedded R session.
+//!
+//! Tree-sitter-based features use `legacy_ide`. Go to definition, find
+//! references and rename use `oak_ide`.
+//!
+//! The dependency graph must exclude `ark`, `harp` and `libr`, which provide
+//! the embedded R session. `scripts/check-crate-graph` checks this exclusion,
+//! including build and dev-dependencies, with all features and for all target
+//! platforms. This constraint does not prohibit separate R processes used
+//! for library resolution and package facts.
+//!
+//! The `testing` feature exposes `harness` and the helpers in `tests` to
+//! other crates' tests and benchmarks. It also changes the server: `serve()`
+//! registers the `ark/testPanic*` custom methods, which panic on request, and
+//! `stdext/testing` makes the watchdog abort the process on a stuck main-loop
+//! tick. Enable it only through dev-dependencies, so that feature unification
+//! never turns it on in a server binary.
+
 pub mod analysis;
 pub mod backend;
 pub mod capabilities;

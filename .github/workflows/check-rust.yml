@@ -43,6 +43,15 @@ jobs:
       - name: "Check clippy"
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
+  crate-graph:
+    name: "Check crate graph"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Check that `oak_lsp` and `legacy_ide` exclude `ark`, `harp` and `libr`"
+        run: ./scripts/check-crate-graph
+
   dependencies:
     name: "Check only workspace dependencies"
     runs-on: ubuntu-latest

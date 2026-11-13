@@ -80,6 +80,10 @@ bench-fixtures:
 clippy:
   cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+# Check that `oak_lsp` and `legacy_ide` exclude `ark`, `harp` and `libr` from their dependency graphs, and that `legacy_ide` doesn't depend on `oak_lsp`
+check-crate-graph:
+  scripts/check-crate-graph
+
 # Reformat source files
 format:
   #!/usr/bin/env bash

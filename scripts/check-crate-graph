@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#
+# Keep the embedded R session out of `oak_lsp` and `legacy_ide` by rejecting
+# `ark`, `harp` and `libr` anywhere in their dependency graphs. This check
+# does not prohibit separate R processes.
+#
+# `-e all` includes normal, build and dev-dependencies. Selecting both crates
+# checks their own dev-dependencies, which Cargo omits when they are only
+# dependencies of another crate. `--all-features` includes optional
+# dependencies enabled by features such as `testing`. `--target all` includes
+# dependencies for platforms other than the host.
+#
+# A second pass checks that `legacy_ide` doesn't depend on `oak_lsp`. Cargo
+# rejects a cycle of normal dependencies but allows a dev-dependency of
+# `legacy_ide` on `oak_lsp`, and the combined graph above always contains
+# `oak_lsp`, so only a graph rooted at `legacy_ide` alone can show the edge.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+status=0
+
+# Fails with the inverted tree of each crate in `forbidden` that appears in
+# the dependency graph of the packages in `roots`.
+check() {
+  local roots=$1
+  shift
+  local forbidden=("$@")
+  local tree_args=(--locked --all-features --target all -e all)
+  local root
+  for root in $roots; do
+    tree_args+=(-p "$root")
+  done
+
+  local packages
+  packages=$(cargo tree "${tree_args[@]}" --prefix none --format '{p}' | awk '{ print $1 }' | sort -u)
+
+  local crate
+  for crate in "${forbidden[@]}"; do
+    if grep -qx "$crate" <<<"$packages"; then
+      echo "error: \`$crate\` is in the dependency graph of $roots:" >&2
+      # The inverted tree only explains the failure, so its own errors don't
+      # change the outcome
+      cargo tree "${tree_args[@]}" --invert "$crate" >&2 || true
+      status=1
+    fi
+  done
+}
+
+check "oak_lsp legacy_ide" ark harp libr
+check "legacy_ide" oak_lsp
+
+if [ $status -eq 0 ]; then
+  echo "Crate graph is free of ark, harp and libr, and legacy_ide doesn't depend on oak_lsp"
+fi
+exit $status

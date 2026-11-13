@@ -20,6 +20,8 @@ The codebase is organized as a Rust workspace containing multiple crates:
 - **libr**: Bindings to R (dynamically loaded using `dlopen`/`LoadLibrary`)
 - **amalthea**: A Rust framework for building Jupyter and Positron kernels
 - **oak_semantic**: Per-file semantic index for R (scopes, symbols, definitions, uses)
+- **oak_lsp**: The R language server core shared by Ark and Oak, including transport, the main loop, state, background jobs and shared request handlers. Hosts implement `Handlers`, and Ark supplies requests that use its embedded R session. The dependency graph must exclude `ark`, `harp` and `libr`, including build and dev-dependencies, with all features and for all target platforms (`just check-crate-graph`). Separate R subprocesses are allowed.
+- **legacy_ide**: A stopgap until these features are ported to `oak_ide`. Tree-sitter-based IDE features for R, including document and workspace symbols, folding and selection ranges, on-type indentation, code actions and diagnostics. Also provides the workspace symbol index and tree-sitter helpers used by Ark. Does not depend on `oak_lsp`. Its dependency graph must exclude `ark`, `harp` and `libr` under the same checks as `oak_lsp` (`just check-crate-graph`).
 - **echo**: A toy kernel for testing the kernel framework
 - **stdext**: Extensions to Rust's standard library used by the other projects
 
