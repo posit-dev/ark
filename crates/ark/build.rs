@@ -69,7 +69,7 @@ fn main() {
     println!("cargo:rustc-env=BUILD_VERSION={}", build_version);
 
     // Embed an Application Manifest file on Windows.
-    // Turns on UTF-8 support and declares our Windows version compatibility.
+    // Turns on UTF-8 and long path support and declares our Windows version compatibility.
     // Documented to do nothing on non-Windows.
     // See <crates/ark/resources/manifest/ark.exe.manifest>.
     //

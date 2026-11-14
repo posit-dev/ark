@@ -11,7 +11,7 @@ extern crate embed_resource;
 /// [main()]
 fn main() {
     // Embed an Application Manifest file on Windows.
-    // Turns on UTF-8 support and declares our Windows version compatibility.
+    // Turns on UTF-8 and long path support and declares our Windows version compatibility.
     // Documented to do nothing on non-Windows.
     // See <crates/harp/resources/manifest/harp.exe.manifest>.
     //
