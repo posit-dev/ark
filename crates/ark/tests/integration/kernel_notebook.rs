@@ -278,3 +278,42 @@ fn test_notebook_plot_lm_shows_all_pages_without_prompting() {
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
+
+#[test]
+fn test_notebook_plot_layers_kept_when_next_page_starts_in_same_request() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // `plot.default()` holds the device while it calls `plot.new()`, so the
+    // last layers of page 1 (the red point) are recorded while rendering is
+    // held. They must still reach the frontend as an update for page 1, not
+    // be dropped when page 2 starts (posit-dev/positron#17240).
+    let code = "local({
+        plot(1:10)
+        points(5, 5, col = 'red')
+        plot(1:5)
+        points(3, 3, col = 'blue')
+    })";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    let page_1 = frontend.recv_iopub_display_data_content();
+    let page_2 = frontend.recv_iopub_display_data_content();
+    let page_1_id = &page_1.transient["display_id"];
+    let page_2_id = &page_2.transient["display_id"];
+    assert_ne!(page_1_id, page_2_id);
+
+    // Page 1 gets its held update once `plot.default()` releases the hold.
+    // The image differs from the first snapshot because it has the red point.
+    let page_1_update = frontend.recv_iopub_update_display_data_content();
+    assert_eq!(page_1_update.transient.display_id, *page_1_id);
+    assert_ne!(page_1_update.data["image/png"], page_1.data["image/png"]);
+
+    // Page 2 gets its update when the request completes
+    let page_2_update = frontend.recv_iopub_update_display_data_content();
+    assert_eq!(page_2_update.transient.display_id, *page_2_id);
+
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
