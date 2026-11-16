@@ -40,6 +40,7 @@ assert_matches = "1.5.0"
 async-trait = "0.1.89"
 base64 = "0.23.1"
 biome_line_index = { git = "https://github.com/biomejs/biome", rev = "8c43bc0b620e0db4ec841ae20756acedcead9599" }
+biome_parser = { git = "https://github.com/biomejs/biome", rev = "8c43bc0b620e0db4ec841ae20756acedcead9599" }
 biome_rowan = { git = "https://github.com/biomejs/biome", rev = "8c43bc0b620e0db4ec841ae20756acedcead9599" }
 biome_text_size = { git = "https://github.com/biomejs/biome", rev = "8c43bc0b620e0db4ec841ae20756acedcead9599" }
 blake3 = "1.8.5"
