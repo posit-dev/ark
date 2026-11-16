@@ -34,6 +34,14 @@ impl Console {
         );
     }
 
+    /// Process pending graphics changes before R waits for user input, for
+    /// example from `readline()` or `menu()`, so the frontend shows the plot the
+    /// user is being asked about. In Notebook mode this also runs before a
+    /// `browser()` prompt that is routed to stdin.
+    pub(super) fn graphics_on_input_request(&self) {
+        Rc::clone(self.device_context()).process_changes_before_input(self);
+    }
+
     /// Process pending graphics changes after an execute request completes.
     pub(super) fn graphics_on_did_execute_request(&self) {
         let dc = Rc::clone(self.device_context());

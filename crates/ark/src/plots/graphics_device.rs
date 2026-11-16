@@ -185,6 +185,25 @@ pub(crate) struct DeviceContext {
     /// released, instead of being lost when `id` changes (posit-dev/positron#17240).
     held_pages: RefCell<Vec<PlotId>>,
 
+    /// Whether the current page had unsent changes when the device was last
+    /// held.
+    ///
+    /// On a screen device, drawing done before a hold stays visible, so R can
+    /// stop for input while held and the user still sees it. The
+    /// `devAskNewPage()` prompt is the common case: `plot.default()` holds the
+    /// device before `plot.new()` asks "Hit <Return> to see next plot". See
+    /// [DeviceContext::process_changes_before_input] (posit-dev/positron#7680).
+    has_pre_hold_changes: Cell<bool>,
+
+    /// Whether the current page has drawing that its latest recording doesn't
+    /// include.
+    ///
+    /// Set by [DeviceContext::hook_mode] and cleared when the current page is
+    /// recorded. [DeviceContext::process_changes_before_input] uses it to decide
+    /// whether a page sent at an input prompt still needs an update when the
+    /// hold is released.
+    has_unrecorded_changes: Cell<bool>,
+
     /// The ID associated with the current plot page.
     ///
     /// Used for looking up a recorded plot so we can replay it with different graphics
@@ -253,6 +272,8 @@ impl DeviceContext {
             should_render: Cell::new(true),
             is_notification_deferred: Cell::new(false),
             held_pages: RefCell::new(Vec::new()),
+            has_pre_hold_changes: Cell::new(false),
+            has_unrecorded_changes: Cell::new(false),
             id: RefCell::new(Self::new_id()),
             comm_ids: RefCell::new(HashMap::new()),
             plot_contexts: RefCell::new(HashMap::new()),
@@ -442,8 +463,15 @@ impl DeviceContext {
         let is_released = level <= 0;
         let was_rendering = self.should_render.replace(is_released);
 
+        // Note unsent changes on the release→hold transition. They are sent at
+        // release as usual, or earlier if R waits for input while held.
+        if was_rendering && !is_released {
+            self.has_pre_hold_changes.replace(self.has_changes.get());
+        }
+
         // Flush deferred changes on hold→release transition
         if !was_rendering && is_released {
+            self.has_pre_hold_changes.replace(false);
             self.process_changes(console);
         }
     }
@@ -459,6 +487,9 @@ impl DeviceContext {
         self.is_drawing.replace(is_drawing);
         let old_has_changes = self.has_changes.get();
         self.has_changes.replace(old_has_changes || is_drawing);
+        if is_drawing {
+            self.has_unrecorded_changes.replace(true);
+        }
 
         // Capture each page's origin before `source()` pops its context
         if is_drawing && !self.has_pending_origin() {
@@ -487,6 +518,7 @@ impl DeviceContext {
         if self.is_notification_deferred.replace(false) && !self.is_new_page.get() {
             self.held_pages.borrow_mut().push(self.id());
         }
+        self.has_pre_hold_changes.replace(false);
         self.new_positron_page()
     }
 
@@ -742,7 +774,7 @@ impl DeviceContext {
         // plot(1) # Should get recorded with `id1`
         // plot(2) # Should record and overwrite `id1` because no new_page has been requested
         // ```
-        Self::record_plot(&id);
+        self.record_current_page(&id);
 
         if !self.should_render.get() {
             // Keep `has_changes` set so we re-enter this branch after the hold
@@ -752,13 +784,63 @@ impl DeviceContext {
             return;
         }
 
+        self.notify_current_page(&id, console);
+    }
+
+    /// Process outstanding plot changes before R waits for user input, for
+    /// example from `readline()`, `menu()`, or the `devAskNewPage()` prompt.
+    ///
+    /// When the device isn't held, this is [DeviceContext::process_changes].
+    /// When it is held, a page is sent only if it had changes drawn before the
+    /// hold, so `dev.hold()` keeps hiding pages that were drawn entirely while
+    /// held (posit-dev/positron#7680).
+    ///
+    /// The page is sent from its latest recording. In the `devAskNewPage()`
+    /// case, `before.plot.new` has already recorded the finished page and
+    /// nothing has been drawn since the hold. If there is no recording since
+    /// the hold, we record now, so drawing done while held on a page that was
+    /// partly drawn before the hold can appear at the prompt instead of at
+    /// `dev.flush()`.
+    #[tracing::instrument(level = "trace", skip_all)]
+    pub(crate) fn process_changes_before_input(self: &Rc<Self>, console: &Console) {
+        if self.should_render.get() {
+            self.process_changes(console);
+            return;
+        }
+
+        if !self.has_pre_hold_changes.replace(false) || !self.has_changes.get() {
+            return;
+        }
+
+        let id = self.id();
+        log::trace!("Sending pre-hold changes for plot `id` {id} before input request");
+
+        if !self.is_notification_deferred.get() {
+            self.record_current_page(&id);
+        }
+        self.notify_current_page(&id, console);
+
+        // The recording we just sent may miss drawing done while held after
+        // it was made, for example a second panel with `par(mfrow =)`. If so,
+        // keep `has_changes` set so the release records and sends the page
+        // again. Otherwise the frontend already has the current page.
+        self.has_changes.replace(self.has_unrecorded_changes.get());
+    }
+
+    fn record_current_page(&self, id: &PlotId) {
+        if Self::record_plot(id) {
+            self.has_unrecorded_changes.replace(false);
+        }
+    }
+
+    fn notify_current_page(self: &Rc<Self>, id: &PlotId, console: &Console) {
         self.has_changes.replace(false);
         self.is_notification_deferred.replace(false);
 
         if self.is_new_page.replace(false) {
-            self.process_new_plot(&id, console);
+            self.process_new_plot(id, console);
         } else {
-            self.process_update_plot(&id, console);
+            self.process_update_plot(id, console);
         }
     }
 

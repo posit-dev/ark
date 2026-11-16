@@ -1692,6 +1692,10 @@ impl Console {
             self.emit_stdout(autoprint);
         }
 
+        // Send pending plot changes before the prompt. The request is still
+        // active, so they are parented to it.
+        self.graphics_on_input_request();
+
         // Send request to frontend. We'll wait for an `input_reply`
         // from the frontend in the event loop in `read_console()`.
         // The active request remains active.
