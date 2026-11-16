@@ -2,4 +2,4 @@
 source: crates/ark/src/lsp/diagnostics.rs
 expression: diagnostic.message
 ---
-Syntax error
+Expected a newline or a `;` between two expressions.

@@ -1,0 +1,9 @@
+---
+source: crates/ark/src/lsp/diagnostics_syntax.rs
+expression: "render(\"base::\")"
+---
+```text
+base::
+    ^^ [1.1] `::` requires a name on the right. (0:4-0:6)
+      ^ [1] Expected a name. (0:6-0:6)
+```

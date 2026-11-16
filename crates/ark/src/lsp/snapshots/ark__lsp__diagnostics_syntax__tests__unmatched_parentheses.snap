@@ -1,5 +1,10 @@
 ---
 source: crates/ark/src/lsp/diagnostics_syntax.rs
-expression: diagnostic.message
+expression: "render(\"(\")"
 ---
-Syntax error
+```text
+(
+^ [1] This `(` is missing a closing `)`. (0:0-0:1)
+ ^ [1.1] Expected `)` but instead found the end of the file. (0:1-0:1)
+ ^ [2] Expected an expression but instead found the end of the file. (0:1-0:1)
+```

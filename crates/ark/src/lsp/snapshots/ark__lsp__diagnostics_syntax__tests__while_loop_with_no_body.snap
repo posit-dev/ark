@@ -1,5 +1,8 @@
 ---
 source: crates/ark/src/lsp/diagnostics_syntax.rs
-expression: diagnostic.message
+expression: "render(\"while(1)\")"
 ---
-Invalid while loop. Missing a body.
+```text
+while(1)
+        ^ [1] Expected a loop body but instead found the end of the file. (0:8-0:8)
+```

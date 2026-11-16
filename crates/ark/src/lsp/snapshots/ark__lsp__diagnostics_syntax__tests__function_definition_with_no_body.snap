@@ -1,5 +1,8 @@
 ---
 source: crates/ark/src/lsp/diagnostics_syntax.rs
-expression: diagnostic.message
+expression: "render(\"function(a)\")"
 ---
-Invalid function definition. Missing a body.
+```text
+function(a)
+           ^ [1] Expected a function body but instead found the end of the file. (0:11-0:11)
+```

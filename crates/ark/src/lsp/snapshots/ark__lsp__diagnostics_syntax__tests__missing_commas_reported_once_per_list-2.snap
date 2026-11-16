@@ -1,0 +1,8 @@
+---
+source: crates/ark/src/lsp/diagnostics_syntax.rs
+expression: "render(\"f(a b c d)\")"
+---
+```text
+f(a b c d)
+    ^ [1] Expected `,` but instead found `b`. (0:4-0:5)
+```

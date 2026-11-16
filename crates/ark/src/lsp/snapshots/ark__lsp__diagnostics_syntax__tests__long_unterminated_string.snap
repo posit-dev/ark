@@ -1,0 +1,31 @@
+---
+source: crates/ark/src/lsp/diagnostics_syntax.rs
+expression: render(&text)
+---
+```text
+('
+^ [1] This `(` is missing a closing `)`. (0:0-0:1)
+ ^ [2] Unterminated string. (0:1-0:2)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+)
+ ^ [1.1] Expected `)` but instead found the end of the file. (20:1-20:1)
+ ^ [2.1] Reached the end of the file looking for a closing delimiter. (20:1-20:1)
+```
