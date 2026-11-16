@@ -7,9 +7,11 @@
    <description>{{name}}</description>
 
    <!-- Support UTF-8 code page with R 4.2.0 and newer. -->
+   <!-- Support paths longer than 260 characters with R 4.3.0 and newer. Also requires `LongPathsEnabled` in the user's registry. -->
    <application>
      <windowsSettings>
        <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+       <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
      </windowsSettings>
   </application>
 
