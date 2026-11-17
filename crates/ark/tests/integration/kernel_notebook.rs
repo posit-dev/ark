@@ -317,3 +317,52 @@ fn test_notebook_plot_layers_kept_when_next_page_starts_in_same_request() {
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
+
+#[test]
+fn test_notebook_ask_new_page_prompt_shows_complete_page() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // With `devAskNewPage(TRUE)`, R asks "Hit <Return> to see next plot"
+    // inside `plot.new()`, after `plot.default()` has held the device. The red
+    // point on page 1 was drawn before that hold, so it must reach the
+    // frontend before the prompt (posit-dev/positron#7680).
+    let code = "local({
+        old <- grDevices::devAskNewPage(TRUE)
+        on.exit(grDevices::devAskNewPage(old))
+        plot(1:10)
+        points(5, 5, col = 'red')
+        plot(1:5)
+    })";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // R also asks before the first page on a fresh device
+    assert_eq!(
+        frontend.recv_stdin_input_request(),
+        "Hit <Return> to see next plot: "
+    );
+    frontend.send_stdin_input_reply(String::new());
+
+    let page_1 = frontend.recv_iopub_display_data_content();
+    let page_1_id = &page_1.transient["display_id"];
+
+    assert_eq!(
+        frontend.recv_stdin_input_request(),
+        "Hit <Return> to see next plot: "
+    );
+
+    // R can't continue until we reply, so this update was sent before the prompt
+    let page_1_update = frontend.recv_iopub_update_display_data_content();
+    assert_eq!(page_1_update.transient.display_id, *page_1_id);
+    assert_ne!(page_1_update.data["image/png"], page_1.data["image/png"]);
+
+    frontend.send_stdin_input_reply(String::new());
+
+    let page_2 = frontend.recv_iopub_display_data_content();
+    assert_ne!(page_2.transient["display_id"], *page_1_id);
+
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}

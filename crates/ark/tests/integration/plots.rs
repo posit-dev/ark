@@ -1200,6 +1200,214 @@ local({
     frontend.recv_shell_execute_reply();
 }
 
+/// Positron path: a page is complete in the frontend while R waits at the
+/// `devAskNewPage()` prompt.
+///
+/// `demo(graphics)` sets `devAskNewPage(TRUE)`, so R asks "Hit <Return> to
+/// see next plot" inside `plot.new()`, after `plot.default()` has held the
+/// device. The red point on page 1 was drawn before that hold, so it must
+/// reach the frontend before the prompt (posit-dev/positron#7680).
+#[test]
+fn test_positron_ask_new_page_prompt_shows_complete_page() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    let code = r#"
+local({
+    old <- grDevices::devAskNewPage(TRUE)
+    on.exit(grDevices::devAskNewPage(old))
+    plot(1:10)
+    points(5, 5, col = "red")
+    plot(1:5)
+})
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // R also asks before the first page on a fresh device
+    assert_eq!(
+        frontend.recv_stdin_input_request(),
+        "Hit <Return> to see next plot: "
+    );
+    frontend.send_stdin_input_reply(String::new());
+
+    let open1 = frontend.recv_iopub_comm_open();
+
+    assert_eq!(
+        frontend.recv_stdin_input_request(),
+        "Hit <Return> to see next plot: "
+    );
+
+    // R can't continue until we reply, so this update was sent before the prompt
+    let update1 = frontend.recv_iopub_comm_msg();
+    assert_eq!(update1.comm_id, open1.comm_id);
+    assert_eq!(update1.data["method"], "update");
+
+    frontend.send_stdin_input_reply(String::new());
+
+    // Page 1 was complete at the prompt, so it gets no second update
+    let open2 = frontend.recv_iopub_comm_open();
+    assert_ne!(open1.comm_id, open2.comm_id);
+
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: layers added to a page reach the frontend before
+/// `readline()` waits for the user (posit-dev/positron#7680).
+#[test]
+fn test_positron_readline_shows_complete_page() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    let code = r#"
+local({
+    plot(1:10)
+    points(5, 5, col = "red")
+    invisible(readline("Continue? "))
+})
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let open = frontend.recv_iopub_comm_open();
+
+    assert_eq!(frontend.recv_stdin_input_request(), "Continue? ");
+
+    // R can't continue until we reply, so this update was sent before the prompt
+    let update = frontend.recv_iopub_comm_msg();
+    assert_eq!(update.comm_id, open.comm_id);
+    assert_eq!(update.data["method"], "update");
+
+    frontend.send_stdin_input_reply(String::new());
+
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: drawing done while held, after the update sent at an input
+/// prompt, still reaches the frontend when the hold is released.
+///
+/// Page 1 has two panels. The red point is drawn before `dev.hold()`, so it
+/// is sent at the prompt. Panel 2 is drawn while held, so it must arrive as
+/// a later update for the same page at `dev.flush()`.
+#[test]
+fn test_positron_readline_while_held_keeps_later_panel() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    let code = r#"
+local({
+    old <- par(mfrow = c(1, 2))
+    on.exit(par(old))
+    plot(1:10)
+    points(5, 5, col = "red")
+    invisible(dev.hold())
+    plot(1:5)
+    invisible(readline("Continue? "))
+    invisible(dev.flush())
+})
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let open = frontend.recv_iopub_comm_open();
+
+    assert_eq!(frontend.recv_stdin_input_request(), "Continue? ");
+
+    // The red point, drawn before the hold, is sent before the prompt
+    let at_prompt = frontend.recv_iopub_comm_msg();
+    assert_eq!(at_prompt.comm_id, open.comm_id);
+    assert_eq!(at_prompt.data["method"], "update");
+
+    frontend.send_stdin_input_reply(String::new());
+
+    // Panel 2 is sent when `dev.flush()` releases the hold
+    let at_flush = frontend.recv_iopub_comm_msg();
+    assert_eq!(at_flush.comm_id, open.comm_id);
+    assert_eq!(at_flush.data["method"], "update");
+    assert_ne!(
+        at_flush.data["params"]["pre_render"]["data"],
+        at_prompt.data["params"]["pre_render"]["data"]
+    );
+
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: a page sent at an input prompt while held isn't sent again
+/// at `dev.flush()` when nothing was drawn under the hold.
+#[test]
+fn test_positron_readline_while_held_no_redundant_update() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    let code = r#"
+local({
+    plot(1:10)
+    points(5, 5, col = "red")
+    invisible(dev.hold())
+    invisible(readline("Continue? "))
+    invisible(dev.flush())
+})
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let open = frontend.recv_iopub_comm_open();
+
+    assert_eq!(frontend.recv_stdin_input_request(), "Continue? ");
+
+    let update = frontend.recv_iopub_comm_msg();
+    assert_eq!(update.comm_id, open.comm_id);
+    assert_eq!(update.data["method"], "update");
+
+    frontend.send_stdin_input_reply(String::new());
+
+    // No second update for the page at `dev.flush()`
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: `dev.hold()` keeps hiding a page drawn entirely while held,
+/// even when R waits for input before `dev.flush()`.
+#[test]
+fn test_positron_readline_keeps_held_page_hidden() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    let code = r#"
+local({
+    invisible(dev.hold())
+    plot(1:10)
+    invisible(readline("Continue? "))
+    invisible(dev.flush())
+})
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    assert_eq!(frontend.recv_stdin_input_request(), "Continue? ");
+    frontend.send_stdin_input_reply(String::new());
+
+    // The page is only sent once the hold is released
+    let open = frontend.recv_iopub_comm_open();
+    assert_eq!(open.target_name, "positron.plot");
+
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
 /// Positron path: `layout()` + multi-plot works like `par(mfrow)`.
 ///
 /// Same as `test_positron_par_multi_panel` but with `layout()` inside a
