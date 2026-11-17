@@ -33,8 +33,13 @@ pub enum BindingValue {
     },
     Altrep {
         object: RObject,
-        data1: RObject,
-        data2: RObject,
+        // Unprotected pointers, only compared by identity in `id()` to detect
+        // changes to the ALTREP's internal state. Protecting them would
+        // increase their reference count, and R >= 4.6.2 errors when the
+        // data of a locked wrapper object is shared.
+        // https://github.com/posit-dev/positron/issues/17279
+        data1: SEXP,
+        data2: SEXP,
     },
     Standard {
         object: RObject,
@@ -51,7 +56,7 @@ impl BindingValue {
                 object,
                 data1,
                 data2,
-            } => RObjectValueId::Altrep(object.sexp, data1.sexp, data2.sexp),
+            } => RObjectValueId::Altrep(object.sexp, *data1, *data2),
             BindingValue::Standard { object } => RObjectValueId::Standard(object.sexp),
         }
     }
@@ -90,8 +95,8 @@ impl Binding {
             if r_is_altrep(value) {
                 let value = BindingValue::Altrep {
                     object: RObject::from(value),
-                    data1: RObject::from(R_altrep_data1(value)),
-                    data2: RObject::from(R_altrep_data2(value)),
+                    data1: R_altrep_data1(value),
+                    data2: R_altrep_data2(value),
                 };
                 return Ok(Self { name, value });
             }
@@ -151,6 +156,7 @@ mod tests {
     use crate::exec::RFunctionExt;
     use crate::fixtures::r_task;
     use crate::r_symbol;
+    use crate::R_ENVS;
 
     unsafe fn test_environment_iter_impl(hash: bool) {
         let test_env = RFunction::new("base", "new.env")
@@ -208,6 +214,28 @@ mod tests {
             let b = iter.next().unwrap().unwrap();
             // Even though they are equal by value, their id() is different
             assert!(!(a.value.id() == b.value.id()));
+        })
+    }
+
+    // https://github.com/posit-dev/positron/issues/17279
+    #[test]
+    fn test_binding_does_not_share_altrep_data() {
+        r_task(|| {
+            // `drop()` on a referenced vector of length >= 64 returns an
+            // ALTREP wrapper
+            harp::parse_eval_global("x <- drop(matrix(as.double(1:64), ncol = 1))").unwrap();
+
+            let binding = Binding::new(&Environment::view(R_ENVS.global), "x".into()).unwrap();
+            assert!(matches!(binding.value, BindingValue::Altrep { .. }));
+
+            // The first use locks the wrapper's data. If the binding holds a
+            // reference to that data, R >= 4.6.2 fails on the second use with
+            // "REFCNT on locked WRAPPER data increased to 2".
+            harp::parse_eval_global("x + 1").unwrap();
+            let binding = Binding::new(&Environment::view(R_ENVS.global), "x".into()).unwrap();
+            harp::parse_eval_global("x + 2").unwrap();
+
+            drop(binding);
         })
     }
 }
