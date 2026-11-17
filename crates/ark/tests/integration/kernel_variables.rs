@@ -101,3 +101,23 @@ fn test_readr_read_csv_does_not_crash_variables_pane() {
     // Exercise `r_size` directly via `.ps.internal(obj_size())`
     frontend.execute_request(".ps.internal(obj_size(x))", |_result| {});
 }
+
+// https://github.com/posit-dev/positron/issues/17279
+#[test]
+fn test_variables_pane_does_not_share_altrep_wrapper_data() {
+    let frontend = DummyArkFrontend::lock();
+
+    // `drop()` returns an ALTREP wrapper for vectors of length >= 64
+    frontend.execute_request_invisibly("x <- drop(matrix(as.double(1:64), ncol = 1))");
+
+    let initial = frontend.open_variables_comm();
+    assert_eq!(initial.variables[0].display_name, "x");
+
+    // The first use locks the wrapper's data. The second use errors with
+    // "REFCNT on locked WRAPPER data increased to 2" on R >= 4.6.2 if the
+    // variables pane holds a reference to that data.
+    frontend.execute_request_invisibly("a <- x + 1");
+    frontend.recv_variables_update();
+    frontend.execute_request_invisibly("b <- x + 2");
+    frontend.recv_variables_update();
+}
