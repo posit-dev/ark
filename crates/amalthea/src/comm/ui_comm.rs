@@ -28,6 +28,19 @@ pub struct EvalResult {
 	pub output: String
 }
 
+/// The point the user clicked, or null if the user finished without a
+/// click
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PlotPoint {
+	/// Horizontal position as a fraction of the plot image width, from 0 at
+	/// the left edge to 1 at the right edge
+	pub x: f64,
+
+	/// Vertical position as a fraction of the plot image height, from 0 at
+	/// the top edge to 1 at the bottom edge
+	pub y: f64
+}
+
 /// Editor metadata
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct EditorContext {
@@ -305,6 +318,13 @@ pub struct SelectFileParams {
 	pub default_dir: Option<String>,
 }
 
+/// Parameters for the LocatePlotPoint method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LocatePlotPointParams {
+	/// The ID of the plot, which is the ID of its plot comm
+	pub plot_id: String,
+}
+
 /// Parameters for the PromptState method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PromptStateParams {
@@ -525,6 +545,13 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "select_file")]
 	SelectFile(SelectFileParams),
 
+	/// Ask the user to click a point on a plot
+	///
+	/// Use this to let the user choose a point on a plot shown in the Plots
+	/// pane, for example for R's `locator()`
+	#[serde(rename = "locate_plot_point")]
+	LocatePlotPoint(LocatePlotPointParams),
+
 	/// Sleep for n seconds
 	///
 	/// Useful for testing in the backend a long running frontend method
@@ -608,6 +635,10 @@ pub enum UiFrontendReply {
 
 	/// The path of the selected file, or null if the user cancelled
 	SelectFileReply(Option<String>),
+
+	/// The point the user clicked, or null if the user finished without a
+	/// click
+	LocatePlotPointReply(Option<PlotPoint>),
 
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
@@ -733,6 +764,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::ShowPrompt(_) => Ok(UiFrontendReply::ShowPromptReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::AskForPassword(_) => Ok(UiFrontendReply::AskForPasswordReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::SelectFile(_) => Ok(UiFrontendReply::SelectFileReply(serde_json::from_value(reply)?)),
+		UiFrontendRequest::LocatePlotPoint(_) => Ok(UiFrontendReply::LocatePlotPointReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
 		UiFrontendRequest::ExecuteCommand(_) => Ok(UiFrontendReply::ExecuteCommandReply()),
 		UiFrontendRequest::EvaluateWhenClause(_) => Ok(UiFrontendReply::EvaluateWhenClauseReply(serde_json::from_value(reply)?)),

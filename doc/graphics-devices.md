@@ -86,6 +86,33 @@ In notebook mode (Jupyter notebooks and Quarto inline output), we do not registe
 
 Note that with this approach, a motivated user can still set `options(device = "quartz")` in their `.Rprofile` if they'd like to use their own default graphics device rather than the one that comes with ark / Positron.
 
+# Locator
+
+`graphics::locator()`, `graphics::identify()`, and `grid::grid.locator()` ask the user to click on the plot. R gets each click from the device's `locator` callback, `callback_locator()`. It is not wrapped: the png and ragg devices we wrap have no usable locator. In console sessions we set `haveLocator` to 2, so `dev.capabilities("locator")` reports `TRUE`. In notebook sessions we set it to 1 ("no").
+
+For each click, `DeviceContext::locate()`:
+
+-   Sends the current page to the frontend, with `process_changes_before_input()`. A `locator()` call in the same request as `plot()` runs before the end-of-request flush, so without this the frontend would not have the plot yet. A blank page, for example after `plot.new()` or `grid::grid.newpage()` with nothing drawn yet, is sent as well, so there is a plot to click on. If the page still has no plot comm, for example because `dev.hold()` hides it, `locator()` returns as if the user finished.
+
+-   Sends a pre-render of the page at the device size, the size `dev.size()` reports. The frontend shows this image while the user clicks, so a click maps to the device the same way it maps to the image. The pre-render is skipped when the frontend already got one of this page at the device size earlier in the same execute request, for example from the flush above. A render request from the frontend clears this, because the frontend may then show that render instead.
+
+-   Sends a blocking `locate_plot_point` request on the UI comm with the plot comm ID, and waits for the reply on the stdin socket.
+
+The reply is the clicked point as fractions of the plot image, `x` from 0 at the left edge to 1 at the right edge and `y` from 0 at the top edge to 1 at the bottom edge, or `null` when the user finishes. Fractions keep the reply independent of the size and pixel ratio of the image. `callback_locator()` converts them to device coordinates with the device bounds:
+
+```
+x = left + fraction_x * (right - left)
+y = top  + fraction_y * (bottom - top)
+```
+
+`top` is the device coordinate of the top edge, so this is correct for devices whose y axis points up and for devices whose y axis points down. A `null` reply makes the callback return `FALSE`, which ends `locator()` with the points clicked so far.
+
+Points and lines that `locator(type = "p")` draws between clicks do not show in the Plots pane until `locator()` returns. R adds the `locator()` call to the display list only when the call returns, so a recording made between clicks does not have them, and a render of it would only repeat the image the frontend already shows. So `locate()` does not send the page on the second and later clicks of one `locator()` call, and the points arrive with the next update after `locator()` returns. To tell the clicks of one call apart from a new call, `locate()` keeps the display list length from its last click: the display list grows when `locator()` returns, so the same length means the same call.
+
+If the user interrupts while R waits for a click, the callback raises the interrupt itself, because `locator()` would otherwise return normally and the rest of the expression would run.
+
+In notebook sessions, and in console sessions without a UI comm, there is no Plots pane to click on, so `locator()` returns `NULL` at once.
+
 # Structures and terminology
 
 ## Graphics device

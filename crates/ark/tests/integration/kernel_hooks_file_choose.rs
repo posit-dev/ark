@@ -16,6 +16,7 @@ use amalthea::comm::base_comm::JsonRpcResult;
 use amalthea::comm::ui_comm::SelectFileParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use amalthea::wire::header::JupyterHeader;
 use amalthea::wire::jupyter_message::Message;
 use ark_test::DummyArkFrontend;
 use ark_test::IopubExpectation;
@@ -187,6 +188,91 @@ fn test_file_choose_interrupt() {
         &[IopubExpectation::BusyControl, IopubExpectation::IdleControl],
         &[IopubExpectation::CommMsg, IopubExpectation::IdleShell],
     ]);
+    frontend.recv_shell_execute_reply();
+}
+
+/// Runs `file.choose()`, interrupts it while the dialog is open, and returns
+/// the header of the `select_file` request.
+fn interrupt_file_choose(frontend: &DummyArkFrontend) -> JupyterHeader {
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
+    frontend.send_execute_request("file.choose()", options);
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let header = assert_matches!(frontend.recv_stdin(), Message::CommRequest(msg) => msg.header);
+
+    frontend.send_interrupt_request();
+    frontend.recv_control_interrupt_reply();
+    frontend.assert_stream_stderr_contains("\n");
+    frontend.recv_iopub_interleaved(&[
+        &[IopubExpectation::BusyControl, IopubExpectation::IdleControl],
+        &[IopubExpectation::CommMsg, IopubExpectation::IdleShell],
+    ]);
+    frontend.recv_shell_execute_reply();
+
+    header
+}
+
+/// A reply to an interrupted dialog arrives late. It is not the answer to
+/// the next dialog.
+#[test]
+fn test_file_choose_ignores_stale_reply_after_interrupt() {
+    let frontend = DummyArkFrontend::lock();
+    let comm_id = frontend.open_ui_comm();
+
+    let first = interrupt_file_choose(&frontend);
+    frontend.send_stdin_with_parent(result(Value::from("/stale.csv")), first);
+
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
+    frontend.send_execute_request("file.choose()", options);
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let second = assert_matches!(frontend.recv_stdin(), Message::CommRequest(msg) => msg.header);
+    frontend.send_stdin_with_parent(result(Value::from("/fresh.csv")), second);
+
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"/fresh.csv\"");
+    frontend.recv_ui_prompt_state(&comm_id);
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// A late reply to an interrupted dialog is a comm reply. It is not the
+/// answer to a following `readline()`, which waits for an input reply.
+#[test]
+fn test_readline_ignores_stale_comm_reply_after_interrupt() {
+    let frontend = DummyArkFrontend::lock();
+    let comm_id = frontend.open_ui_comm();
+
+    let first = interrupt_file_choose(&frontend);
+    frontend.send_stdin_with_parent(result(Value::from("/stale.csv")), first);
+
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
+    frontend.send_execute_request("readline(\"prompt> \")", options);
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    assert_eq!(frontend.recv_stdin_input_request(), "prompt> ");
+    frontend.send_stdin_input_reply(String::from("fresh"));
+
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"fresh\"");
+    frontend.recv_ui_prompt_state(&comm_id);
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // The stdin thread did not lose its place
+    frontend.send_execute_request("1 + 1", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 2");
+    frontend.recv_ui_prompt_state(&comm_id);
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 }
 

@@ -29,6 +29,10 @@ use amalthea::comm::plot_comm::PlotResult;
 use amalthea::comm::plot_comm::PlotSize;
 use amalthea::comm::plot_comm::PlotUnit;
 use amalthea::comm::plot_comm::UpdateParams;
+use amalthea::comm::ui_comm::LocatePlotPointParams;
+use amalthea::comm::ui_comm::PlotPoint;
+use amalthea::comm::ui_comm::UiFrontendReply;
+use amalthea::comm::ui_comm::UiFrontendRequest;
 use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
@@ -48,6 +52,9 @@ use harp::raii::RLocalInteractive;
 use libr::pDevDesc;
 use libr::pGEcontext;
 use libr::R_NilValue;
+use libr::Rboolean;
+use libr::Rboolean_FALSE;
+use libr::Rboolean_TRUE;
 use libr::SEXP;
 use serde_json::json;
 use stdext::result::ResultExt;
@@ -236,6 +243,17 @@ pub(crate) struct DeviceContext {
     /// device keeps the size it was created with.
     pane_size: Cell<Option<PlotSize>>,
 
+    /// The plot ID and render size of the last pre-render sent to the frontend.
+    /// Lets a caller skip rendering the same plot at the same size again.
+    last_prerender: RefCell<Option<(PlotId, PlotSize)>>,
+
+    /// The length of the Ark device's display list when `locate()` last
+    /// returned a point, if no new page started since. R records a
+    /// `locator()` call in the display list only when it returns, so while the
+    /// length is unchanged, the points `locator(type =)` draws between clicks
+    /// are not in a recording yet. See [DeviceContext::locate].
+    located_display_list_length: Cell<Option<isize>>,
+
     /// Whether we are replaying the display list after a Plots pane resize
     /// (see [DeviceContext::set_pane_size]).
     is_replaying: Cell<bool>,
@@ -289,6 +307,8 @@ impl DeviceContext {
             }),
             device: Cell::new(None),
             pane_size: Cell::new(None),
+            last_prerender: RefCell::new(None),
+            located_display_list_length: Cell::new(None),
             is_replaying: Cell::new(false),
             execution_context: RefCell::new(None),
             source_context_stack: RefCell::new(Vec::new()),
@@ -371,6 +391,12 @@ impl DeviceContext {
         render_settings: Option<PlotRenderSettings>,
         intrinsic_size: Option<IntrinsicSize>,
     ) {
+        // Between requests the frontend may have rendered plots again at
+        // other sizes, so the last pre-render may no longer be what it shows
+        self.last_prerender.replace(None);
+
+        self.located_display_list_length.replace(None);
+
         *self.execution_context.borrow_mut() = Some(ExecutionContext {
             execution_id,
             code,
@@ -483,7 +509,7 @@ impl DeviceContext {
             return;
         }
 
-        let is_drawing = mode != 0;
+        let is_drawing = mode == 1;
         self.is_drawing.replace(is_drawing);
         let old_has_changes = self.has_changes.get();
         self.has_changes.replace(old_has_changes || is_drawing);
@@ -519,6 +545,7 @@ impl DeviceContext {
             self.held_pages.borrow_mut().push(self.id());
         }
         self.has_pre_hold_changes.replace(false);
+        self.located_display_list_length.replace(None);
         self.new_positron_page()
     }
 
@@ -646,6 +673,10 @@ impl DeviceContext {
             },
             PlotBackendRequest::Render(plot_meta) => {
                 log::trace!("PlotBackendRequest::Render");
+
+                // The frontend may show this render instead of our last
+                // pre-render, so `locate()` must not trust that one anymore
+                self.last_prerender.replace(None);
 
                 let mut pixel_ratio = plot_meta.pixel_ratio;
                 let size = match plot_meta.size {
@@ -827,6 +858,98 @@ impl DeviceContext {
         self.has_changes.replace(self.has_unrecorded_changes.get());
     }
 
+    /// Ask the frontend for the point the user clicks on the current plot, for
+    /// `locator()` and friends. See "Locator" in `doc/graphics-devices.md`.
+    ///
+    /// Before the request, the frontend gets the current page rendered at the
+    /// device size, so the fractions in the reply map to the device.
+    #[tracing::instrument(level = "trace", skip_all)]
+    pub(crate) fn locate(self: &Rc<Self>, console: &Console) -> anyhow::Result<LocateOutcome> {
+        if !self.should_use_dynamic_plots(console) {
+            return Ok(LocateOutcome::Finished);
+        }
+
+        // On the second and later clicks of one `locator()` call, the only
+        // changes are the points or lines `locator(type =)` drew. They are not
+        // in the display list until `locator()` returns, so sending the page
+        // now would only render it again without them. Leave `has_changes`
+        // set so the page is sent with them after `locator()` returns. The
+        // display list grows when `locator()` returns, so an unchanged length
+        // means we are still in the same call.
+        let is_between_clicks = self
+            .located_display_list_length
+            .get()
+            .is_some_and(|length| Some(length) == self.display_list_length());
+        if !is_between_clicks {
+            // A page that `plot.new()` or `grid::grid.newpage()` started is
+            // blank until something is drawn on it, so it isn't a plot change
+            // yet. Send it anyway, so there is a plot to click on.
+            if self.is_new_page.get() && self.should_render.get() {
+                self.has_changes.replace(true);
+            }
+
+            // A `locator()` call in the same request as the plot runs before
+            // the end-of-request flush, so send the page now
+            self.process_changes_before_input(console);
+        }
+
+        let id = self.id();
+        let Some(comm_id) = self.comm_ids.borrow().get(&id).cloned() else {
+            // The frontend doesn't have this page, for example because
+            // `dev.hold()` hides it, so there is nothing to click on
+            log::trace!("No plot comm for plot `id` {id}, can't locate");
+            return Ok(LocateOutcome::Finished);
+        };
+
+        let prerender = self.prerender_settings.get();
+        let size = self.device_size().unwrap_or(prerender.size);
+
+        // `last_prerender` is cleared when an execute request starts, so a
+        // match means the frontend shows a pre-render of this page from this
+        // request at the device size. Pages are rendered again whenever they
+        // change, so it is current.
+        let is_sent = matches!(
+            &*self.last_prerender.borrow(),
+            Some((last_id, last_size)) if *last_id == id && *last_size == size
+        );
+        if !is_sent {
+            // Without a hold, the flush above recorded any changes. While
+            // held, keep sending the latest recording so we don't reveal
+            // drawing that the hold hides.
+            if self.should_render.get() && self.has_unrecorded_changes.get() {
+                self.record_current_page(&id);
+            }
+            self.send_plot_update(&id, PlotRenderSettings { size, ..prerender });
+        }
+
+        let Some(ui_comm) = console.ui_comm() else {
+            return Ok(LocateOutcome::Finished);
+        };
+        let request =
+            UiFrontendRequest::LocatePlotPoint(LocatePlotPointParams { plot_id: comm_id });
+
+        let outcome = match ui_comm.call_frontend_method_typed(request) {
+            Ok(Some(UiFrontendReply::LocatePlotPointReply(Some(point)))) => {
+                Ok(LocateOutcome::Point(point))
+            },
+            Ok(Some(UiFrontendReply::LocatePlotPointReply(None))) => Ok(LocateOutcome::Finished),
+            Ok(Some(reply)) => Err(anyhow!(
+                "Unexpected reply to `locate_plot_point`: {reply:?}"
+            )),
+            Ok(None) => Ok(LocateOutcome::Interrupted),
+            Err(err) => Err(err),
+        };
+
+        // Only a point continues the `locator()` call
+        let length = match outcome {
+            Ok(LocateOutcome::Point(_)) => self.display_list_length(),
+            _ => None,
+        };
+        self.located_display_list_length.replace(length);
+
+        outcome
+    }
+
     fn record_current_page(&self, id: &PlotId) {
         if Self::record_plot(id) {
             self.has_unrecorded_changes.replace(false);
@@ -887,6 +1010,8 @@ impl DeviceContext {
         let open_data = match self.render_plot(id, &settings) {
             Ok(pre_render) => {
                 let mime_type = Self::get_mime_type(&PlotRenderFormat::Png);
+                self.last_prerender
+                    .replace(Some((id.clone(), settings.size)));
 
                 let pre_render = PlotResult {
                     data: pre_render,
@@ -983,6 +1108,13 @@ impl DeviceContext {
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
     fn process_update_plot_positron(&self, id: &PlotId) {
+        self.send_plot_update(id, self.prerender_settings.get());
+    }
+
+    /// Pre-render plot `id` with `settings` and send it to the frontend as a
+    /// plot update event.
+    #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
+    fn send_plot_update(&self, id: &PlotId, settings: PlotRenderSettings) {
         log::trace!("Notifying Positron of plot update");
 
         let comm_id = match self.comm_ids.borrow().get(id).cloned() {
@@ -993,10 +1125,11 @@ impl DeviceContext {
             },
         };
 
-        let settings = self.prerender_settings.get();
         let update_params = match self.render_plot(id, &settings) {
             Ok(pre_render) => {
                 let mime_type = Self::get_mime_type(&settings.format);
+                self.last_prerender
+                    .replace(Some((id.clone(), settings.size)));
 
                 let pre_render = PlotResult {
                     data: pre_render,
@@ -1150,6 +1283,17 @@ impl DeviceContext {
     }
 }
 
+/// The result of [DeviceContext::locate]
+#[derive(Debug)]
+pub(crate) enum LocateOutcome {
+    /// The user clicked this point
+    Point(PlotPoint),
+    /// The user finished without a click, or there is nothing to click on
+    Finished,
+    /// An interrupt cancelled the request
+    Interrupted,
+}
+
 /// Per-plot comm handler registered in Console's comm table.
 /// Delegates RPC handling and lifecycle events to the shared `DeviceContext`.
 #[derive(Debug)]
@@ -1242,6 +1386,44 @@ unsafe fn set_device_bounds(ge_device: libr::pGEDevDesc, size: PlotSize) -> bool
         (*device).top = top;
     });
     changed
+}
+
+// Defined after `with_device!()`, which it uses.
+impl DeviceContext {
+    /// The length of the Ark device's display list, or `None` if there is no
+    /// Ark device. Doesn't allocate or longjump.
+    fn display_list_length(&self) -> Option<isize> {
+        let ge_device = self.device.get()?;
+        let length;
+        // Safety: `device` is cleared in `callback_close()`, so it points to a
+        // live device. `Rf_xlength()` only walks the pairlist.
+        unsafe {
+            with_device!(ge_device, |ge_device, _device| {
+                length = libr::Rf_xlength((*ge_device).displayList) as isize;
+            });
+        }
+        Some(length)
+    }
+
+    /// The Ark device's size in CSS pixels, or `None` if there is no Ark
+    /// device. The inverse of `set_device_bounds()`. Never calls into R.
+    pub(crate) fn device_size(&self) -> Option<PlotSize> {
+        let ge_device = self.device.get()?;
+        let size;
+        // Safety: `device` is cleared in `callback_close()`, so it points to a
+        // live device.
+        unsafe {
+            with_device!(ge_device, |_ge_device, device| {
+                let width = ((*device).right - (*device).left).abs() * (*device).ipr[0];
+                let height = ((*device).bottom - (*device).top).abs() * (*device).ipr[1];
+                size = Some(PlotSize {
+                    width: (width * DEFAULT_DPI).round() as i64,
+                    height: (height * DEFAULT_DPI).round() as i64,
+                });
+            });
+        }
+        size
+    }
 }
 
 /// Whether `ge_device` wraps the device `dev`
@@ -1488,7 +1670,8 @@ unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, level_delta: i32) 
 
 // mode = 0, graphics off
 // mode = 1, graphics on
-// mode = 2, graphical input on (ignored by most drivers)
+// mode = 2, graphical input on (ignored by most drivers). It is not a plot
+// change, so `hook_mode()` treats only mode 1 as drawing.
 #[tracing::instrument(level = "trace", skip_all, fields(mode = %mode))]
 unsafe extern "C-unwind" fn callback_mode(mode: i32, dev: pDevDesc) {
     log::trace!("Entering callback_mode");
@@ -1553,6 +1736,76 @@ unsafe extern "C-unwind" fn callback_size(
     *top = (*bounds).top;
 }
 
+/// Locator callback
+///
+/// Used by `locator()`, `identify()`, and `grid::grid.locator()`. Asks the
+/// frontend for a click on the current plot (see [DeviceContext::locate]).
+/// Returns `FALSE` when the user finishes, which ends `locator()` with the
+/// points so far.
+unsafe extern "C-unwind" fn callback_locator(x: *mut f64, y: *mut f64, dev: pDevDesc) -> Rboolean {
+    log::trace!("Entering callback_locator");
+
+    match locate_device_point(dev) {
+        DevicePoint::Point(point_x, point_y) => {
+            *x = point_x;
+            *y = point_y;
+            Rboolean_TRUE
+        },
+        DevicePoint::Finished => Rboolean_FALSE,
+        DevicePoint::Interrupted => {
+            // `locator()` returns normally after `FALSE`, so without this the
+            // rest of the input would run. Raise the interrupt here. Amalthea
+            // cancels the frontend request before it signals R, so the
+            // interrupt may not be pending yet: mark it pending ourselves, as
+            // the interrupt handler does.
+            //
+            // This longjumps out of the callback, which is why
+            // `locate_device_point()` returns plain values: no destructor is
+            // skipped, and no `Console` reference is alive while
+            // `R_ProcessEvents()` borrows the console mutably.
+            crate::signals::set_interrupts_pending(true);
+            libr::R_CheckUserInterrupt();
+            Rboolean_FALSE
+        },
+    }
+}
+
+/// A point from [DeviceContext::locate] in device coordinates. Holds no values
+/// with destructors, see [callback_locator].
+enum DevicePoint {
+    Point(f64, f64),
+    Finished,
+    Interrupted,
+}
+
+unsafe fn locate_device_point(dev: pDevDesc) -> DevicePoint {
+    let console = Console::get();
+    let dc = Rc::clone(console.device_context());
+
+    match dc.locate(console) {
+        Ok(LocateOutcome::Point(point)) if point.x.is_finite() && point.y.is_finite() => {
+            // Convert fractions of the plot image to device coordinates. The
+            // bounds are the first fields of every `DevDesc` version. `top` is
+            // the device coordinate of the top edge, so this is correct for
+            // either y direction.
+            let bounds = dev as *mut libr::DevDescBounds;
+            let x = (*bounds).left + point.x * ((*bounds).right - (*bounds).left);
+            let y = (*bounds).top + point.y * ((*bounds).bottom - (*bounds).top);
+            DevicePoint::Point(x, y)
+        },
+        Ok(LocateOutcome::Point(point)) => {
+            log::warn!("Ignoring non-finite plot point from the frontend: {point:?}");
+            DevicePoint::Finished
+        },
+        Ok(LocateOutcome::Finished) => DevicePoint::Finished,
+        Ok(LocateOutcome::Interrupted) => DevicePoint::Interrupted,
+        Err(err) => {
+            log::warn!("Can't locate a point on the plot: {err:?}");
+            DevicePoint::Finished
+        },
+    }
+}
+
 unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     // TODO: Don't allow creation of more than one graphics device.
 
@@ -1597,6 +1850,15 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
 
         // Not wrapped: we report our own bounds, see `callback_size()`
         (*device).size = Some(callback_size);
+
+        // Not wrapped: the wrapped devices write to files and have no usable
+        // locator. `haveLocator` is 2 for "yes" and 1 for "no". Only console
+        // sessions have a Plots pane to click on.
+        (*device).locator = Some(callback_locator);
+        (*device).haveLocator = match Console::get().session_mode() {
+            SessionMode::Console => 2,
+            _ => 1,
+        };
     });
 
     let dc = Console::get().device_context();
@@ -1764,11 +2026,34 @@ fn r_option_positive_f64(name: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
+    use amalthea::comm::plot_comm::RenderParams;
+
     use super::*;
 
     fn test_device_context() -> DeviceContext {
         let (tx, _rx) = crossbeam::channel::unbounded();
         DeviceContext::new(tx)
+    }
+
+    #[test]
+    fn test_render_request_invalidates_last_prerender() {
+        let dc = test_device_context();
+        let id = PlotId(String::from("plot-1"));
+        let size = PlotSize {
+            width: 400,
+            height: 300,
+        };
+        dc.last_prerender.replace(Some((id.clone(), size)));
+
+        // Without a size or an intrinsic size the render fails before calling
+        // into R, after the frontend asked for it
+        let request = PlotBackendRequest::Render(RenderParams {
+            size: None,
+            pixel_ratio: 1.0,
+            format: PlotRenderFormat::Png,
+        });
+        assert!(dc.handle_rpc(request, &id).is_err());
+        assert!(dc.last_prerender.borrow().is_none());
     }
 
     #[test]
@@ -1813,5 +2098,20 @@ mod tests {
         let ctx = dc.capture_execution_context();
         assert_eq!(ctx.execution_id, "");
         assert_eq!(ctx.code, "");
+    }
+
+    #[test]
+    fn test_hook_mode_input_is_not_a_change() {
+        let dc = test_device_context();
+
+        // Mode 2 is graphical input (`locator()`), not drawing
+        dc.hook_mode(2);
+        assert!(!dc.has_changes.get());
+        assert!(!dc.is_drawing.get());
+        assert!(!dc.has_unrecorded_changes.get());
+
+        dc.hook_mode(1);
+        assert!(dc.has_changes.get());
+        assert!(dc.is_drawing.get());
     }
 }
