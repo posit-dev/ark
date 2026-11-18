@@ -14,6 +14,8 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::Read;
 use std::rc::Rc;
+use std::time::Duration;
+use std::time::Instant;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::plot_comm::IntrinsicSize;
@@ -254,6 +256,9 @@ pub(crate) struct DeviceContext {
     /// are not in a recording yet. See [DeviceContext::locate].
     located_display_list_length: Cell<Option<isize>>,
 
+    /// The last mode R set with the `mode` hook. See [DeviceContext::hook_mode].
+    mode: Cell<i32>,
+
     /// Whether we are replaying the display list after a Plots pane resize
     /// (see [DeviceContext::set_pane_size]).
     is_replaying: Cell<bool>,
@@ -309,6 +314,7 @@ impl DeviceContext {
             pane_size: Cell::new(None),
             last_prerender: RefCell::new(None),
             located_display_list_length: Cell::new(None),
+            mode: Cell::new(0),
             is_replaying: Cell::new(false),
             execution_context: RefCell::new(None),
             source_context_stack: RefCell::new(Vec::new()),
@@ -511,9 +517,16 @@ impl DeviceContext {
 
         let is_drawing = mode == 1;
         self.is_drawing.replace(is_drawing);
-        let old_has_changes = self.has_changes.get();
-        self.has_changes.replace(old_has_changes || is_drawing);
-        if is_drawing {
+
+        // `identify()` draws its labels in mode 2 (graphical input), which
+        // isn't drawing mode. After each label it switches to mode 0 and back
+        // to 2, and it does that only when it drew a label. So a switch back
+        // to 2 between the clicks of one call means the call drew something.
+        let previous_mode = self.mode.replace(mode);
+        let drew_during_input = mode == 2 && previous_mode == 0 && self.is_between_clicks();
+
+        if is_drawing || drew_during_input {
+            self.has_changes.replace(true);
             self.has_unrecorded_changes.replace(true);
         }
 
@@ -784,8 +797,6 @@ impl DeviceContext {
     fn process_current_page(self: &Rc<Self>, console: &Console) {
         let id = self.id();
 
-        self.note_drawing_after_locate();
-
         if !self.has_changes.get() {
             log::trace!("No changes to process for plot `id` {id}");
             return;
@@ -886,11 +897,7 @@ impl DeviceContext {
         // set so the page is sent with them after `locator()` returns. The
         // display list grows when `locator()` returns, so an unchanged length
         // means we are still in the same call.
-        let is_between_clicks = self
-            .located_display_list_length
-            .get()
-            .is_some_and(|length| Some(length) == self.display_list_length());
-        if !is_between_clicks {
+        if !self.is_between_clicks() {
             // A page that `plot.new()` or `grid::grid.newpage()` started is
             // blank until something is drawn on it, so it isn't a plot change
             // yet. Send it anyway, so there is a plot to click on.
@@ -965,22 +972,14 @@ impl DeviceContext {
         outcome
     }
 
-    /// `identify()` draws its labels outside of drawing mode, so `hook_mode()`
-    /// doesn't see them. R adds a `locator()` or `identify()` call to the
-    /// display list when it returns, so a display list that grew since the
-    /// last click means the call has returned and may have drawn something.
-    fn note_drawing_after_locate(&self) {
-        if self.is_replaying() {
-            return;
-        }
-        let Some(length) = self.located_display_list_length.get() else {
-            return;
-        };
-        if self.display_list_length() != Some(length) {
-            self.located_display_list_length.replace(None);
-            self.has_changes.replace(true);
-            self.has_unrecorded_changes.replace(true);
-        }
+    /// Whether R is between the clicks of one `locator()`, `identify()`, or
+    /// `grid::grid.locator()` call: `locate()` returned a point, and the
+    /// display list hasn't grown since. R records the call in the display
+    /// list when it returns.
+    fn is_between_clicks(&self) -> bool {
+        self.located_display_list_length
+            .get()
+            .is_some_and(|length| Some(length) == self.display_list_length())
     }
 
     fn record_current_page(&self, id: &PlotId) {
@@ -1788,18 +1787,35 @@ unsafe extern "C-unwind" fn callback_locator(x: *mut f64, y: *mut f64, dev: pDev
         DevicePoint::Interrupted => {
             // `locator()` returns normally after `FALSE`, so without this the
             // rest of the input would run. Raise the interrupt here. Amalthea
-            // cancels the frontend request before it signals R, so the
-            // interrupt may not be pending yet: mark it pending ourselves, as
-            // the interrupt handler does.
+            // cancels the frontend request before it signals R, so wait for
+            // the interrupt to be pending. If we marked it pending ourselves,
+            // the signal could arrive after we raised it and interrupt the
+            // code that runs next.
             //
             // This longjumps out of the callback, which is why
             // `locate_device_point()` returns plain values: no destructor is
             // skipped, and no `Console` reference is alive while
             // `R_ProcessEvents()` borrows the console mutably.
-            crate::signals::set_interrupts_pending(true);
+            wait_for_pending_interrupt();
             libr::R_CheckUserInterrupt();
             Rboolean_FALSE
         },
+    }
+}
+
+/// Waits for the interrupt that cancelled a frontend request to reach R. The
+/// interrupt handler marks it pending right after Amalthea cancels the
+/// request. If that doesn't happen within a second, marks it pending itself,
+/// so the interrupt is never lost.
+fn wait_for_pending_interrupt() {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !crate::signals::interrupts_pending() {
+        if Instant::now() >= deadline {
+            log::warn!("Interrupt not pending after a locator request was interrupted");
+            crate::signals::set_interrupts_pending(true);
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 

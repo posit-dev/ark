@@ -518,6 +518,35 @@ fn test_identify_labels_point_after_it_returns() {
     );
 }
 
+/// The usual way to use `identify()` is to click some points and then
+/// finish. The labels are still sent after `identify()` returns.
+#[test]
+fn test_identify_labels_points_after_finish() {
+    let frontend = DummyArkFrontend::lock();
+    let ui_comm_id = open_ui_comm_with_pane(&frontend);
+
+    let code = "par(mar = c(0, 0, 0, 0)); plot(c(0.25, 0.75), c(0.25, 0.75), xlim = c(0, 1), ylim = c(0, 1), xaxs = 'i', yaxs = 'i'); cat(identify(c(0.25, 0.75), c(0.25, 0.75), labels = c('first', 'second')))";
+    start_execute(&frontend, code);
+    let (header, _) = recv_locator_request(&frontend);
+    let before = recv_until_quiet(&frontend, &ui_comm_id);
+    let unlabelled_image = before.plot_opens()[0].data["pre_render"]["data"].clone();
+    assert!(unlabelled_image.is_string());
+
+    // The second point, then Finish
+    reply_point(&frontend, header, 0.75, 0.25);
+    let (header, _) = recv_locator_request(&frontend);
+    reply_finished(&frontend, header);
+
+    let after = finish_execute(&frontend, &ui_comm_id);
+    assert_numbers(&after.stdout, &[2.0]);
+    let updates = after.plot_updates();
+    assert_eq!(updates.len(), 1);
+    assert_ne!(
+        updates[0].data["params"]["pre_render"]["data"],
+        unlabelled_image
+    );
+}
+
 #[test]
 fn test_grid_locator() {
     let frontend = DummyArkFrontend::lock();

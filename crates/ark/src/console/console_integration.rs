@@ -292,12 +292,9 @@ impl UiCommRef<'_> {
         Ok(match self.send_frontend_request(&request)? {
             Some(result) => {
                 // Deserialize to Rust first to verify the OpenRPC contract.
-                // Errors are propagated to R.
-                if let Err(err) = ui_frontend_reply_from_value(result.clone(), &request) {
-                    return Err(anyhow!(
-                        "Can't deserialize RPC reply for {request:?}:\n{err:?}"
-                    ));
-                }
+                // Errors are propagated to R. The parser takes the value, so
+                // it gets a copy that we can convert to R afterwards.
+                parse_frontend_reply(result.clone(), &request)?;
 
                 // Now deserialize to an R object
                 FrontendCallOutcome::Reply(RObject::try_from(result)?)
@@ -317,9 +314,7 @@ impl UiCommRef<'_> {
         let Some(result) = self.send_frontend_request(&request)? else {
             return Ok(None);
         };
-        let reply = ui_frontend_reply_from_value(result, &request)
-            .map_err(|err| anyhow!("Can't deserialize RPC reply for {request:?}:\n{err:?}"))?;
-        Ok(Some(reply))
+        Ok(Some(parse_frontend_reply(result, &request)?))
     }
 
     /// Sends `request` to the frontend and blocks for the reply. Returns the
@@ -366,4 +361,14 @@ impl UiCommRef<'_> {
             StdInRpcReply::Interrupt => Ok(None),
         }
     }
+}
+
+/// Parses the JSON result of `request` into its typed reply, which checks it
+/// against the OpenRPC contract.
+fn parse_frontend_reply(
+    result: serde_json::Value,
+    request: &UiFrontendRequest,
+) -> anyhow::Result<UiFrontendReply> {
+    ui_frontend_reply_from_value(result, request)
+        .map_err(|err| anyhow!("Can't deserialize RPC reply for {request:?}:\n{err:?}"))
 }

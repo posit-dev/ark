@@ -8,6 +8,7 @@
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
+use stdext::result::ResultExt;
 
 use crate::comm::base_comm::JsonRpcError;
 use crate::comm::base_comm::JsonRpcErrorCode;
@@ -176,7 +177,7 @@ impl Stdin {
                                 // the interrupt independently. Fall through.
                             },
                             StdInReplySender::Comm(tx) => {
-                                tx.send(StdInRpcReply::Interrupt).unwrap();
+                                tx.send(StdInRpcReply::Interrupt).log_err();
                             },
                         }
 
@@ -216,7 +217,7 @@ impl Stdin {
                     parent.msg_type == InputRequest::message_type() && parent.msg_id != request_id
                 }) =>
             {
-                tx.send(Ok(reply.content)).unwrap();
+                tx.send(Ok(reply.content)).log_err();
             },
             (Ok(Message::CommReply(reply)), StdInReplySender::Comm(tx))
                 if reply
@@ -224,11 +225,11 @@ impl Stdin {
                     .as_ref()
                     .is_none_or(|parent| parent.msg_id == request_id) =>
             {
-                tx.send(StdInRpcReply::Reply(reply.content)).unwrap();
+                tx.send(StdInRpcReply::Reply(reply.content)).log_err();
             },
             // Might be an unserialisation error. Propagate the error to R.
             (Err(err), StdInReplySender::Input(tx)) => {
-                tx.send(Err(err)).unwrap();
+                tx.send(Err(err)).log_err();
             },
             (Err(err), StdInReplySender::Comm(tx)) => {
                 let resp = StdInRpcReply::Reply(JsonRpcReply::Error(JsonRpcError {
@@ -237,7 +238,7 @@ impl Stdin {
                         code: JsonRpcErrorCode::InternalError,
                     },
                 }));
-                tx.send(resp).unwrap();
+                tx.send(resp).log_err();
             },
             (message, _) => return Some(message),
         }
