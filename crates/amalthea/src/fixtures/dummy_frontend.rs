@@ -19,6 +19,7 @@ use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::execute_request::ExecuteRequestPositron;
 use crate::wire::handshake_reply::HandshakeReply;
+use crate::wire::header::JupyterHeader;
 use crate::wire::input_reply::InputReply;
 use crate::wire::interrupt_request::InterruptRequest;
 use crate::wire::jupyter_message::JupyterMessage;
@@ -306,6 +307,13 @@ impl DummyFrontend {
     /// Sends a Jupyter message on the Stdin socket
     pub fn send_stdin<T: ProtocolMessage>(&self, msg: T) {
         Self::send(&self.stdin_socket, &self.session, msg);
+    }
+
+    /// Sends a Jupyter message on the Stdin socket with `parent` as its
+    /// parent header, like a frontend replying to a specific request
+    pub fn send_stdin_with_parent<T: ProtocolMessage>(&self, msg: T, parent: JupyterHeader) {
+        let message = JupyterMessage::create(msg, Some(parent), &self.session);
+        message.send(&self.stdin_socket).unwrap();
     }
 
     fn send<T: ProtocolMessage>(socket: &Socket, session: &Session, msg: T) -> String {
