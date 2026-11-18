@@ -17,6 +17,7 @@ use amalthea::comm::ui_comm::SelectFileParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::wire::header::JupyterHeader;
+use amalthea::wire::input_reply::InputReply;
 use amalthea::wire::jupyter_message::Message;
 use ark_test::DummyArkFrontend;
 use ark_test::IopubExpectation;
@@ -271,6 +272,59 @@ fn test_readline_ignores_stale_comm_reply_after_interrupt() {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 2");
+    frontend.recv_ui_prompt_state(&comm_id);
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// A late input reply to an interrupted `readline()` is not the answer to the
+/// next `readline()`. Its parent header names the interrupted input request.
+#[test]
+fn test_readline_ignores_stale_input_reply_after_interrupt() {
+    let frontend = DummyArkFrontend::lock();
+    let comm_id = frontend.open_ui_comm();
+
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
+    frontend.send_execute_request("readline(\"first> \")", options);
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let first = assert_matches!(frontend.recv_stdin(), Message::InputRequest(msg) => msg.header);
+
+    frontend.send_interrupt_request();
+    frontend.recv_control_interrupt_reply();
+    frontend.assert_stream_stderr_contains("\n");
+    frontend.recv_iopub_interleaved(&[
+        &[IopubExpectation::BusyControl, IopubExpectation::IdleControl],
+        &[IopubExpectation::CommMsg, IopubExpectation::IdleShell],
+    ]);
+    frontend.recv_shell_execute_reply();
+
+    frontend.send_stdin_with_parent(
+        InputReply {
+            value: String::from("stale"),
+        },
+        first,
+    );
+
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
+    frontend.send_execute_request("readline(\"second> \")", options);
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let second = assert_matches!(frontend.recv_stdin(), Message::InputRequest(msg) => msg.header);
+    frontend.send_stdin_with_parent(
+        InputReply {
+            value: String::from("fresh"),
+        },
+        second,
+    );
+
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"fresh\"");
     frontend.recv_ui_prompt_state(&comm_id);
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();

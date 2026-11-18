@@ -15,11 +15,13 @@ use crate::comm::base_comm::JsonRpcErrorData;
 use crate::comm::base_comm::JsonRpcReply;
 use crate::session::Session;
 use crate::wire::input_reply::InputReply;
+use crate::wire::input_request::InputRequest;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::input_request::StdInRpcReply;
 use crate::wire::input_request::UiCommFrontendRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
+use crate::wire::jupyter_message::MessageType;
 use crate::wire::jupyter_message::OutboundMessage;
 
 pub enum StdInRequest {
@@ -197,16 +199,23 @@ impl Stdin {
     /// Sends `message` to the pending request if it is the reply to that
     /// request, and returns `None`. Otherwise returns `message` unchanged. The
     /// reply must have the type the request expects. A comm reply with a
-    /// parent header must also be parented to the request. Input replies skip
-    /// the parent check, because some Jupyter frontends parent them to another
-    /// message. A deserialization error goes to the pending request.
+    /// parent header must also be parented to the request. An input reply
+    /// parented to another input request is a late reply to that request, so
+    /// it is skipped too. Other input replies are accepted whatever their
+    /// parent, because frontends differ in what they parent them to, and
+    /// some send no parent at all. A deserialization error goes to the
+    /// pending request.
     fn deliver_reply(
         message: crate::Result<Message>,
         reply_tx: &StdInReplySender,
         request_id: &str,
     ) -> Option<crate::Result<Message>> {
         match (message, reply_tx) {
-            (Ok(Message::InputReply(reply)), StdInReplySender::Input(tx)) => {
+            (Ok(Message::InputReply(reply)), StdInReplySender::Input(tx))
+                if !reply.parent_header.as_ref().is_some_and(|parent| {
+                    parent.msg_type == InputRequest::message_type() && parent.msg_id != request_id
+                }) =>
+            {
                 tx.send(Ok(reply.content)).unwrap();
             },
             (Ok(Message::CommReply(reply)), StdInReplySender::Comm(tx))
