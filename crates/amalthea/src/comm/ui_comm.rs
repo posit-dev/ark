@@ -323,6 +323,14 @@ pub struct SelectFileParams {
 pub struct LocatePlotPointParams {
 	/// The ID of the plot, which is the ID of its plot comm
 	pub plot_id: String,
+
+	/// The width of the plot image to click on, in pixels. The frontend
+	/// accepts clicks only when it shows an image of this size.
+	pub width: i64,
+
+	/// The height of the plot image to click on, in pixels. The frontend
+	/// accepts clicks only when it shows an image of this size.
+	pub height: i64,
 }
 
 /// Parameters for the PromptState method.

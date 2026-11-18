@@ -784,6 +784,8 @@ impl DeviceContext {
     fn process_current_page(self: &Rc<Self>, console: &Console) {
         let id = self.id();
 
+        self.note_drawing_after_locate();
+
         if !self.has_changes.get() {
             log::trace!("No changes to process for plot `id` {id}");
             return;
@@ -869,6 +871,14 @@ impl DeviceContext {
             return Ok(LocateOutcome::Finished);
         }
 
+        // Replayed code that asks for a point, for example in `recordGraphics()`,
+        // must not wait for the user: the replay runs while the frontend waits
+        // for a resize to finish. Finish at once, as `readline()` does.
+        if self.is_replaying() {
+            log::trace!("Replaying the display list, not asking for a point");
+            return Ok(LocateOutcome::Finished);
+        }
+
         // On the second and later clicks of one `locator()` call, the only
         // changes are the points or lines `locator(type =)` drew. They are not
         // in the display list until `locator()` returns, so sending the page
@@ -925,8 +935,13 @@ impl DeviceContext {
         let Some(ui_comm) = console.ui_comm() else {
             return Ok(LocateOutcome::Finished);
         };
-        let request =
-            UiFrontendRequest::LocatePlotPoint(LocatePlotPointParams { plot_id: comm_id });
+        // The frontend takes clicks only on an image of this size, so the
+        // point maps to the device even if an older image is still shown
+        let request = UiFrontendRequest::LocatePlotPoint(LocatePlotPointParams {
+            plot_id: comm_id,
+            width: size.width,
+            height: size.height,
+        });
 
         let outcome = match ui_comm.call_frontend_method_typed(request) {
             Ok(Some(UiFrontendReply::LocatePlotPointReply(Some(point)))) => {
@@ -948,6 +963,24 @@ impl DeviceContext {
         self.located_display_list_length.replace(length);
 
         outcome
+    }
+
+    /// `identify()` draws its labels outside of drawing mode, so `hook_mode()`
+    /// doesn't see them. R adds a `locator()` or `identify()` call to the
+    /// display list when it returns, so a display list that grew since the
+    /// last click means the call has returned and may have drawn something.
+    fn note_drawing_after_locate(&self) {
+        if self.is_replaying() {
+            return;
+        }
+        let Some(length) = self.located_display_list_length.get() else {
+            return;
+        };
+        if self.display_list_length() != Some(length) {
+            self.located_display_list_length.replace(None);
+            self.has_changes.replace(true);
+            self.has_unrecorded_changes.replace(true);
+        }
     }
 
     fn record_current_page(&self, id: &PlotId) {

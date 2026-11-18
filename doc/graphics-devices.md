@@ -96,7 +96,7 @@ For each click, `DeviceContext::locate()`:
 
 -   Sends a pre-render of the page at the device size, the size `dev.size()` reports. The frontend shows this image while the user clicks, so a click maps to the device the same way it maps to the image. The pre-render is skipped when the frontend already got one of this page at the device size earlier in the same execute request, for example from the flush above. A render request from the frontend clears this, because the frontend may then show that render instead.
 
--   Sends a blocking `locate_plot_point` request on the UI comm with the plot comm ID, and waits for the reply on the stdin socket.
+-   Sends a blocking `locate_plot_point` request on the UI comm with the plot comm ID and the size of the image it sent, and waits for the reply on the stdin socket. The image travels on IOPub and the request on stdin, so the request can arrive first. The frontend takes clicks only once it shows a loaded image of that size, so a click on an older image, for example one rendered at another size, can't be read against the device.
 
 The reply is the clicked point as fractions of the plot image, `x` from 0 at the left edge to 1 at the right edge and `y` from 0 at the top edge to 1 at the bottom edge, or `null` when the user finishes. Fractions keep the reply independent of the size and pixel ratio of the image. `callback_locator()` converts them to device coordinates with the device bounds:
 
@@ -107,11 +107,11 @@ y = top  + fraction_y * (bottom - top)
 
 `top` is the device coordinate of the top edge, so this is correct for devices whose y axis points up and for devices whose y axis points down. A `null` reply makes the callback return `FALSE`, which ends `locator()` with the points clicked so far.
 
-Points and lines that `locator(type = "p")` draws between clicks do not show in the Plots pane until `locator()` returns. R adds the `locator()` call to the display list only when the call returns, so a recording made between clicks does not have them, and a render of it would only repeat the image the frontend already shows. So `locate()` does not send the page on the second and later clicks of one `locator()` call, and the points arrive with the next update after `locator()` returns. To tell the clicks of one call apart from a new call, `locate()` keeps the display list length from its last click: the display list grows when `locator()` returns, so the same length means the same call.
+Points and lines that `locator(type = "p")` draws between clicks, and the labels that `identify()` draws, do not show in the Plots pane until the call returns. R adds the `locator()` call to the display list only when the call returns, so a recording made between clicks does not have them, and a render of it would only repeat the image the frontend already shows. So `locate()` does not send the page on the second and later clicks of one `locator()` call, and the points arrive with the next update after `locator()` returns. To tell the clicks of one call apart from a new call, `locate()` keeps the display list length from its last click: the display list grows when `locator()` returns, so the same length means the same call. `identify()` draws its labels outside of drawing mode, so the `mode` hook does not see them. When the page is next processed and the display list is longer than at the last click, the call has returned, and the page is marked as changed so its drawing is sent.
 
 If the user interrupts while R waits for a click, the callback raises the interrupt itself, because `locator()` would otherwise return normally and the rest of the expression would run.
 
-In notebook sessions, and in console sessions without a UI comm, there is no Plots pane to click on, so `locator()` returns `NULL` at once.
+In notebook sessions, and in console sessions without a UI comm, there is no Plots pane to click on, so `locator()` returns `NULL` at once. It also returns `NULL` at once while the display list is replayed after a resize, for example from `recordGraphics()`: the frontend waits for the resize to finish, so R must not wait for a click.
 
 # Structures and terminology
 

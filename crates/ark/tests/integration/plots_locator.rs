@@ -229,7 +229,7 @@ fn test_locator_request_names_the_plot_comm() {
 }
 
 /// The image the user clicks on is rendered at the device size, so the
-/// fractions in the reply map to the device. The plot is drawn in an earlier
+/// fractions in the reply map to the device. The request carries that size. The plot is drawn in an earlier
 /// request, so `locator()` always sends a pre-render at `device_size()`. This
 /// fails if `device_size()` doesn't invert the pane size applied to the
 /// device.
@@ -240,7 +240,7 @@ fn test_locator_prerender_matches_device_size() {
     frontend.execute_request_collect("plot(1:10)");
 
     start_execute(&frontend, "invisible(locator(1))");
-    let (header, _) = recv_locator_request(&frontend);
+    let (header, params) = recv_locator_request(&frontend);
 
     let before = recv_until_quiet(&frontend, &ui_comm_id);
     let updates = before.plot_updates();
@@ -249,6 +249,10 @@ fn test_locator_prerender_matches_device_size() {
         updates[0].data["params"]["pre_render"]["settings"]["size"],
         json!({ "width": 400, "height": 300 })
     );
+
+    // The request names the size of that image, so the frontend takes clicks
+    // only on it
+    assert_eq!((params.width, params.height), (400, 300));
 
     reply_finished(&frontend, header);
     finish_execute(&frontend, &ui_comm_id);
@@ -482,6 +486,38 @@ fn test_identify_uses_locator() {
     assert_numbers(&after.stdout, &[2.0]);
 }
 
+/// With the default `plot = TRUE`, `identify()` labels the point it found.
+/// The label is in the display list only after `identify()` returns, so it
+/// arrives with the update at the end of the request, as the points of
+/// `locator(type = "p")` do.
+#[test]
+fn test_identify_labels_point_after_it_returns() {
+    let frontend = DummyArkFrontend::lock();
+    let ui_comm_id = open_ui_comm_with_pane(&frontend);
+
+    // The points are away from the edges, so the labels aren't clipped
+    let code = "par(mar = c(0, 0, 0, 0)); plot(c(0.25, 0.75), c(0.25, 0.75), xlim = c(0, 1), ylim = c(0, 1), xaxs = 'i', yaxs = 'i'); cat(identify(c(0.25, 0.75), c(0.25, 0.75), labels = c('first', 'second'), n = 1))";
+    start_execute(&frontend, code);
+    let (header, _) = recv_locator_request(&frontend);
+    let before = recv_until_quiet(&frontend, &ui_comm_id);
+    let opens = before.plot_opens();
+    assert_eq!(opens.len(), 1);
+    let unlabelled_image = opens[0].data["pre_render"]["data"].clone();
+    assert!(unlabelled_image.is_string());
+
+    // The second point
+    reply_point(&frontend, header, 0.75, 0.25);
+
+    let after = finish_execute(&frontend, &ui_comm_id);
+    assert_numbers(&after.stdout, &[2.0]);
+    let updates = after.plot_updates();
+    assert_eq!(updates.len(), 1);
+    assert_ne!(
+        updates[0].data["params"]["pre_render"]["data"],
+        unlabelled_image
+    );
+}
+
 #[test]
 fn test_grid_locator() {
     let frontend = DummyArkFrontend::lock();
@@ -513,4 +549,24 @@ fn test_locator_with_png_fallback_device() {
     let stdout = locate_quarter_point(&frontend, &ui_comm_id, &code);
 
     assert_numbers(&stdout, &[0.25, 0.75]);
+}
+
+/// A replayed display list can call `locator()` (`recordGraphics()`). The
+/// replay runs while the frontend waits for a resize to finish, so it must not
+/// ask for a point: `locator()` returns `NULL` at once.
+#[test]
+fn test_resize_replay_does_not_locate() {
+    let frontend = DummyArkFrontend::lock();
+    let ui_comm_id = open_ui_comm_with_pane(&frontend);
+
+    // Calls `locator()` only on replay, and records what it returned
+    frontend.execute_request_collect(
+        "first <- TRUE; replayed <- 'no'; plot.new(); recordGraphics({ if (!first) replayed <<- if (is.null(locator(1))) 'null' else 'point'; first <<- FALSE }, list(), environment())",
+    );
+
+    // Without the guard, R would wait for a stdin reply and this would time out
+    // waiting for idle
+    frontend.send_plot_render_settings(&ui_comm_id, 900, 450);
+
+    frontend.execute_request_with_ui_comm("replayed", |result| assert_eq!(result, "[1] \"null\""));
 }
