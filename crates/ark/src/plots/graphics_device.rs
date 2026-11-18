@@ -52,6 +52,7 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::raii::RLocalInteractive;
+use harp::raii::RLocalInterruptsSuspended;
 use libr::pDevDesc;
 use libr::pGEcontext;
 use libr::R_NilValue;
@@ -893,61 +894,21 @@ impl DeviceContext {
             return Ok(LocateOutcome::Finished);
         }
 
-        // On the second and later clicks of one `locator()` call, the only
-        // changes are the points or lines `locator(type =)` drew. They are not
-        // in the display list until `locator()` returns, so sending the page
-        // now would only render it again without them. Leave `has_changes`
-        // set so the page is sent with them after `locator()` returns. The
-        // display list grows when `locator()` returns, so an unchanged length
-        // means we are still in the same call.
-        if !self.is_between_clicks() {
-            // A page that `plot.new()` or `grid::grid.newpage()` started is
-            // blank until something is drawn on it, so it isn't a plot change
-            // yet. Send it anyway, so there is a plot to click on.
-            if self.is_new_page.get() && self.should_render.get() {
-                self.has_changes.replace(true);
-            }
-
-            // A `locator()` call in the same request as the plot runs before
-            // the end-of-request flush, so send the page now
-            self.process_changes_before_input(console);
+        // R renders the page in a top-level context. An interrupt during the
+        // render would end the render there and clear the interrupt, and the
+        // stdin thread has no request to cancel yet. So suspend interrupts
+        // while we prepare the page. An interrupt stays pending and ends
+        // `locator()` here.
+        let prepared = {
+            let _interrupts = RLocalInterruptsSuspended::new(true);
+            self.prepare_locate(console)
+        };
+        if interrupts_pending() {
+            return Ok(LocateOutcome::Interrupted);
         }
-
-        let id = self.id();
-        let Some(comm_id) = self.comm_ids.borrow().get(&id).cloned() else {
-            // The frontend doesn't have this page, for example because
-            // `dev.hold()` hides it, so there is nothing to click on
-            log::trace!("No plot comm for plot `id` {id}, can't locate");
+        let Some((comm_id, size)) = prepared else {
             return Ok(LocateOutcome::Finished);
         };
-
-        let prerender = self.prerender_settings.get();
-        let size = self.device_size().unwrap_or(prerender.size);
-
-        // `last_prerender` is cleared when an execute request starts, so a
-        // match means the frontend shows a pre-render of this page from this
-        // request at the device size. Pages are rendered again whenever they
-        // change, so it is current.
-        let is_sent = matches!(
-            &*self.last_prerender.borrow(),
-            Some((last_id, last_size)) if *last_id == id && *last_size == size
-        );
-        if !is_sent {
-            // Without a hold, the flush above recorded any changes. While
-            // held, keep sending the latest recording so we don't reveal
-            // drawing that the hold hides.
-            if self.should_render.get() && self.has_unrecorded_changes.get() {
-                self.record_current_page(&id);
-            }
-
-            // The frontend takes clicks only on an image of this size, and it
-            // can't ask for one while R waits here. Without the image the user
-            // could only finish, so finish now.
-            if !self.send_plot_update(&id, PlotRenderSettings { size, ..prerender }) {
-                log::warn!("Can't send the plot image for plot `id` {id}, can't locate");
-                return Ok(LocateOutcome::Finished);
-            }
-        }
 
         let Some(ui_comm) = console.ui_comm() else {
             return Ok(LocateOutcome::Finished);
@@ -980,6 +941,69 @@ impl DeviceContext {
         self.located_display_list_length.replace(length);
 
         outcome
+    }
+
+    /// Sends the page that `locate()` asks for a point on: the current page,
+    /// then a pre-render at the device size. Returns the plot comm ID and the
+    /// size of the image, or `None` if there is no image to click on.
+    fn prepare_locate(self: &Rc<Self>, console: &Console) -> Option<(String, PlotSize)> {
+        // On the second and later clicks of one `locator()` call, the only
+        // changes are the points or lines `locator(type =)` drew. They are not
+        // in the display list until `locator()` returns, so sending the page
+        // now would only render it again without them. Leave `has_changes`
+        // set so the page is sent with them after `locator()` returns. The
+        // display list grows when `locator()` returns, so an unchanged length
+        // means we are still in the same call.
+        if !self.is_between_clicks() {
+            // A page that `plot.new()` or `grid::grid.newpage()` started is
+            // blank until something is drawn on it, so it isn't a plot change
+            // yet. Send it anyway, so there is a plot to click on.
+            if self.is_new_page.get() && self.should_render.get() {
+                self.has_changes.replace(true);
+            }
+
+            // A `locator()` call in the same request as the plot runs before
+            // the end-of-request flush, so send the page now
+            self.process_changes_before_input(console);
+        }
+
+        let id = self.id();
+        let Some(comm_id) = self.comm_ids.borrow().get(&id).cloned() else {
+            // The frontend doesn't have this page, for example because
+            // `dev.hold()` hides it, so there is nothing to click on
+            log::trace!("No plot comm for plot `id` {id}, can't locate");
+            return None;
+        };
+
+        let prerender = self.prerender_settings.get();
+        let size = self.device_size().unwrap_or(prerender.size);
+
+        // `last_prerender` is cleared when an execute request starts, so a
+        // match means the frontend shows a pre-render of this page from this
+        // request at the device size. Pages are rendered again whenever they
+        // change, so it is current.
+        let is_sent = matches!(
+            &*self.last_prerender.borrow(),
+            Some((last_id, last_size)) if *last_id == id && *last_size == size
+        );
+        if !is_sent {
+            // Without a hold, the flush above recorded any changes. While
+            // held, keep sending the latest recording so we don't reveal
+            // drawing that the hold hides.
+            if self.should_render.get() && self.has_unrecorded_changes.get() {
+                self.record_current_page(&id);
+            }
+
+            // The frontend takes clicks only on an image of this size, and it
+            // can't ask for one while R waits here. Without the image the user
+            // could only finish, so finish now.
+            if !self.send_plot_update(&id, PlotRenderSettings { size, ..prerender }) {
+                log::warn!("Can't send the plot image for plot `id` {id}, can't locate");
+                return None;
+            }
+        }
+
+        Some((comm_id, size))
     }
 
     /// Whether R is between the clicks of one `locator()`, `identify()`, or

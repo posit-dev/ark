@@ -383,30 +383,7 @@ fn test_locator_interrupt() {
     );
     recv_locator_request(&frontend);
 
-    frontend.send_interrupt_request();
-    frontend.recv_control_interrupt_reply();
-
-    // Shell idle and control busy/idle race, so receive until we have both
-    // idles
-    let mut received = Received::default();
-    let mut shell_idle = false;
-    let mut control_idle = false;
-    while !(shell_idle && control_idle) {
-        let Some(msg) = frontend.recv_iopub_with_timeout(RECV_TIMEOUT) else {
-            panic!("Timeout waiting for idle after interrupt");
-        };
-        if let Message::Status(ref data) = msg {
-            let parent = msg.parent_header().map(|h| h.msg_type.clone());
-            match (data.content.execution_state, parent.as_deref()) {
-                (ExecutionState::Idle, Some("interrupt_request")) => control_idle = true,
-                (ExecutionState::Idle, Some("execute_request")) => shell_idle = true,
-                _ => {},
-            }
-            continue;
-        }
-        received.push(msg, &ui_comm_id);
-    }
-    frontend.recv_shell_execute_reply();
+    let received = interrupt_and_finish(&frontend, &ui_comm_id);
 
     assert!(!received.stdout.contains("after"));
     assert_eq!(received.execute_results(), Vec::<String>::new());
@@ -433,6 +410,67 @@ fn test_locator_returns_null_when_render_fails() {
     start_execute(&frontend, code);
     let after = finish_execute(&frontend, &ui_comm_id);
     assert_eq!(after.stdout, "TRUE");
+}
+
+/// An interrupt while R renders the page for `locator()` ends `locator()`.
+/// R renders in a top-level context, so without care the render would take
+/// the interrupt, and `locator()` would go on as if nothing happened.
+#[test]
+fn test_locator_interrupt_during_render() {
+    let frontend = DummyArkFrontend::lock();
+    let ui_comm_id = open_ui_comm_with_pane(&frontend);
+    frontend.execute_request_collect("plot(1:10)");
+
+    // Renders replay the recording with `replayPlot()`, so this makes them
+    // slow enough to interrupt. A busy loop, like a real render, and not
+    // `Sys.sleep()`: R takes interrupts during `Sys.sleep()` even when they
+    // are suspended.
+    frontend.execute_request_collect(
+        "invisible(suppressMessages(trace('replayPlot', quote({ start <- Sys.time(); while (Sys.time() - start < 2) NULL }), where = asNamespace('grDevices'), print = FALSE)))",
+    );
+
+    start_execute(&frontend, "{ locator(1); cat('after') }");
+    std::thread::sleep(Duration::from_millis(500));
+    let received = interrupt_and_finish(&frontend, &ui_comm_id);
+
+    frontend.execute_request_collect(
+        "invisible(suppressMessages(untrace('replayPlot', where = asNamespace('grDevices'))))",
+    );
+
+    assert_eq!(received.stdout, "");
+    assert_eq!(received.execute_results(), Vec::<String>::new());
+    frontend.execute_request_with_ui_comm("1 + 1", |result| assert_eq!(result, "[1] 2"));
+}
+
+/// Interrupts the running request and receives IOPub messages up to the
+/// shell and control idles, then the execute reply.
+#[track_caller]
+fn interrupt_and_finish(frontend: &DummyArkFrontend, ui_comm_id: &str) -> Received {
+    frontend.send_interrupt_request();
+    frontend.recv_control_interrupt_reply();
+
+    // Shell idle and control busy/idle race, so receive until we have both
+    // idles
+    let mut received = Received::default();
+    let mut shell_idle = false;
+    let mut control_idle = false;
+    while !(shell_idle && control_idle) {
+        let Some(msg) = frontend.recv_iopub_with_timeout(RECV_TIMEOUT) else {
+            panic!("Timeout waiting for idle after interrupt");
+        };
+        if let Message::Status(ref data) = msg {
+            let parent = msg.parent_header().map(|h| h.msg_type.clone());
+            match (data.content.execution_state, parent.as_deref()) {
+                (ExecutionState::Idle, Some("interrupt_request")) => control_idle = true,
+                (ExecutionState::Idle, Some("execute_request")) => shell_idle = true,
+                _ => {},
+            }
+            continue;
+        }
+        received.push(msg, ui_comm_id);
+    }
+    frontend.recv_shell_execute_reply();
+    received
 }
 
 /// Without a UI comm there is no frontend to click on, so `locator()`
