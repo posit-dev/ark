@@ -19,6 +19,7 @@ use crate::data_explorer::r_data_explorer::RDataExplorer;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::object_explorer::r_object_explorer::RObjectExplorer;
 use crate::object_explorer::r_object_explorer::OBJECT_EXPLORER_COMM_NAME;
+use crate::signals::interrupts_pending;
 
 /// UI comm integration.
 impl Console {
@@ -332,6 +333,15 @@ impl UiCommRef<'_> {
                 "No active request. Can't execute request {request:?}"
             ));
         };
+
+        // An interrupt that arrived while R prepared the request, for example
+        // while it rendered a plot for `locator()`, found no request on the
+        // stdin thread to cancel. Don't wait for a reply the user no longer
+        // wants.
+        if interrupts_pending() {
+            log::trace!("Interrupt pending, not sending frontend request {request:?}");
+            return Ok(None);
+        }
 
         // Forward request directly to the stdin channel
         let comm_msg = StdInRequest::Comm(UiCommFrontendRequest {

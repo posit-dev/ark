@@ -21,6 +21,7 @@ use amalthea::wire::comm_open::CommOpen;
 use amalthea::wire::header::JupyterHeader;
 use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::status::ExecutionState;
+use amalthea::wire::stream::Stream;
 use ark_test::comm::RECV_TIMEOUT;
 use ark_test::DummyArkFrontend;
 use assert_matches::assert_matches;
@@ -49,8 +50,8 @@ impl Received {
     fn push(&mut self, msg: Message, ui_comm_id: &str) {
         match msg {
             Message::Stream(data) => match data.content.name {
-                amalthea::wire::stream::Stream::Stdout => self.stdout.push_str(&data.content.text),
-                amalthea::wire::stream::Stream::Stderr => self.stderr.push_str(&data.content.text),
+                Stream::Stdout => self.stdout.push_str(&data.content.text),
+                Stream::Stderr => self.stderr.push_str(&data.content.text),
             },
             Message::CommMsg(ref data) if data.content.comm_id == ui_comm_id => {},
             other => self.messages.push(other),
@@ -177,17 +178,14 @@ fn reply_finished(frontend: &DummyArkFrontend, header: JupyterHeader) {
 
 #[track_caller]
 fn assert_numbers(text: &str, expected: &[f64]) {
+    // Round to 6 decimals, so the output of `cat()` compares equal
+    let round = |x: f64| (x * 1e6).round() / 1e6;
     let actual: Vec<f64> = text
         .split_whitespace()
-        .map(|word| word.parse().unwrap())
+        .map(|word| round(word.parse().unwrap()))
         .collect();
-    assert_eq!(actual.len(), expected.len(), "Unexpected output {text:?}");
-    for (actual, expected) in actual.iter().zip(expected) {
-        assert!(
-            (actual - expected).abs() < 1e-6,
-            "Expected {expected:?} in {text:?}"
-        );
-    }
+    let expected: Vec<f64> = expected.iter().copied().map(round).collect();
+    assert_eq!(actual, expected);
 }
 
 /// Clicks one point at (0.25, 0.25) of the plot image with `code` and
@@ -410,15 +408,31 @@ fn test_locator_interrupt() {
     }
     frontend.recv_shell_execute_reply();
 
-    assert!(
-        !received.stdout.contains("after"),
-        "Unexpected stdout: {:?}",
-        received.stdout
-    );
+    assert!(!received.stdout.contains("after"));
     assert_eq!(received.execute_results(), Vec::<String>::new());
     assert!(!received.has_execute_error());
 
     frontend.execute_request_with_ui_comm("1 + 1", |result| assert_eq!(result, "[1] 2"));
+}
+
+/// If the plot can't be rendered at the device size, there is no image the
+/// frontend would take clicks on, so `locator()` returns at once instead of
+/// waiting for a click that can't come.
+#[test]
+fn test_locator_returns_null_when_render_fails() {
+    let frontend = DummyArkFrontend::lock();
+    let ui_comm_id = open_ui_comm_with_pane(&frontend);
+
+    frontend.execute_request_collect("plot(1:10)");
+
+    // Renders replay the recording with `replayPlot()`, so this makes them
+    // fail. R ignores errors inside a replayed display list, so a failing
+    // `recordGraphics()` wouldn't do. If R waited for a click, this would
+    // time out.
+    let code = "invisible(capture.output(trace('replayPlot', quote(stop('render boom')), where = asNamespace('grDevices'), print = FALSE))); located <- locator(1); invisible(capture.output(untrace('replayPlot', where = asNamespace('grDevices')))); cat(is.null(located))";
+    start_execute(&frontend, code);
+    let after = finish_execute(&frontend, &ui_comm_id);
+    assert_eq!(after.stdout, "TRUE");
 }
 
 /// Without a UI comm there is no frontend to click on, so `locator()`

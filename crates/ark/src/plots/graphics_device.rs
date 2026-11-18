@@ -14,6 +14,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::Read;
 use std::rc::Rc;
+use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -70,6 +71,8 @@ use crate::console::Console;
 use crate::console::SessionMode;
 use crate::modules::ARK_ENVS;
 use crate::r_task;
+use crate::signals::interrupts_pending;
+use crate::signals::set_interrupts_pending;
 
 pub const PLOT_COMM_NAME: &str = "positron.plot";
 
@@ -936,7 +939,14 @@ impl DeviceContext {
             if self.should_render.get() && self.has_unrecorded_changes.get() {
                 self.record_current_page(&id);
             }
-            self.send_plot_update(&id, PlotRenderSettings { size, ..prerender });
+
+            // The frontend takes clicks only on an image of this size, and it
+            // can't ask for one while R waits here. Without the image the user
+            // could only finish, so finish now.
+            if !self.send_plot_update(&id, PlotRenderSettings { size, ..prerender }) {
+                log::warn!("Can't send the plot image for plot `id` {id}, can't locate");
+                return Ok(LocateOutcome::Finished);
+            }
         }
 
         let Some(ui_comm) = console.ui_comm() else {
@@ -1144,21 +1154,25 @@ impl DeviceContext {
     }
 
     /// Pre-render plot `id` with `settings` and send it to the frontend as a
-    /// plot update event.
+    /// plot update event. Returns `true` if the update carries the
+    /// pre-render. If the render fails, the update has none, and the frontend
+    /// asks for a render itself.
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
-    fn send_plot_update(&self, id: &PlotId, settings: PlotRenderSettings) {
+    fn send_plot_update(&self, id: &PlotId, settings: PlotRenderSettings) -> bool {
         log::trace!("Notifying Positron of plot update");
 
         let comm_id = match self.comm_ids.borrow().get(id).cloned() {
             Some(id) => id,
             None => {
                 log::error!("Can't find comm to update with id: {id}.");
-                return;
+                return false;
             },
         };
 
+        let mut has_pre_render = false;
         let update_params = match self.render_plot(id, &settings) {
             Ok(pre_render) => {
+                has_pre_render = true;
                 let mime_type = Self::get_mime_type(&settings.format);
                 self.last_prerender
                     .replace(Some((id.clone(), settings.size)));
@@ -1181,14 +1195,16 @@ impl DeviceContext {
 
         let Some(value) = serde_json::to_value(PlotFrontendEvent::Update(update_params)).log_err()
         else {
-            return;
+            return false;
         };
 
         let outgoing_tx = CommOutgoingTx::new(comm_id, self.iopub_tx.clone());
         outgoing_tx
             .send(CommMsg::Data(value))
             .context(format!("Failed to send update message for id {id}."))
-            .log_err();
+            .log_err()
+            .is_some() &&
+            has_pre_render
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
@@ -1809,13 +1825,13 @@ unsafe extern "C-unwind" fn callback_locator(x: *mut f64, y: *mut f64, dev: pDev
 /// so the interrupt is never lost.
 fn wait_for_pending_interrupt() {
     let deadline = Instant::now() + Duration::from_secs(1);
-    while !crate::signals::interrupts_pending() {
+    while !interrupts_pending() {
         if Instant::now() >= deadline {
             log::warn!("Interrupt not pending after a locator request was interrupted");
-            crate::signals::set_interrupts_pending(true);
+            set_interrupts_pending(true);
             return;
         }
-        std::thread::sleep(Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(1));
     }
 }
 
