@@ -1410,9 +1410,6 @@ impl From<&PlotId> for RObject {
 /// See `default_resolution_in_pixels_per_inch()` in graphics.R.
 const DEFAULT_DPI: f64 = 96.0;
 
-/// Default aspect ratio (width:height) used when only output_width_px is provided.
-const DEFAULT_ASPECT_RATIO: f64 = 4.0 / 3.0;
-
 /// Target DPI for rendering inch-based intrinsic sizes (e.g. Quarto figures).
 /// Quarto's HTML default renders figures at `fig-dpi` (96) scaled by
 /// `fig.retina` (2), i.e. 192 DPI. Matching it keeps intrinsic plots crisp when
@@ -1474,39 +1471,33 @@ impl FromExecuteRequest for PlotRenderSettings {
     /// with size in logical pixels (inches * DPI). Either dimension may be set
     /// alone; the missing one falls back to the Quarto default.
     ///
-    /// Otherwise if `output_width_px` is set, returns settings at that width
-    /// with a 4:3 aspect ratio.
+    /// Otherwise if `output_width_px` is set (inline output in Quarto or a
+    /// notebook), returns settings at the Quarto default figure size. The
+    /// width itself is ignored so plots don't grow with the editor
+    /// (posit-dev/positron#15260); the frontend scales them down to fit
+    /// narrower outputs.
     ///
     /// Sizes are in CSS/logical pixels. The R rendering layer handles physical
     /// pixel scaling via the separate `pixel_ratio` parameter.
     fn from_execute_request(req: &ExecuteRequestPositron) -> Option<Self> {
         let pixel_ratio = req.output_pixel_ratio.unwrap_or(1.0);
 
-        if let Some((width, height)) = requested_fig_size(req) {
-            return Some(Self {
-                size: PlotSize {
-                    width: (width * DEFAULT_DPI).round() as i64,
-                    height: (height * DEFAULT_DPI).round() as i64,
-                },
-                pixel_ratio,
-                format: PlotRenderFormat::Png,
-            });
-        }
+        let is_inline_output = req.output_width_px.is_some_and(|width_px| width_px > 0.0);
 
-        if let Some(width_px) = req.output_width_px {
-            if width_px > 0.0 {
-                return Some(Self {
-                    size: PlotSize {
-                        width: width_px.round() as i64,
-                        height: (width_px / DEFAULT_ASPECT_RATIO).round() as i64,
-                    },
-                    pixel_ratio,
-                    format: PlotRenderFormat::Png,
-                });
-            }
-        }
+        let (width, height) = match requested_fig_size(req) {
+            Some(fig_size) => fig_size,
+            None if is_inline_output => (DEFAULT_FIG_WIDTH, DEFAULT_FIG_HEIGHT),
+            None => return None,
+        };
 
-        None
+        Some(Self {
+            size: PlotSize {
+                width: (width * DEFAULT_DPI).round() as i64,
+                height: (height * DEFAULT_DPI).round() as i64,
+            },
+            pixel_ratio,
+            format: PlotRenderFormat::Png,
+        })
     }
 }
 
