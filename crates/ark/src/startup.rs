@@ -12,7 +12,6 @@ use std::str::FromStr;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
-use harp::environment::R_ENVS;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use libr::Rf_eval;
@@ -73,14 +72,16 @@ fn source_r_profile(path: &Path) {
     // `globalCallingHandlers()` from being called within `.Rprofile`s (can't
     // call it when there are handlers on the stack). That is a common place to
     // register global calling handlers, including in Gabor's prompt package.
-    // Source in the global env to mimic R.
+    // Source in the global env to mimic R. We do still register our handlers
+    // using globalCallingHandlers so that messages, warnings and errors appear
+    // as expected
+    let positron_ns = crate::modules::ARK_ENVS.positron_ns;
     let result = unsafe {
-        let call = RFunction::new("base", "sys.source")
+        let call = RFunction::from(".ps.errors.source_with_handlers")
             .param("file", path)
-            .param("envir", R_ENVS.global)
             .call
             .build();
-        harp::top_level_exec(|| Rf_eval(call.sexp, R_ENVS.global))
+        harp::top_level_exec(|| Rf_eval(call.sexp, positron_ns))
     };
 
     let Err(err) = result else {
