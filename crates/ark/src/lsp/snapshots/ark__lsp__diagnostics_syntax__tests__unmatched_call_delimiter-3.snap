@@ -1,5 +1,9 @@
 ---
 source: crates/ark/src/lsp/diagnostics_syntax.rs
-expression: diagnostic.message
+expression: "render(\"foo[[a, b\")"
 ---
-Unmatched opening delimiter. Missing a closing ']]'.
+```text
+foo[[a, b
+   ^^ [1] This `[[` is missing a closing `]]`. (0:3-0:5)
+         ^ [1.1] Expected `]]` but instead found the end of the file. (0:9-0:9)
+```

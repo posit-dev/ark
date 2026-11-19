@@ -1,4 +1,5 @@
 use aether_path::FilePath;
+use biome_parser::diagnostic::ParseDiagnostic;
 use oak_semantic::semantic_index::SemanticDiagnostic;
 use oak_semantic::semantic_index::SemanticIndex;
 
@@ -129,6 +130,14 @@ impl File {
             self.source_text(db).as_str(),
             aether_parser::RParserOptions::default(),
         ))
+    }
+
+    /// Parse errors for this file
+    ///
+    /// No need to track. Doesn't seem like it would help much, plus we want it
+    /// to rerun every time [Self::parse()] results change.
+    pub fn parse_diagnostics(self, db: &dyn SourceDb) -> &[ParseDiagnostic] {
+        self.parse(db).diagnostics()
     }
 
     /// Line index for this file, mapping byte offsets to `(line, column)`.

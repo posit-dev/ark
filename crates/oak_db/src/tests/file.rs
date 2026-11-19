@@ -93,6 +93,29 @@ fn test_line_index_recomputes_on_content_change() {
 }
 
 #[test]
+fn test_parse_diagnostics_follow_edits() {
+    let mut db = TestDb::new();
+    let file = new_file(&mut db, "a.R", "f(");
+
+    let diagnostics = file.parse_diagnostics(&db);
+    assert_eq!(diagnostics.len(), 1);
+    let start = diagnostics[0].span().unwrap().start();
+
+    file.set_source_text_override(&mut db)
+        .to(Some("\nf(".to_string()));
+    let diagnostics = file.parse_diagnostics(&db);
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0].span().unwrap().start(),
+        start + TextSize::from(1u32)
+    );
+
+    file.set_source_text_override(&mut db)
+        .to(Some("f()".to_string()));
+    assert!(file.parse_diagnostics(&db).is_empty());
+}
+
+#[test]
 fn test_semantic_index_is_cached_across_calls() {
     let mut db = TestDb::new();
     let file = new_file(&mut db, "a.R", "x <- 1\n");

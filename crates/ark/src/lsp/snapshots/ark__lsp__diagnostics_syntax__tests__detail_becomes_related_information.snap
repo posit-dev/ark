@@ -1,0 +1,9 @@
+---
+source: crates/ark/src/lsp/diagnostics_syntax.rs
+expression: "render(\"\\\"abc\")"
+---
+```text
+"abc
+^ [1] Unterminated string. (0:0-0:1)
+    ^ [1.1] Reached the end of the file looking for a closing delimiter. (0:4-0:4)
+```

@@ -1,0 +1,15 @@
+---
+source: crates/ark/src/lsp/diagnostics_syntax.rs
+expression: "render(\"\\\nmatch(1, 2\n\nidentity(1)\nidentity(2)\nidentity(3)\n\")"
+---
+```text
+match(1, 2
+     ^ [1] This `(` is missing a closing `)`. (0:5-0:6)
+
+identity(1)
+^^^^^^^^ [2] Expected `,` but instead found `identity`. (2:0-2:8)
+identity(2)
+identity(3)
+
+^ [1.1] Expected `)` but instead found the end of the file. (5:0-5:0)
+```

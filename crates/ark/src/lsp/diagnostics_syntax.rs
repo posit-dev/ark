@@ -1,787 +1,500 @@
 //
 // diagnostics_syntax.rs
 //
-// Copyright (C) 2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2024-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
+use std::io;
+
+use aether_lsp_utils::proto::to_proto;
+use aether_lsp_utils::proto::PositionEncoding;
+use anyhow::anyhow;
+use biome_diagnostics::console::fmt::Display;
+use biome_diagnostics::console::fmt::Formatter;
+use biome_diagnostics::console::MarkupBuf;
+use biome_diagnostics::display::markup_to_string;
+use biome_diagnostics::LogCategory;
+use biome_diagnostics::PrintDescription;
+use biome_diagnostics::Severity;
+use biome_diagnostics::Visit;
+use biome_line_index::LineIndex;
+use biome_parser::diagnostic::ParseDiagnostic;
+use stdext::result::ResultExt;
 use tower_lsp_server::ls_types::Diagnostic;
-use tree_sitter::Node;
-use tree_sitter::Range;
+use tower_lsp_server::ls_types::DiagnosticRelatedInformation;
+use tower_lsp_server::ls_types::DiagnosticSeverity;
+use tower_lsp_server::ls_types::Location;
+use tower_lsp_server::ls_types::NumberOrString;
+use tower_lsp_server::ls_types::Range;
+use tower_lsp_server::ls_types::Uri;
 
-use crate::lsp::diagnostics::DiagnosticContext;
-use crate::lsp::open_file::lsp_range_from_tree_sitter_range;
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::node_has_error_or_missing;
-use crate::treesitter::NodeType;
-use crate::treesitter::NodeTypeExt;
-
+/// Convert Air's parse diagnostics into LSP diagnostics
 pub(crate) fn syntax_diagnostics(
-    root: Node,
-    context: &DiagnosticContext,
-) -> anyhow::Result<Vec<Diagnostic>> {
-    let mut diagnostics = Vec::new();
-
-    recurse(root, context, &mut diagnostics)?;
-
-    Ok(diagnostics)
+    diagnostics: &[ParseDiagnostic],
+    line_index: &LineIndex,
+    encoding: PositionEncoding,
+    uri: &Uri,
+) -> Vec<Diagnostic> {
+    diagnostics
+        .iter()
+        .filter_map(|diagnostic| diagnostic_to_lsp(diagnostic, uri, line_index, encoding).log_err())
+        .collect()
 }
 
-// When we hit an `ERROR` node, i.e. a syntax error, it often has its own children
-// which can also be `ERROR`s. The goal is to target the deepest (most precise) `ERROR`
-// nodes and only report syntax errors for those. We accomplish this by recursing
-// into children first and bailing if we find any children that we reported an error for.
-fn recurse(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<bool> {
-    if !node_has_error_or_missing(&node) {
-        // Stop recursion if this branch of the tree doesn't have issues
-        return Ok(false);
-    }
-
-    // Always look for contextual `MISSING` issues based on the current node type
-    diagnose_missing(node, context, diagnostics)?;
-
-    let mut any_errors = recurse_children(node, context, diagnostics)?;
-
-    // Report an error when:
-    // - No children were `ERROR`s
-    // - We are an `ERROR`
-    if !any_errors && node.is_error() {
-        diagnostics.push(syntax_diagnostic(node, context)?);
-        any_errors = true;
-    }
-
-    Ok(any_errors)
-}
-
-fn recurse_children(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<bool> {
-    let mut any_errors = false;
-    let mut cursor = node.walk();
-
-    for child in node.children(&mut cursor) {
-        any_errors |= recurse(child, context, diagnostics)?;
-    }
-
-    Ok(any_errors)
-}
-
-fn syntax_diagnostic(node: Node, context: &DiagnosticContext) -> anyhow::Result<Diagnostic> {
-    // We used to try and analyze the `ERROR` structure of the tree to provide "precise"
-    // error messages, but this is extremely prone to false positives due to the fact that
-    // tree-sitter reports a "generic" error range, and it's up to us to try and infer the
-    // problem based on the surrounding nodes, which tree-sitter often "recovers"
-    // incorrectly. It's better to wait for us to have a custom R pratt parser, which
-    // would be able to report precise error locations/messages, because it "knows" why a
-    // parse error occurred.
-
-    syntax_diagnostic_default(node, context)
-}
-
-fn syntax_diagnostic_default(
-    node: Node,
-    context: &DiagnosticContext,
+/// Convert a biome diagnostic into an LSP diagnostic
+///
+/// Roughly ported from `biome_lsp::utils::diagnostic_to_lsp()`
+fn diagnostic_to_lsp(
+    diagnostic: &impl biome_diagnostics::Diagnostic,
+    uri: &Uri,
+    line_index: &LineIndex,
+    position_encoding: PositionEncoding,
 ) -> anyhow::Result<Diagnostic> {
-    let range = node.range();
-    let row_span = range.end_point.row - range.start_point.row;
+    // Figure out where it is
+    let Some(span) = diagnostic.location().span else {
+        return Err(anyhow!("Diagnostic location has no span"));
+    };
+    let range = to_proto::range(span, line_index, position_encoding)?;
 
-    if row_span >= 20 {
-        return syntax_diagnostic_truncated_default(range, context);
+    // Figure out how severe it is
+    let severity = Some(match diagnostic.severity() {
+        Severity::Fatal | Severity::Error => DiagnosticSeverity::ERROR,
+        Severity::Warning => DiagnosticSeverity::WARNING,
+        Severity::Information => DiagnosticSeverity::INFORMATION,
+        Severity::Hint => DiagnosticSeverity::HINT,
+    });
+
+    // Part of the label in the Problems pane, made up of `{source}({code})`,
+    // i.e. that will show `ark(parse)` for these parse errors
+    let source = Some(String::from("ark"));
+    let code = diagnostic
+        .category()
+        .map(|category| NumberOrString::String(category.name().to_string()));
+
+    // The base message of the diagnostic
+    let message = PrintDescription(diagnostic).to_string();
+    if message.is_empty() {
+        return Err(anyhow!("Diagnostic description is empty"));
     }
 
-    // The most common case, a localized syntax error that doesn't span too many rows
-    let message = String::from("Syntax error");
-    new_syntax_diagnostic(message, range, context)
-}
+    // Extract out message hints and details into LSP `DiagnosticRelatedInformation`
+    let mut visitor = RelatedInformationVisitor::new(uri, range, line_index, position_encoding);
+    diagnostic.advices(&mut visitor)?;
+    let related_information = visitor.finish();
 
-// If the syntax error spans more than 20 rows, just target the starting position
-// to avoid overwhelming the user.
-fn syntax_diagnostic_truncated_default(
-    range: Range,
-    context: &DiagnosticContext,
-) -> anyhow::Result<Diagnostic> {
-    // In theory this is an empty range, as they are constructed like `[ )`, but it
-    // seems to work for the purpose of diagnostics, and getting the correct
-    // coordinates exactly right seems challenging.
-    let start_range = Range {
-        start_byte: range.start_byte,
-        start_point: range.start_point,
-        end_byte: range.start_byte,
-        end_point: range.start_point,
-    };
-
-    // `+1` because it is user facing and editor UI is 1-indexed
-    let end_row = range.end_point.row + 1;
-    let message = format!("Syntax error. Starts here and ends on line {end_row}.");
-
-    new_syntax_diagnostic(message, start_range, context)
-}
-
-fn diagnose_missing(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    match node.node_type() {
-        NodeType::Parameters => diagnose_missing_parameters(node, context, diagnostics),
-        NodeType::BracedExpression => {
-            diagnose_missing_braced_expression(node, context, diagnostics)
-        },
-        NodeType::ParenthesizedExpression => {
-            diagnose_missing_parenthesized_expression(node, context, diagnostics)
-        },
-        NodeType::Call => diagnose_missing_call(node, context, diagnostics),
-        NodeType::Subset => diagnose_missing_subset(node, context, diagnostics),
-        NodeType::Subset2 => diagnose_missing_subset2(node, context, diagnostics),
-        NodeType::BinaryOperator(_) => diagnose_missing_binary_operator(node, context, diagnostics),
-        NodeType::ForStatement => diagnose_missing_for(node, context, diagnostics),
-        NodeType::WhileStatement => diagnose_missing_while(node, context, diagnostics),
-        NodeType::RepeatStatement => diagnose_missing_repeat(node, context, diagnostics),
-        NodeType::IfStatement => diagnose_missing_if(node, context, diagnostics),
-        NodeType::FunctionDefinition => {
-            diagnose_missing_function_definition(node, context, diagnostics)
-        },
-        _ => Ok(()),
-    }
-}
-
-fn diagnose_missing_parameters(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    diagnose_missing_close(node, context, diagnostics, ")")
-}
-
-fn diagnose_missing_braced_expression(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    diagnose_missing_close(node, context, diagnostics, "}")
-}
-
-fn diagnose_missing_parenthesized_expression(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    diagnose_missing_close(node, context, diagnostics, ")")
-}
-
-fn diagnose_missing_call(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    diagnose_missing_call_like(node, context, diagnostics, ")")
-}
-
-fn diagnose_missing_subset(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    diagnose_missing_call_like(node, context, diagnostics, "]")
-}
-
-fn diagnose_missing_subset2(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    diagnose_missing_call_like(node, context, diagnostics, "]]")
-}
-
-fn diagnose_missing_call_like(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-    close_token: &str,
-) -> anyhow::Result<()> {
-    let Some(arguments) = node.child_by_field_name("arguments") else {
-        return Ok(());
-    };
-
-    diagnose_missing_close(arguments, context, diagnostics, close_token)
-}
-
-fn diagnose_missing_for(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    diagnose_missing_loop_body("for", node, context, diagnostics)
-}
-
-fn diagnose_missing_while(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    diagnose_missing_loop_body("while", node, context, diagnostics)
-}
-
-fn diagnose_missing_repeat(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    diagnose_missing_loop_body("repeat", node, context, diagnostics)
-}
-
-fn diagnose_missing_loop_body(
-    name: &str,
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    let Some(body) = node.child_by_field_name("body") else {
-        return Ok(());
-    };
-
-    if !body.is_missing() {
-        // Everything is normal
-        return Ok(());
-    }
-
-    // Highlight just the loop's token name (like `while` or `for` or `repeat`).
-    // Don't want to highlight whole `node` because that can confusingly span many lines.
-    // Unfortunately we don't have a field name for these.
-    let Some(token) = node.child(0) else {
-        return Ok(());
-    };
-
-    let range = token.range();
-    let message = format!("Invalid {name} loop. Missing a body.");
-    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
-
-    Ok(())
-}
-
-fn diagnose_missing_if(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    let Some(consequence) = node.child_by_field_name("consequence") else {
-        return Ok(());
-    };
-
-    if !consequence.is_missing() {
-        // Everything is normal
-        return Ok(());
-    }
-
-    // Highlight just the token name (i.e. `if`).
-    // Don't want to highlight whole `node` because that can confusingly span many lines.
-    // Unfortunately we don't have a field name for this.
-    let Some(token) = node.child(0) else {
-        return Ok(());
-    };
-
-    let range = token.range();
-    let message = "Invalid if statement. Missing a body.".to_string();
-    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
-
-    Ok(())
-}
-
-fn diagnose_missing_function_definition(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    let Some(body) = node.child_by_field_name("body") else {
-        return Ok(());
-    };
-
-    if !body.is_missing() {
-        // Everything is normal
-        return Ok(());
-    }
-
-    // Highlight just the token name (i.e. `function`).
-    // Don't want to highlight whole `node` because that can confusingly span many lines.
-    let Some(name) = node.child_by_field_name("name") else {
-        return Ok(());
-    };
-
-    let range = name.range();
-    let message = "Invalid function definition. Missing a body.".to_string();
-    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
-
-    Ok(())
-}
-
-fn diagnose_missing_binary_operator(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    let Some(rhs) = node.child_by_field_name("rhs") else {
-        return Ok(());
-    };
-
-    if !rhs.is_missing() {
-        // Everything is normal
-        return Ok(());
-    }
-
-    let Some(operator) = node.child_by_field_name("operator") else {
-        return Ok(());
-    };
-
-    let range = operator.range();
-
-    let text = operator.node_as_str(context.contents())?;
-    let message = format!("Invalid binary operator '{text}'. Missing a right hand side.");
-
-    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
-
-    Ok(())
-}
-
-// For namespace operators, the RHS is actually optional in the grammar,
-// to help with autocomplete, so we are looking for when this is `None`.
-//
-// This means that `dplyr::` is actually "valid" R code according to the
-// grammar, so this issue won't ever show up in the syntactic path, even
-// though its a syntax problem. Instead we expose it from here and use it
-// in the semantic path.
-pub(crate) fn diagnose_missing_namespace_operator(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    let None = node.child_by_field_name("rhs") else {
-        // Everything is normal
-        return Ok(());
-    };
-
-    let Some(operator) = node.child_by_field_name("operator") else {
-        return Ok(());
-    };
-
-    let range = operator.range();
-
-    let text = operator.node_as_str(context.contents())?;
-    let message = format!("Invalid namespace operator '{text}'. Missing a right hand side.");
-
-    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
-
-    Ok(())
-}
-
-// `node` must have required `"open"` and `"close"` fields
-fn diagnose_missing_close(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-    close_token: &str,
-) -> anyhow::Result<()> {
-    let Some(close) = node.child_by_field_name("close") else {
-        return Ok(());
-    };
-
-    if !close.is_missing() {
-        // Everything is normal
-        return Ok(());
-    }
-
-    let Some(open) = node.child_by_field_name("open") else {
-        return Ok(());
-    };
-
-    diagnostics.push(new_missing_close_diagnostic(
-        close_token,
-        open.range(),
-        context,
-    )?);
-
-    Ok(())
-}
-
-fn new_missing_close_diagnostic(
-    close_token: &str,
-    range: Range,
-    context: &DiagnosticContext,
-) -> anyhow::Result<Diagnostic> {
-    let message = format!("Unmatched opening delimiter. Missing a closing '{close_token}'.");
-    new_syntax_diagnostic(message, range, context)
-}
-
-fn new_syntax_diagnostic(
-    message: String,
-    range: Range,
-    context: &DiagnosticContext,
-) -> anyhow::Result<Diagnostic> {
-    let range = lsp_range_from_tree_sitter_range(
+    Ok(Diagnostic {
         range,
-        context.file.line_index(context.db),
-        context.encoding,
-    )?;
-    Ok(Diagnostic::new_simple(range, message))
+        severity,
+        code,
+        source,
+        message,
+        related_information,
+        ..Default::default()
+    })
+}
+
+/// Turns a diagnostic's advice into `DiagnosticRelatedInformation`
+///
+/// Roughly based on biome's `RelatedInformationVisitor`
+///
+/// The general idea is that we expect "related" info for the diagnostic to be
+/// collected as:
+/// - A call to `record_log()` to record the message
+/// - An optional call to `record_frame()` to record the location
+///
+/// We record the message and location as "pending" until we get either the next
+/// `record_log()` call, or we run out of advice to iterate over. At either of
+/// those points we finalize the `DiagnosticRelatedInformation` object and store
+/// it.
+struct RelatedInformationVisitor<'a> {
+    uri: &'a Uri,
+    primary_range: Range,
+
+    line_index: &'a LineIndex,
+    position_encoding: PositionEncoding,
+
+    pending_message: Option<String>,
+    pending_location: Option<Location>,
+
+    // The eventual output
+    related_information: Vec<DiagnosticRelatedInformation>,
+}
+
+impl<'a> RelatedInformationVisitor<'a> {
+    fn new(
+        uri: &'a Uri,
+        primary_range: Range,
+        line_index: &'a LineIndex,
+        position_encoding: PositionEncoding,
+    ) -> Self {
+        Self {
+            uri,
+            primary_range,
+            line_index,
+            position_encoding,
+            pending_message: None,
+            pending_location: None,
+            related_information: Vec::new(),
+        }
+    }
+
+    fn finish(mut self) -> Option<Vec<DiagnosticRelatedInformation>> {
+        // Push final `DiagnosticRelatedInformation`, if any
+        self.push_pending();
+
+        if self.related_information.is_empty() {
+            None
+        } else {
+            Some(self.related_information)
+        }
+    }
+
+    fn push_pending(&mut self) {
+        let location = self.pending_location.take();
+        let Some(message) = self.pending_message.take() else {
+            // We always expect `record_log()` to be called before
+            // `record_frame()`, so if we get a location without a message we
+            // clear the location too
+            return;
+        };
+
+        // When we don't have a location we just use the primary message's range
+        let location = location.unwrap_or_else(|| Location {
+            uri: self.uri.clone(),
+            range: self.primary_range,
+        });
+
+        self.related_information
+            .push(DiagnosticRelatedInformation { location, message });
+    }
+}
+
+impl Visit for RelatedInformationVisitor<'_> {
+    /// Store the pending message for the upcoming [DiagnosticRelatedInformation]
+    ///
+    /// We also treat this as our reset point between multiple [DiagnosticRelatedInformation]s,
+    /// so we first clear out the last one before pushing the next one
+    fn record_log(&mut self, _category: LogCategory, text: &dyn Display) -> io::Result<()> {
+        // Push finished `DiagnosticRelatedInformation`
+        self.push_pending();
+
+        let mut markup = MarkupBuf::default();
+        text.fmt(&mut Formatter::new(&mut markup))?;
+        let message = markup_to_string(&markup)
+            .ok_or_else(|| io::Error::other("Can't render markup as text"))?;
+
+        self.pending_message = Some(message);
+
+        Ok(())
+    }
+
+    /// Store the pending location for the upcoming [DiagnosticRelatedInformation]
+    fn record_frame(&mut self, location: biome_diagnostics::Location<'_>) -> io::Result<()> {
+        // If we can't figure out a location, it just uses the primary message's range
+        let Some(span) = location.span else {
+            return Ok(());
+        };
+        let Ok(range) = to_proto::range(span, self.line_index, self.position_encoding) else {
+            return Ok(());
+        };
+        self.pending_location = Some(Location {
+            uri: self.uri.clone(),
+            range,
+        });
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use aether_lsp_utils::proto::PositionEncoding;
+    use aether_parser::RParserOptions;
+    use biome_line_index::LineIndex;
+    use biome_line_index::WideEncoding;
     use tower_lsp_server::ls_types::Diagnostic;
-    use tower_lsp_server::ls_types::Position;
+    use tower_lsp_server::ls_types::Range;
+    use tower_lsp_server::ls_types::Uri;
 
-    use crate::lsp::diagnostics::DiagnosticContext;
     use crate::lsp::diagnostics_syntax::syntax_diagnostics;
-    use crate::lsp::open_file::test_open_file;
 
-    const ENCODING: PositionEncoding =
-        PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
+    const ENCODING: PositionEncoding = PositionEncoding::Wide(WideEncoding::Utf16);
 
     fn text_diagnostics(text: &str) -> Vec<Diagnostic> {
-        let (db, open_file) = test_open_file(text);
-        let context = DiagnosticContext::new(&db, open_file.file(), ENCODING, open_file.wire_uri());
-        let diagnostics =
-            syntax_diagnostics(open_file.tree_sitter(&db).root_node(), &context).unwrap();
-        diagnostics
+        let parse = aether_parser::parse(text, RParserOptions::default());
+        let line_index = LineIndex::new(text);
+        let uri = "file:///test.R".parse::<Uri>().unwrap();
+        syntax_diagnostics(parse.diagnostics(), &line_index, ENCODING, &uri)
+    }
+
+    fn render_range(range: Range) -> String {
+        format!(
+            "{}:{}-{}:{}",
+            range.start.line, range.start.character, range.end.line, range.end.character
+        )
+    }
+
+    /// Render `text` in a snapshottable form, with a marker line under each
+    /// line a diagnostic points at
+    fn render(text: &str) -> String {
+        let mut markers: Vec<Marker> = Vec::new();
+
+        for (index, diagnostic) in text_diagnostics(text).into_iter().enumerate() {
+            let id = index + 1;
+            markers.push(Marker {
+                id: format!("[{id}]"),
+                range: diagnostic.range,
+                message: diagnostic.message,
+            });
+
+            for (related_index, related) in diagnostic
+                .related_information
+                .unwrap_or_default()
+                .into_iter()
+                .enumerate()
+            {
+                let related_id = related_index + 1;
+                markers.push(Marker {
+                    id: format!("[{id}.{related_id}]"),
+                    range: related.location.range,
+                    message: related.message,
+                });
+            }
+        }
+
+        // Stable, so markers at the same column keep diagnostic order
+        markers.sort_by_key(|marker| (marker.range.start.line, marker.range.start.character));
+
+        let lines: Vec<&str> = text.split('\n').collect();
+        let mut out = String::from("```text\n");
+
+        for (line_number, line) in lines.iter().enumerate() {
+            let line_markers: Vec<&Marker> = markers
+                .iter()
+                .filter(|marker| marker.range.start.line as usize == line_number)
+                .collect();
+
+            // Skip the empty line after a trailing newline unless something points at it
+            let is_last = line_number == lines.len() - 1;
+            if is_last && line.is_empty() && line_markers.is_empty() {
+                continue;
+            }
+
+            out.push_str(line);
+            out.push('\n');
+
+            for marker in line_markers {
+                out.push_str(&marker.render(line));
+            }
+        }
+
+        out.push_str("```\n");
+        out
+    }
+
+    struct Marker {
+        id: String,
+        range: Range,
+        message: String,
+    }
+
+    impl Marker {
+        fn render(&self, line: &str) -> String {
+            let start = char_column(line, self.range.start.character);
+            let end = if self.range.end.line == self.range.start.line {
+                char_column(line, self.range.end.character)
+            } else {
+                line.chars().count()
+            };
+            let width = end.saturating_sub(start).max(1);
+
+            format!(
+                "{}{} {} {} ({})\n",
+                " ".repeat(start),
+                "^".repeat(width),
+                self.id,
+                self.message,
+                render_range(self.range)
+            )
+        }
+    }
+
+    /// Convert a UTF-16 column to a character column, for padding
+    fn char_column(line: &str, utf16_column: u32) -> usize {
+        let mut units = 0;
+        for (index, char) in line.chars().enumerate() {
+            if units >= utf16_column as usize {
+                return index;
+            }
+            units += char.len_utf16();
+        }
+        line.chars().count() + (utf16_column as usize).saturating_sub(units)
     }
 
     #[test]
-    fn test_syntax_error_truncation() {
-        // Coded to truncate at 20 rows
-        let newlines = "\n".repeat(20);
-        let text = String::from("('") + newlines.as_str() + ")";
-        let diagnostics = text_diagnostics(text.as_str());
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-        assert_eq!(diagnostic.range.start, Position::new(0, 0));
-        assert_eq!(diagnostic.range.end, Position::new(0, 0));
+    fn test_detail_becomes_related_information() {
+        insta::assert_snapshot!(render("\"abc"));
+    }
+
+    #[test]
+    fn test_hint_points_at_primary_range() {
+        insta::assert_snapshot!(render("1 %foo"));
+    }
+
+    #[test]
+    fn test_multiple_errors() {
+        insta::assert_snapshot!(render(
+            "\
+f(1 2)
+1 + }"
+        ));
+    }
+
+    #[test]
+    fn test_utf16_columns() {
+        insta::assert_snapshot!(render("\"é😀\" + }"));
+    }
+
+    #[test]
+    fn test_long_unterminated_string() {
+        let text = format!("('{})", "\n".repeat(20));
+        insta::assert_snapshot!(render(&text));
     }
 
     #[test]
     fn test_unmatched_call_delimiter() {
-        let diagnostics = text_diagnostics("match(a, b");
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.first().unwrap();
-        assert_eq!(diagnostic.range.start, Position::new(0, 5));
-        assert_eq!(diagnostic.range.end, Position::new(0, 6));
-        insta::assert_snapshot!(diagnostic.message);
-
-        let diagnostics = text_diagnostics("foo[a, b");
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.first().unwrap();
-        assert_eq!(diagnostic.range.start, Position::new(0, 3));
-        assert_eq!(diagnostic.range.end, Position::new(0, 4));
-        insta::assert_snapshot!(diagnostic.message);
-
-        let diagnostics = text_diagnostics("foo[[a, b");
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.first().unwrap();
-        assert_eq!(diagnostic.range.start, Position::new(0, 3));
-        assert_eq!(diagnostic.range.end, Position::new(0, 5));
-        insta::assert_snapshot!(diagnostic.message);
+        insta::assert_snapshot!(render("match(a, b"));
+        insta::assert_snapshot!(render("foo[a, b"));
+        insta::assert_snapshot!(render("foo[[a, b"));
     }
 
     #[test]
     fn test_unmatched_call_delimiter_with_trailing_info() {
-        // Expect 2 diagnostics
-        // - One about unmatched `(`
-        // - But the `)` is implied, meaning that between `2` and `identity` there should be a `,`
-        //   so we get a diagnostic for that too
-        let text = "
+        insta::assert_snapshot!(render(
+            "\
 match(1, 2
 
 identity(1)
-";
-        let diagnostics = text_diagnostics(text);
-        assert_eq!(diagnostics.len(), 1);
-
-        // Diagnostic highlights the unmatched `(`
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-        assert_eq!(diagnostic.range.start, Position::new(1, 5));
-        assert_eq!(diagnostic.range.end, Position::new(1, 6));
+"
+        ));
     }
 
     #[test]
     fn test_unmatched_braces() {
-        let diagnostics = text_diagnostics("{");
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-
-        let diagnostics = text_diagnostics("{ 1 + 2");
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-
-        let diagnostics = text_diagnostics("{}");
-        assert!(diagnostics.is_empty());
-
-        let diagnostics = text_diagnostics("{ 1 + 2 }");
-        assert!(diagnostics.is_empty());
+        insta::assert_snapshot!(render("{"));
+        insta::assert_snapshot!(render("{ 1 + 2"));
     }
 
     #[test]
     fn test_unmatched_parentheses() {
-        let diagnostics = text_diagnostics("(");
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-
-        let diagnostics = text_diagnostics("( 1 + 2");
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-
-        // tree-sitter grammar knows R doesn't allow empty `()` without a body
-        let diagnostics = text_diagnostics("()");
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-
-        // tree-sitter grammar knows R doesn't allow >1 expressions in `()`
-        let diagnostics = text_diagnostics("(1+2\n1+2)");
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-
-        let diagnostics = text_diagnostics("( 1 + 2 )");
-        assert!(diagnostics.is_empty());
+        insta::assert_snapshot!(render("("));
+        insta::assert_snapshot!(render("( 1 + 2"));
+        insta::assert_snapshot!(render("()"));
+        insta::assert_snapshot!(render(
+            "\
+(1+2
+1+2)"
+        ));
     }
 
     #[test]
     fn test_error_precision() {
-        // The actual error is up to tree-sitter-r's error recovery,
-        // but it should always be decent
-        let diagnostics = text_diagnostics("sum(1 * 2 + )");
-        assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-        assert_eq!(diagnostic.range.start, Position::new(0, 12));
-        assert_eq!(diagnostic.range.end, Position::new(0, 13));
+        insta::assert_snapshot!(render("sum(1 * 2 + )"));
     }
 
     #[test]
     fn test_unmatched_closing_token() {
-        let close = ["}", ")", "]"];
-
-        for delimiter in close.iter() {
-            // i.e. `1 + 1 }`
-            let text = format!("1 + 1 {delimiter}");
-
-            let diagnostics = text_diagnostics(text.as_str());
-            assert_eq!(diagnostics.len(), 1);
-
-            // Diagnostic highlights the `{delimiter}`
-            let diagnostic = diagnostics.first().unwrap();
-            insta::assert_snapshot!(diagnostic.message);
-            assert_eq!(diagnostic.range.start, Position::new(0, 6));
-            assert_eq!(diagnostic.range.end, Position::new(0, 7));
-        }
+        insta::assert_snapshot!(render("1 + 1 }"));
+        insta::assert_snapshot!(render("1 + 1 )"));
+        insta::assert_snapshot!(render("1 + 1 ]"));
     }
 
     #[test]
     fn test_unmatched_closing_token_precision() {
-        // Related to https://github.com/tree-sitter/tree-sitter/issues/3623
-        // Should target the `}` specifically, not `+ }`.
-        let text = "1 + }";
-        let diagnostics = text_diagnostics(text);
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-        assert_eq!(diagnostic.range.start, Position::new(0, 4));
-        assert_eq!(diagnostic.range.end, Position::new(0, 5));
+        insta::assert_snapshot!(render("1 + }"));
     }
 
     #[test]
     fn test_unmatched_binary_operator() {
-        // The actual error is up to tree-sitter-r's error recovery,
-        // but it should always be decent
-        let text = "
+        insta::assert_snapshot!(render(
+            "\
 {
  1 +
-}";
-
-        let diagnostics = text_diagnostics(text);
-        assert_eq!(diagnostics.len(), 1);
-
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-        assert_eq!(diagnostic.range.start, Position::new(3, 0));
-        assert_eq!(diagnostic.range.end, Position::new(3, 1));
+}"
+        ));
     }
 
     #[test]
     fn test_unmatched_function_parameters_parentheses() {
-        // Exact set of diagnostics are up to tree-sitter-r's error recovery,
-        // but they should be decent at pointing you to the right place
-        let text = "
+        insta::assert_snapshot!(render(
+            "\
 function(x {
   1 + 1
-}";
-
-        let diagnostics = text_diagnostics(text);
-        assert_eq!(diagnostics.len(), 2);
-
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-        assert_eq!(diagnostic.range.start, Position::new(1, 11));
-        assert_eq!(diagnostic.range.end, Position::new(1, 12));
-
-        let diagnostic = diagnostics.get(1).unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-        assert_eq!(diagnostic.range.start, Position::new(3, 0));
-        assert_eq!(diagnostic.range.end, Position::new(3, 1));
+}"
+        ));
     }
 
     #[test]
     fn test_for_loop_with_no_body() {
-        let text = "for(i in 1:10)";
-
-        let diagnostics = text_diagnostics(text);
-        assert_eq!(diagnostics.len(), 1);
-
-        // Diagnostic highlights the `for`
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-        assert_eq!(diagnostic.range.start, Position::new(0, 0));
-        assert_eq!(diagnostic.range.end, Position::new(0, 3));
+        insta::assert_snapshot!(render("for(i in 1:10)"));
     }
 
     #[test]
     fn test_while_loop_with_no_body() {
-        let text = "while(1)";
-
-        let diagnostics = text_diagnostics(text);
-        assert_eq!(diagnostics.len(), 1);
-
-        // Diagnostic highlights the `while`
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-        assert_eq!(diagnostic.range.start, Position::new(0, 0));
-        assert_eq!(diagnostic.range.end, Position::new(0, 5));
+        insta::assert_snapshot!(render("while(1)"));
     }
 
     #[test]
     fn test_repeat_loop_with_no_body() {
-        let text = "1\nrepeat";
-
-        let diagnostics = text_diagnostics(text);
-        assert_eq!(diagnostics.len(), 1);
-
-        // Diagnostic highlights the `repeat`
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-        assert_eq!(diagnostic.range.start, Position::new(1, 0));
-        assert_eq!(diagnostic.range.end, Position::new(1, 6));
+        insta::assert_snapshot!(render(
+            "\
+1
+repeat"
+        ));
     }
 
     #[test]
     fn test_if_statement_with_no_consequence() {
-        let text = "if (a)";
-
-        let diagnostics = text_diagnostics(text);
-        assert_eq!(diagnostics.len(), 1);
-
-        // Diagnostic highlights the `if`
-        // We call if an if "body" even though tree-sitter calls it a "consequence"
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-        assert_eq!(diagnostic.range.start, Position::new(0, 0));
-        assert_eq!(diagnostic.range.end, Position::new(0, 2));
+        insta::assert_snapshot!(render("if (a)"));
     }
 
     #[test]
     fn test_function_definition_with_no_body() {
-        let text = "function(a)";
-
-        let diagnostics = text_diagnostics(text);
-        assert_eq!(diagnostics.len(), 1);
-
-        // Diagnostic highlights the `function`
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-        assert_eq!(diagnostic.range.start, Position::new(0, 0));
-        assert_eq!(diagnostic.range.end, Position::new(0, 8));
-
-        // Anonymous function
-        let text = r"\(a)";
-
-        let diagnostics = text_diagnostics(text);
-        assert_eq!(diagnostics.len(), 1);
-
-        // Diagnostic highlights the `function`
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-        assert_eq!(diagnostic.range.start, Position::new(0, 0));
-        assert_eq!(diagnostic.range.end, Position::new(0, 1));
+        insta::assert_snapshot!(render("function(a)"));
+        insta::assert_snapshot!(render(r"\(a)"));
     }
 
     #[test]
     fn test_repeated_call_arguments_without_delimiter() {
-        let text = "match(1, 2 3)";
-
-        let diagnostics = text_diagnostics(text);
-        assert_eq!(diagnostics.len(), 1);
-
-        // Diagnostic highlights the `2`
-        let diagnostic = diagnostics.first().unwrap();
-        insta::assert_snapshot!(diagnostic.message);
-        assert_eq!(diagnostic.range.start, Position::new(0, 9));
-        assert_eq!(diagnostic.range.end, Position::new(0, 10));
+        insta::assert_snapshot!(render("match(1, 2 3)"));
     }
 
     #[test]
-    fn test_no_syntax_diagnostic_on_dots_and_dot_dot_i() {
-        let text = "x$...";
-        let diagnostics = text_diagnostics(text);
-        assert!(diagnostics.is_empty());
-
-        let text = "x$..1";
-        let diagnostics = text_diagnostics(text);
-        assert!(diagnostics.is_empty());
-
-        let text = "x::...";
-        let diagnostics = text_diagnostics(text);
-        assert!(diagnostics.is_empty());
+    fn test_missing_namespace_rhs() {
+        insta::assert_snapshot!(render("base::"));
     }
 
     #[test]
-    fn test_no_syntax_diagnostic_on_raw_strings() {
-        // https://github.com/r-lib/tree-sitter-r/issues/162
-        let text = r#"
-r"-()-)-"
-r"--()-")--"
-        "#;
-        let diagnostics = text_diagnostics(text);
-        assert!(diagnostics.is_empty());
-    }
+    fn test_missing_commas_reported_once_per_list() {
+        // A missing `)` swallows the following lines as arguments
+        insta::assert_snapshot!(render(
+            "\
+match(1, 2
 
-    #[test]
-    fn test_no_syntax_diagnostic_on_null_argument_name() {
-        // https://github.com/r-lib/tree-sitter-r/issues/164
-        let text = r#"
-switch(
-  typeof(x),
-  NULL = ,
-)
-        "#;
-        let diagnostics = text_diagnostics(text);
-        assert!(diagnostics.is_empty());
-    }
-
-    #[test]
-    fn test_no_syntax_diagnostic_on_binary_exponent() {
-        // https://github.com/r-lib/tree-sitter-r/issues/159
-        let text = r#"
-0x0p-123
-        "#;
-        let diagnostics = text_diagnostics(text);
-        assert!(diagnostics.is_empty());
+identity(1)
+identity(2)
+identity(3)
+"
+        ));
+        insta::assert_snapshot!(render("f(a b c d)"));
+        insta::assert_snapshot!(render("function(a b c) 1"));
+        // The inner call cascades while the outer call still reports its own `)`
+        insta::assert_snapshot!(render(
+            "\
+f(g(1
+2
+3
+"
+        ));
     }
 }

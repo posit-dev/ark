@@ -1,5 +1,8 @@
 ---
 source: crates/ark/src/lsp/diagnostics_syntax.rs
-expression: diagnostic.message
+expression: "render(\"sum(1 * 2 + )\")"
 ---
-Syntax error
+```text
+sum(1 * 2 + )
+            ^ [1] Expected an expression but instead found ')'. (0:12-0:13)
+```

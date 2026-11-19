@@ -1,5 +1,8 @@
 ---
 source: crates/ark/src/lsp/diagnostics_syntax.rs
-expression: diagnostic.message
+expression: "render(\"1 + }\")"
 ---
-Syntax error
+```text
+1 + }
+    ^ [1] Expected an expression but instead found '}'. (0:4-0:5)
+```

@@ -1,0 +1,10 @@
+---
+source: crates/ark/src/lsp/diagnostics_syntax.rs
+expression: "render(\"\\\nf(1 2)\n1 + }\")"
+---
+```text
+f(1 2)
+    ^ [1] Expected `,` but instead found `2`. (0:4-0:5)
+1 + }
+    ^ [2] Expected an expression but instead found '}'. (1:4-1:5)
+```

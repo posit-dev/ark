@@ -261,11 +261,13 @@ pub(crate) fn generate_diagnostics(
     // Start iterating through the nodes.
     let root = file.tree_sitter(db).root_node();
 
-    // Collect syntax related diagnostics for `ERROR` and `MISSING` nodes
-    match syntax_diagnostics(root, &context) {
-        Ok(mut syntax_diagnostics) => diagnostics.append(&mut syntax_diagnostics),
-        Err(err) => log::error!("Error while generating syntax diagnostics: {err:?}"),
-    }
+    // Collect syntax diagnostics from Air's parser
+    diagnostics.append(&mut syntax_diagnostics(
+        file.parse_diagnostics(db),
+        file.line_index(db),
+        encoding,
+        uri,
+    ));
 
     // Collect semantic related diagnostics
     match semantic_diagnostics(root, &mut context) {
@@ -788,15 +790,6 @@ fn recurse_namespace(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    // This is really a syntax issue, but the RHS is optional in the grammar,
-    // so `dplyr::` is technically allowed and we have to check for this in
-    // the semantic path instead.
-    crate::lsp::diagnostics_syntax::diagnose_missing_namespace_operator(
-        node,
-        context,
-        diagnostics,
-    )?;
-
     let lhs = unwrap!(node.child_by_field_name("lhs"), None => {
         return ().ok();
     });
@@ -1328,7 +1321,7 @@ mod tests {
     fn test_mixed_syntax_and_semantic_diagnostics() {
         r_task(|| {
             // - `foo` is an unknown symbol
-            // - `}` is a syntax error, but localized to that line
+            // - `}` is a syntax error, reported by Air at the `}` token
             let text = "
 foo
 
@@ -1358,17 +1351,6 @@ foo
             )";
             let diagnostics = generate_diagnostics(text, &current_state());
             assert!(diagnostics.is_empty());
-        })
-    }
-
-    #[test]
-    fn test_missing_namespace_rhs() {
-        r_task(|| {
-            let text = "base::";
-            let diagnostics = generate_diagnostics(text, &current_state());
-            assert_eq!(diagnostics.len(), 1);
-            let diagnostic = diagnostics.first().unwrap();
-            insta::assert_snapshot!(diagnostic.message);
         })
     }
 
