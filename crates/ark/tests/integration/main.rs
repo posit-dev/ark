@@ -53,6 +53,7 @@ mod object_explorer;
 mod options;
 mod packages_pane;
 mod plots;
+mod plots_locator;
 mod repos_auto;
 mod repos_conf_file;
 mod rstudioapi;

@@ -220,6 +220,18 @@ impl DeviceState {
         }
     }
 
+    /// R is about to wait for a click on the current page, for `locator()`.
+    ///
+    /// A page that `plot.new()` or `grid::grid.newpage()` started is blank
+    /// until something is drawn on it, so it isn't a plot change yet. If the
+    /// frontend hasn't been sent it, mark it changed so it is sent anyway and
+    /// there is a plot to click on. A held page stays hidden.
+    pub(crate) fn on_locate(&mut self) {
+        if !self.page.shown && !self.is_held() && self.page.state == PageState::Synced {
+            self.page.state = PageState::Drawn;
+        }
+    }
+
     /// The frontend closed the plot `id`.
     pub(crate) fn on_plot_closed(&mut self, id: &PlotId) {
         if let Hold::Held { pages, .. } = &mut self.hold {
@@ -490,6 +502,33 @@ mod tests {
 
         assert_eq!(state.changed_page(), None);
         assert!(!state.page.shown);
+    }
+
+    #[test]
+    fn test_locate_sends_blank_unshown_page() {
+        let mut state = DeviceState::new();
+        let id = state.id().clone();
+
+        state.on_locate();
+        assert_eq!(record(&mut state, true), Some(Notification::New(id)));
+    }
+
+    #[test]
+    fn test_locate_leaves_shown_page_synced() {
+        let mut state = DeviceState::new();
+        draw_and_process(&mut state);
+
+        state.on_locate();
+        assert_eq!(state.changed_page(), None);
+    }
+
+    #[test]
+    fn test_locate_keeps_held_page_hidden() {
+        let mut state = DeviceState::new();
+        state.on_hold_level(1);
+
+        state.on_locate();
+        assert_eq!(state.changed_page(), None);
     }
 
     #[test]

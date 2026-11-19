@@ -8,6 +8,7 @@
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
+use stdext::result::ResultExt;
 
 use crate::comm::base_comm::JsonRpcError;
 use crate::comm::base_comm::JsonRpcErrorCode;
@@ -15,11 +16,13 @@ use crate::comm::base_comm::JsonRpcErrorData;
 use crate::comm::base_comm::JsonRpcReply;
 use crate::session::Session;
 use crate::wire::input_reply::InputReply;
+use crate::wire::input_request::InputRequest;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::input_request::StdInRpcReply;
 use crate::wire::input_request::UiCommFrontendRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
+use crate::wire::jupyter_message::MessageType;
 use crate::wire::jupyter_message::OutboundMessage;
 
 pub enum StdInRequest {
@@ -70,7 +73,7 @@ impl Stdin {
         stdin_reply_tx: Sender<crate::Result<InputReply>>,
         interrupt_rx: Receiver<bool>,
     ) {
-        loop {
+        'outer: loop {
             // Listen for input requests from the backend. We ignore
             // interrupt notifications here and loop infinitely over them.
             //
@@ -108,23 +111,34 @@ impl Stdin {
                 };
             }
 
-            let (request, reply_tx) = match req {
+            // Keep the request's ID to match comm replies to this request
+            let (request, request_id, reply_tx) = match req {
                 StdInRequest::Input(req) => {
-                    let req = Message::InputRequest(JupyterMessage::create_with_identity(
+                    let req = JupyterMessage::create_with_identity(
                         req.originator,
                         req.request,
                         &self.session,
-                    ));
-                    (req, StdInReplySender::Input(stdin_reply_tx.clone()))
+                    );
+                    let id = req.header.msg_id.clone();
+                    (
+                        Message::InputRequest(req),
+                        id,
+                        StdInReplySender::Input(stdin_reply_tx.clone()),
+                    )
                 },
                 StdInRequest::Comm(comm_req) => {
                     // This is a request to the frontend
-                    let req = Message::CommRequest(JupyterMessage::create_with_identity(
+                    let req = JupyterMessage::create_with_identity(
                         comm_req.originator,
                         comm_req.request,
                         &self.session,
-                    ));
-                    (req, StdInReplySender::Comm(comm_req.reply_tx))
+                    );
+                    let id = req.header.msg_id.clone();
+                    (
+                        Message::CommRequest(req),
+                        id,
+                        StdInReplySender::Comm(comm_req.reply_tx),
+                    )
                 },
             };
 
@@ -134,85 +148,100 @@ impl Stdin {
             }
             log::trace!("Sent input request to frontend, waiting for input reply...");
 
-            // Wait for the frontend's reply message from the ZeroMQ socket.
-            let message = select! {
-                recv(self.inbound_rx) -> msg => match msg {
-                    Ok(m) => m,
-                    Err(err) => {
-                        log::trace!("StdIn shutting down: inbound socket disconnected: {err:?}");
-                        return;
-                    }
-                },
-                // Cancel current iteration if an interrupt is
-                // signaled. We're no longer waiting for an `input_reply`
-                // but for an `input_request`.
-                recv(interrupt_rx) -> msg => {
-                    if let Err(err) = msg {
-                        log::trace!("StdIn shutting down: interrupt channel disconnected: {err:?}");
-                        return;
-                    }
-                    log::trace!("Received interrupt signal in StdIn");
+            // Wait for the frontend's reply to this request. A reply to an
+            // earlier request can arrive first, for instance when an
+            // interrupt stopped the wait for it. Skip every message that is
+            // not the reply to this request.
+            loop {
+                let message = select! {
+                    recv(self.inbound_rx) -> msg => match msg {
+                        Ok(m) => m,
+                        Err(err) => {
+                            log::trace!("StdIn shutting down: inbound socket disconnected: {err:?}");
+                            return;
+                        }
+                    },
+                    // Cancel current iteration if an interrupt is
+                    // signaled. We're no longer waiting for an `input_reply`
+                    // but for an `input_request`.
+                    recv(interrupt_rx) -> msg => {
+                        if let Err(err) = msg {
+                            log::trace!("StdIn shutting down: interrupt channel disconnected: {err:?}");
+                            return;
+                        }
+                        log::trace!("Received interrupt signal in StdIn");
 
-                    match reply_tx {
-                        StdInReplySender::Input(_tx) => {
-                            // Nothing to do since `read_console()` will detect
-                            // the interrupt independently. Fall through.
-                        },
-                        StdInReplySender::Comm(tx) => {
-                            tx.send(StdInRpcReply::Interrupt).unwrap();
-                        },
-                    }
+                        match reply_tx {
+                            StdInReplySender::Input(_tx) => {
+                                // Nothing to do since `read_console()` will detect
+                                // the interrupt independently. Fall through.
+                            },
+                            StdInReplySender::Comm(tx) => {
+                                tx.send(StdInRpcReply::Interrupt).log_err();
+                            },
+                        }
 
-                    continue;
+                        continue 'outer;
+                    }
+                };
+
+                log::trace!("Received reply from front-end: {message:?}");
+
+                match Self::deliver_reply(message, &reply_tx, &request_id) {
+                    None => break,
+                    Some(message) => {
+                        log::warn!("Ignoring unexpected message on stdin socket: {message:?}")
+                    },
                 }
-            };
-
-            log::trace!("Received reply from front-end: {message:?}");
-
-            // Only input and comm RPC replies are expected on this socket
-            match message {
-                Ok(ref message) => match message {
-                    Message::InputReply(ref reply) => {
-                        if let StdInReplySender::Input(tx) = reply_tx {
-                            tx.send(Ok(reply.content.clone())).unwrap();
-                            continue;
-                        }
-                    },
-                    Message::CommReply(ref reply) => {
-                        if let StdInReplySender::Comm(tx) = reply_tx {
-                            let resp = StdInRpcReply::Reply(reply.content.clone());
-                            tx.send(resp).unwrap();
-                            continue;
-                        }
-                    },
-                    _ => {
-                        log::warn!("Unexpected message type {message:?} on StdIn",);
-                        continue;
-                    },
-                },
-                Err(err) => {
-                    // Might be an unserialisation error. Propagate the error to R.
-                    match reply_tx {
-                        StdInReplySender::Input(tx) => {
-                            tx.send(Err(err)).unwrap();
-                        },
-                        StdInReplySender::Comm(tx) => {
-                            let resp = StdInRpcReply::Reply(JsonRpcReply::Error(JsonRpcError {
-                                error: JsonRpcErrorData {
-                                    message: format!(
-                                        "Error while receiving frontend response: {err}"
-                                    ),
-                                    code: JsonRpcErrorCode::InternalError,
-                                },
-                            }));
-                            tx.send(resp).unwrap();
-                        },
-                    }
-                    continue;
-                },
-            };
-
-            log::warn!("Received unexpected message on stdin socket: {message:?}");
+            }
         }
+    }
+
+    /// Sends `message` to the pending request if it is the reply to that
+    /// request, and returns `None`. Otherwise returns `message` unchanged. The
+    /// reply must have the type the request expects. A comm reply with a
+    /// parent header must also be parented to the request. An input reply
+    /// parented to another input request is a late reply to that request, so
+    /// it is skipped too. Other input replies are accepted whatever their
+    /// parent, because frontends differ in what they parent them to, and
+    /// some send no parent at all. A deserialization error goes to the
+    /// pending request.
+    fn deliver_reply(
+        message: crate::Result<Message>,
+        reply_tx: &StdInReplySender,
+        request_id: &str,
+    ) -> Option<crate::Result<Message>> {
+        match (message, reply_tx) {
+            (Ok(Message::InputReply(reply)), StdInReplySender::Input(tx))
+                if !reply.parent_header.as_ref().is_some_and(|parent| {
+                    parent.msg_type == InputRequest::message_type() && parent.msg_id != request_id
+                }) =>
+            {
+                tx.send(Ok(reply.content)).log_err();
+            },
+            (Ok(Message::CommReply(reply)), StdInReplySender::Comm(tx))
+                if reply
+                    .parent_header
+                    .as_ref()
+                    .is_none_or(|parent| parent.msg_id == request_id) =>
+            {
+                tx.send(StdInRpcReply::Reply(reply.content)).log_err();
+            },
+            // Might be an unserialisation error. Propagate the error to R.
+            (Err(err), StdInReplySender::Input(tx)) => {
+                tx.send(Err(err)).log_err();
+            },
+            (Err(err), StdInReplySender::Comm(tx)) => {
+                let resp = StdInRpcReply::Reply(JsonRpcReply::Error(JsonRpcError {
+                    error: JsonRpcErrorData {
+                        message: format!("Error while receiving frontend response: {err}"),
+                        code: JsonRpcErrorCode::InternalError,
+                    },
+                }));
+                tx.send(resp).log_err();
+            },
+            (message, _) => return Some(message),
+        }
+        None
     }
 }

@@ -9,6 +9,8 @@
 
 use std::rc::Rc;
 
+use amalthea::comm::ui_comm::UiFrontendReply;
+
 use super::*;
 use crate::data_explorer::r_data_explorer::DataExplorerMode;
 use crate::data_explorer::r_data_explorer::InlineDataExplorerData;
@@ -17,6 +19,7 @@ use crate::data_explorer::r_data_explorer::RDataExplorer;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::object_explorer::r_object_explorer::RObjectExplorer;
 use crate::object_explorer::r_object_explorer::OBJECT_EXPLORER_COMM_NAME;
+use crate::signals::interrupts_pending;
 
 /// UI comm integration.
 impl Console {
@@ -287,6 +290,40 @@ impl UiCommRef<'_> {
         &self,
         request: UiFrontendRequest,
     ) -> anyhow::Result<FrontendCallOutcome> {
+        Ok(match self.send_frontend_request(&request)? {
+            Some(result) => {
+                // Deserialize to Rust first to verify the OpenRPC contract.
+                // Errors are propagated to R. The parser takes the value, so
+                // it gets a copy that we can convert to R afterwards.
+                parse_frontend_reply(result.clone(), &request)?;
+
+                // Now deserialize to an R object
+                FrontendCallOutcome::Reply(RObject::try_from(result)?)
+            },
+            None => FrontendCallOutcome::Interrupted,
+        })
+    }
+
+    /// Calls a frontend method and returns the typed reply. `Ok(None)` means
+    /// an interrupt cancelled the request. `Err` covers a missing active
+    /// request, a JSON-RPC error reply, and a reply that fails the OpenRPC
+    /// contract.
+    pub(crate) fn call_frontend_method_typed(
+        &self,
+        request: UiFrontendRequest,
+    ) -> anyhow::Result<Option<UiFrontendReply>> {
+        let Some(result) = self.send_frontend_request(&request)? else {
+            return Ok(None);
+        };
+        Ok(Some(parse_frontend_reply(result, &request)?))
+    }
+
+    /// Sends `request` to the frontend and blocks for the reply. Returns the
+    /// raw JSON result, or `None` if an interrupt cancelled the request.
+    fn send_frontend_request(
+        &self,
+        request: &UiFrontendRequest,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
         log::trace!("Calling frontend method {request:?}");
 
         let (reply_tx, reply_rx) = bounded(1);
@@ -296,6 +333,15 @@ impl UiCommRef<'_> {
                 "No active request. Can't execute request {request:?}"
             ));
         };
+
+        // An interrupt that arrived while R prepared the request, for example
+        // while it rendered a plot for `locator()`, found no request on the
+        // stdin thread to cancel. Don't wait for a reply the user no longer
+        // wants.
+        if interrupts_pending() {
+            log::trace!("Interrupt pending, not sending frontend request {request:?}");
+            return Ok(None);
+        }
 
         // Forward request directly to the stdin channel
         let comm_msg = StdInRequest::Comm(UiCommFrontendRequest {
@@ -312,18 +358,7 @@ impl UiCommRef<'_> {
 
         match reply {
             StdInRpcReply::Reply(reply) => match reply {
-                JsonRpcReply::Result(reply) => {
-                    // Deserialize to Rust first to verify the OpenRPC contract.
-                    // Errors are propagated to R.
-                    if let Err(err) = ui_frontend_reply_from_value(reply.result.clone(), &request) {
-                        return Err(anyhow!(
-                            "Can't deserialize RPC reply for {request:?}:\n{err:?}"
-                        ));
-                    }
-
-                    // Now deserialize to an R object
-                    Ok(FrontendCallOutcome::Reply(RObject::try_from(reply.result)?))
-                },
+                JsonRpcReply::Result(reply) => Ok(Some(reply.result)),
                 JsonRpcReply::Error(reply) => {
                     let message = reply.error.message;
 
@@ -333,7 +368,17 @@ impl UiCommRef<'_> {
                     ))
                 },
             },
-            StdInRpcReply::Interrupt => Ok(FrontendCallOutcome::Interrupted),
+            StdInRpcReply::Interrupt => Ok(None),
         }
     }
+}
+
+/// Parses the JSON result of `request` into its typed reply, which checks it
+/// against the OpenRPC contract.
+fn parse_frontend_reply(
+    result: serde_json::Value,
+    request: &UiFrontendRequest,
+) -> anyhow::Result<UiFrontendReply> {
+    ui_frontend_reply_from_value(result, request)
+        .map_err(|err| anyhow!("Can't deserialize RPC reply for {request:?}:\n{err:?}"))
 }
