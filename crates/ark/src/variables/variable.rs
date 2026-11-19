@@ -2016,13 +2016,39 @@ fn s7_property_names(x: SEXP) -> Vec<String> {
 }
 
 /// The property specifications are a named list stored in the `properties`
-/// attribute of the class object, which is itself stored in the `S7_class`
-/// attribute of the instance.
+/// attribute of the class object (see [s7_class]).
 fn s7_property_specs(x: SEXP) -> Option<RObject> {
-    let class = RObject::view(x).get_attribute("S7_class")?;
+    let class = s7_class(x)?;
     let specs = class.get_attribute("properties")?;
     (r_typeof(specs.sexp) == VECSXP).then_some(specs)
 }
+
+/// Returns the S7 class object of an S7 instance, like `S7::S7_class()`.
+///
+/// S7 1.0.0 stores the class in the `class` binding of an environment in the
+/// `_S7_class` attribute. Earlier versions store the class itself in the
+/// `S7_class` attribute.
+fn s7_class(x: SEXP) -> Option<RObject> {
+    let object = RObject::view(x);
+
+    let Some(class_ref) = object.get_attribute(S7_CLASS_REF_ATTRIBUTE) else {
+        return object.get_attribute(S7_CLASS_ATTRIBUTE_LEGACY);
+    };
+    if r_typeof(class_ref.sexp) != ENVSXP {
+        return None;
+    }
+    Environment::view(class_ref.sexp).get("class").ok()
+}
+
+/// The instance attributes that S7 uses for bookkeeping rather than for
+/// properties, in all supported S7 versions.
+const S7_CLASS_REF_ATTRIBUTE: &str = "_S7_class";
+const S7_CLASS_ATTRIBUTE_LEGACY: &str = "S7_class";
+const S7_INTERNAL_ATTRIBUTES: [&str; 3] = [
+    S7_CLASS_REF_ATTRIBUTE,
+    "_S7_version",
+    S7_CLASS_ATTRIBUTE_LEGACY,
+];
 
 fn s7_property_is_dynamic(spec: &RObject) -> bool {
     list_get_by_name(spec, "getter").is_some_and(|getter| !r_is_null(getter.sexp))
@@ -2088,7 +2114,9 @@ fn s7_data(x: SEXP) -> Option<RObject> {
     for name in s7_property_names(x) {
         data.set_attribute(&name, r_null());
     }
-    data.set_attribute("S7_class", r_null());
+    for name in S7_INTERNAL_ATTRIBUTES {
+        data.set_attribute(name, r_null());
+    }
 
     if let Some(class) = s7_s3_parent_class(x) {
         data.set_attribute("class", class.sexp);
@@ -2101,11 +2129,11 @@ fn s7_data(x: SEXP) -> Option<RObject> {
 /// such as `"factor"` or `c("POSIXct", "POSIXt")`. Returns `None` if the
 /// object extends a base type or no parent at all.
 ///
-/// The parent chain starts at the `S7_class` attribute of the object and
+/// The parent chain starts at the S7 class of the object (see [s7_class]) and
 /// follows the `parent` attribute of each S7 class. An S3 parent is an
 /// `S7_S3_class`, a list with the class vector in its `class` element.
 fn s7_s3_parent_class(x: SEXP) -> Option<RObject> {
-    let mut class = RObject::view(x).get_attribute("S7_class")?;
+    let mut class = s7_class(x)?;
     while r_inherits(class.sexp, "S7_class") {
         class = class.get_attribute("parent")?;
     }

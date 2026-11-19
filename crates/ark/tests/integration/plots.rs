@@ -584,8 +584,8 @@ fn test_plot_source_context_stacking() {
 /// Plots created by `source()` retain the file origin while `dev.hold()`
 /// defers processing until after `source()` returns.
 ///
-/// `has_changes` remains true while the hold is active, so each new page must
-/// capture its origin without relying on a false-to-true transition.
+/// Pages keep their unsent changes while the hold is active, so origin capture
+/// can't wait for a page to go from no changes to changes.
 #[test]
 fn test_plot_origin_survives_hold_across_source() {
     let frontend = DummyArkFrontend::lock();

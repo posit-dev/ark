@@ -71,6 +71,8 @@ use crate::comm_handler::CommHandlerContext;
 use crate::console::Console;
 use crate::console::SessionMode;
 use crate::modules::ARK_ENVS;
+use crate::plots::device_state::DeviceState;
+use crate::plots::device_state::Notification;
 use crate::r_task;
 use crate::signals::interrupts_pending;
 use crate::signals::set_interrupts_pending;
@@ -111,6 +113,12 @@ struct WrappedDeviceCallbacks {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub(crate) struct PlotId(String);
 
+impl PlotId {
+    pub(crate) fn new() -> Self {
+        Self(Uuid::new_v4().to_string())
+    }
+}
+
 /// Execution context captured when an execute request starts.
 /// Stored on the graphics device so it can be associated with plots created during execution.
 #[derive(Clone, Default)]
@@ -149,79 +157,10 @@ pub(crate) struct DeviceContext {
     /// [IOPubMessage::UpdateDisplayData] to Jupyter frontends when plot events occur
     iopub_tx: Sender<IOPubMessage>,
 
-    /// Tracks whether the graphics device has any changes.
-    ///
-    /// Set to `true` if the device's `mode` ever flips to `1`, indicating some drawing
-    /// has occurred. Reset back to `false` once we've processed those changes.
-    has_changes: Cell<bool>,
-
-    /// Tracks whether or not the current plot page has ever been written to.
-    ///
-    /// Set to `true` in the [DeviceContext::new_page] hook. Set to `false` once we've
-    /// processed the changes on this page at least once.
-    is_new_page: Cell<bool>,
-
-    /// Tracks whether or not the graphics device is currently "drawing".
-    ///
-    /// Tracks the device's `mode`, where `mode == 1` means we are drawing,
-    /// and `mode == 0` means we stop drawing.
-    is_drawing: Cell<bool>,
-
-    /// Tracks whether or not we are allowed to render a plot
-    ///
-    /// When a new page event occurs, or when we finish executing R code, we record the
-    /// display list and send Positron a notification that we have new plot information to
-    /// display. When it responds, we actually render the plot and send it back to
-    /// Positron. If a user sets `dev.hold()`, then we refrain from actually responding
-    /// to that render request until an equivalent call to `dev.flush()` frees us.
-    ///
-    /// Tracks the device's holdflush `level`, where we simplify it to mean that `level <=
-    /// 0` means we can render, and `level > 0` means we cannot. Graphics devices should
-    /// return `0` as the `level` when we are free to render and the level should never go
-    /// negative, but we try to be extra safe.
-    should_render: Cell<bool>,
-
-    /// Tracks whether the current page has a recording that we have not yet
-    /// notified the frontend about because rendering was held.
-    ///
-    /// Set when [DeviceContext::process_current_page] defers a notification. Reset once
-    /// the notification is sent, or when a new page starts. At that point the old page
-    /// moves to `held_pages` if the frontend has seen it, and is dropped otherwise.
-    is_notification_deferred: Cell<bool>,
-
-    /// Earlier pages that still need an update once rendering is released.
-    ///
-    /// Code that holds the device around `plot.new()`, for example
-    /// `plot.default()` or `bxp()`, means the `before.plot.new` hook can only
-    /// record the previous page and defer its notification. When the new page then starts, we move the previous page
-    /// here so its final state still reaches the frontend after the hold is
-    /// released, instead of being lost when `id` changes (posit-dev/positron#17240).
-    held_pages: RefCell<Vec<PlotId>>,
-
-    /// Whether the current page had unsent changes when the device was last
-    /// held.
-    ///
-    /// On a screen device, drawing done before a hold stays visible, so R can
-    /// stop for input while held and the user still sees it. The
-    /// `devAskNewPage()` prompt is the common case: `plot.default()` holds the
-    /// device before `plot.new()` asks "Hit <Return> to see next plot". See
-    /// [DeviceContext::process_changes_before_input] (posit-dev/positron#7680).
-    has_pre_hold_changes: Cell<bool>,
-
-    /// Whether the current page has drawing that its latest recording doesn't
-    /// include.
-    ///
-    /// Set by [DeviceContext::hook_mode] and cleared when the current page is
-    /// recorded. [DeviceContext::process_changes_before_input] uses it to decide
-    /// whether a page sent at an input prompt still needs an update when the
-    /// hold is released.
-    has_unrecorded_changes: Cell<bool>,
-
-    /// The ID associated with the current plot page.
-    ///
-    /// Used for looking up a recorded plot so we can replay it with different graphics
-    /// device specifications (i.e. for Positron's Plots pane).
-    id: RefCell<PlotId>,
+    /// The current page and the `dev.hold()` state. Together they decide
+    /// whether a plot change is sent to the frontend at once, or after
+    /// `dev.flush()` releases a hold.
+    state: RefCell<DeviceState>,
 
     /// Mapping of `PlotId` to comm ID, used for sending update events to
     /// existing plot comms via `CommOutgoingTx`.
@@ -293,15 +232,7 @@ impl DeviceContext {
     pub fn new(iopub_tx: Sender<IOPubMessage>) -> Self {
         Self {
             iopub_tx,
-            has_changes: Cell::new(false),
-            is_new_page: Cell::new(true),
-            is_drawing: Cell::new(false),
-            should_render: Cell::new(true),
-            is_notification_deferred: Cell::new(false),
-            held_pages: RefCell::new(Vec::new()),
-            has_pre_hold_changes: Cell::new(false),
-            has_unrecorded_changes: Cell::new(false),
-            id: RefCell::new(Self::new_id()),
+            state: RefCell::new(DeviceState::new()),
             comm_ids: RefCell::new(HashMap::new()),
             plot_contexts: RefCell::new(HashMap::new()),
             kind_counters: RefCell::new(HashMap::new()),
@@ -447,13 +378,6 @@ impl DeviceContext {
         }
     }
 
-    /// Create a new id for this new plot page (from Positron's perspective)
-    /// and note that this is a new page
-    fn new_positron_page(&self) {
-        self.is_new_page.replace(true);
-        self.id.replace(Self::new_id());
-    }
-
     /// Deactivation hook
     ///
     /// We process any changes here before fully deactivating, ensuring that
@@ -494,21 +418,22 @@ impl DeviceContext {
             return;
         }
 
-        // Be extra safe and check `level <= 0` rather than just `level == 0` in case
-        // our shadowed device returns a negative `level`
-        let is_released = level <= 0;
-        let was_rendering = self.should_render.replace(is_released);
+        let held_pages = self.state.borrow_mut().on_hold_level(level);
+        let Some(held_pages) = held_pages else {
+            return;
+        };
 
-        // Note unsent changes on the release→hold transition. They are sent at
-        // release as usual, or earlier if R waits for input while held.
-        if was_rendering && !is_released {
-            self.has_pre_hold_changes.replace(self.has_changes.get());
-        }
+        // The held pages are already out of the state, so the nested
+        // `process_changes()` calls that rendering causes (it replays a
+        // recording on another device, which deactivates ours) can't send
+        // them twice. A new page's display or comm open can reach the frontend
+        // before an earlier page's update. Frontends match updates by display
+        // ID or comm ID, so this order is fine.
+        self.process_changes(console);
 
-        // Flush deferred changes on hold→release transition
-        if !was_rendering && is_released {
-            self.has_pre_hold_changes.replace(false);
-            self.process_changes(console);
+        for id in held_pages {
+            log::trace!("Processing held changes for plot `id` {id}");
+            self.process_update_plot(&id, console);
         }
     }
 
@@ -519,8 +444,8 @@ impl DeviceContext {
             return;
         }
 
+        // `mode == 1` means we are drawing, `mode == 0` means we stop drawing
         let is_drawing = mode == 1;
-        self.is_drawing.replace(is_drawing);
 
         // `identify()` draws its labels in mode 2 (graphical input), which
         // isn't drawing mode. After each label it switches to mode 0 and back
@@ -529,10 +454,10 @@ impl DeviceContext {
         let previous_mode = self.mode.replace(mode);
         let drew_during_input = mode == 2 && previous_mode == 0 && self.is_between_clicks();
 
-        if is_drawing || drew_during_input {
-            self.has_changes.replace(true);
-            self.has_unrecorded_changes.replace(true);
+        if !is_drawing && !drew_during_input {
+            return;
         }
+        self.state.borrow_mut().on_draw();
 
         // Capture each page's origin before `source()` pops its context
         if is_drawing && !self.has_pending_origin() {
@@ -555,24 +480,13 @@ impl DeviceContext {
             return;
         }
 
-        // Only pages the frontend has already seen are owed an update. A page
-        // that was never shown stays hidden, so `dev.hold()` still suppresses
-        // intermediate pages.
-        if self.is_notification_deferred.replace(false) && !self.is_new_page.get() {
-            self.held_pages.borrow_mut().push(self.id());
-        }
-        self.has_pre_hold_changes.replace(false);
+        self.state.borrow_mut().on_new_page();
         self.located_display_list_length.replace(None);
-        self.new_positron_page()
     }
 
     fn id(&self) -> PlotId {
         // Refcell Safety: Short borrows in the file.
-        self.id.borrow().clone()
-    }
-
-    fn new_id() -> PlotId {
-        PlotId(Uuid::new_v4().to_string())
+        self.state.borrow().id().clone()
     }
 
     /// Capture the current execution context for a new plot.
@@ -744,7 +658,7 @@ impl DeviceContext {
 
     #[tracing::instrument(level = "trace", skip(self))]
     fn on_plot_closed(&self, id: &PlotId) {
-        self.held_pages.borrow_mut().retain(|held| held != id);
+        self.state.borrow_mut().on_plot_closed(id);
         self.comm_ids.borrow_mut().remove(id);
         self.plot_contexts.borrow_mut().remove(id);
 
@@ -753,12 +667,6 @@ impl DeviceContext {
             .call_in(ARK_ENVS.positron_ns)
         {
             log::error!("Can't clean up plot (id: {id}): {err:?}");
-        }
-
-        // If the currently active plot is closed, advance to a new Positron page
-        // See https://github.com/posit-dev/positron/issues/6702.
-        if self.id() == *id {
-            self.new_positron_page();
         }
     }
 
@@ -777,34 +685,11 @@ impl DeviceContext {
     /// Uses execution context stored via `graphics_on_execute_request()`.
     #[tracing::instrument(level = "trace", skip_all)]
     pub(crate) fn process_changes(self: &Rc<Self>, console: &Console) {
-        // Take the held pages before we render anything. Rendering replays a
-        // recording on another device, which deactivates ours and calls back
-        // into `process_changes()`. Those nested calls must not render the same
-        // held pages again. Because of that nested call, the current page is
-        // always sent before the held updates, so a new page's display or comm
-        // open reaches the frontend before the earlier page's update. Frontends
-        // match updates by display ID or comm ID, so this order is fine.
-        let held_pages = if self.should_render.get() {
-            std::mem::take(&mut *self.held_pages.borrow_mut())
-        } else {
-            Vec::new()
-        };
-
-        self.process_current_page(console);
-
-        for id in held_pages {
-            log::trace!("Processing held changes for plot `id` {id}");
-            self.process_update_plot(&id, console);
-        }
-    }
-
-    fn process_current_page(self: &Rc<Self>, console: &Console) {
-        let id = self.id();
-
-        if !self.has_changes.get() {
-            log::trace!("No changes to process for plot `id` {id}");
+        let changed_page = self.state.borrow().changed_page().cloned();
+        let Some(id) = changed_page else {
+            log::trace!("No changes to process for plot `id` {}", self.id());
             return;
-        }
+        };
 
         log::trace!("Processing changes for plot `id` {id}");
 
@@ -822,17 +707,17 @@ impl DeviceContext {
         // plot(1) # Should get recorded with `id1`
         // plot(2) # Should record and overwrite `id1` because no new_page has been requested
         // ```
-        self.record_current_page(&id);
+        let recorded = Self::record_plot(&id);
 
-        if !self.should_render.get() {
-            // Keep `has_changes` set so we re-enter this branch after the hold
-            // is released (via `hook_holdflush`) and send the notification then.
+        // While held, the page keeps its changes, so `hook_holdflush()` sends
+        // it at release
+        let notification = self.state.borrow_mut().on_recorded(&id, recorded);
+        let Some(notification) = notification else {
             log::trace!("Deferring notification for plot `id` {id} (rendering held)");
-            self.is_notification_deferred.replace(true);
             return;
-        }
+        };
 
-        self.notify_current_page(&id, console);
+        self.send_notification(notification, console);
     }
 
     /// Process outstanding plot changes before R waits for user input, for
@@ -851,28 +736,38 @@ impl DeviceContext {
     /// `dev.flush()`.
     #[tracing::instrument(level = "trace", skip_all)]
     pub(crate) fn process_changes_before_input(self: &Rc<Self>, console: &Console) {
-        if self.should_render.get() {
+        if !self.state.borrow().is_held() {
             self.process_changes(console);
             return;
         }
 
-        if !self.has_pre_hold_changes.replace(false) || !self.has_changes.get() {
+        let changes = self.state.borrow_mut().take_pre_hold_changes();
+        let Some(changes) = changes else {
             return;
+        };
+
+        log::trace!(
+            "Sending pre-hold changes for plot `id` {} before input request",
+            changes.id
+        );
+
+        let recorded = !changes.needs_recording() || Self::record_plot(&changes.id);
+
+        let sent = self
+            .state
+            .borrow_mut()
+            .notify_pre_hold_changes(changes, recorded);
+        self.send_notification(sent.notification, console);
+        self.state
+            .borrow_mut()
+            .on_pre_hold_changes_sent(sent.redrawn);
+    }
+
+    fn send_notification(self: &Rc<Self>, notification: Notification, console: &Console) {
+        match notification {
+            Notification::New(id) => self.process_new_plot(&id, console),
+            Notification::Update(id) => self.process_update_plot(&id, console),
         }
-
-        let id = self.id();
-        log::trace!("Sending pre-hold changes for plot `id` {id} before input request");
-
-        if !self.is_notification_deferred.get() {
-            self.record_current_page(&id);
-        }
-        self.notify_current_page(&id, console);
-
-        // The recording we just sent may miss drawing done while held after
-        // it was made, for example a second panel with `par(mfrow =)`. If so,
-        // keep `has_changes` set so the release records and sends the page
-        // again. Otherwise the frontend already has the current page.
-        self.has_changes.replace(self.has_unrecorded_changes.get());
     }
 
     /// Ask the frontend for the point the user clicks on the current plot, for
@@ -950,17 +845,12 @@ impl DeviceContext {
         // On the second and later clicks of one `locator()` call, the only
         // changes are the points or lines `locator(type =)` drew. They are not
         // in the display list until `locator()` returns, so sending the page
-        // now would only render it again without them. Leave `has_changes`
-        // set so the page is sent with them after `locator()` returns. The
-        // display list grows when `locator()` returns, so an unchanged length
-        // means we are still in the same call.
+        // now would only render it again without them. Leave the page's
+        // changes in place so it is sent with them after `locator()` returns.
+        // The display list grows when `locator()` returns, so an unchanged
+        // length means we are still in the same call.
         if !self.is_between_clicks() {
-            // A page that `plot.new()` or `grid::grid.newpage()` started is
-            // blank until something is drawn on it, so it isn't a plot change
-            // yet. Send it anyway, so there is a plot to click on.
-            if self.is_new_page.get() && self.should_render.get() {
-                self.has_changes.replace(true);
-            }
+            self.state.borrow_mut().on_locate();
 
             // A `locator()` call in the same request as the plot runs before
             // the end-of-request flush, so send the page now
@@ -987,11 +877,17 @@ impl DeviceContext {
             Some((last_id, last_size)) if *last_id == id && *last_size == size
         );
         if !is_sent {
-            // Without a hold, the flush above recorded any changes. While
-            // held, keep sending the latest recording so we don't reveal
-            // drawing that the hold hides.
-            if self.should_render.get() && self.has_unrecorded_changes.get() {
-                self.record_current_page(&id);
+            // Without a hold, the flush above recorded any changes, and only
+            // drawing between clicks is left to record. While held, keep
+            // sending the latest recording so we don't reveal drawing that the
+            // hold hides. The page keeps its changes either way, so it is sent
+            // again after `locator()` returns.
+            let needs_recording = {
+                let state = self.state.borrow();
+                !state.is_held() && state.changed_page().is_some()
+            };
+            if needs_recording {
+                Self::record_plot(&id);
             }
 
             // The frontend takes clicks only on an image of this size, and it
@@ -1014,23 +910,6 @@ impl DeviceContext {
         self.located_display_list_length
             .get()
             .is_some_and(|length| Some(length) == self.display_list_length())
-    }
-
-    fn record_current_page(&self, id: &PlotId) {
-        if Self::record_plot(id) {
-            self.has_unrecorded_changes.replace(false);
-        }
-    }
-
-    fn notify_current_page(self: &Rc<Self>, id: &PlotId, console: &Console) {
-        self.has_changes.replace(false);
-        self.is_notification_deferred.replace(false);
-
-        if self.is_new_page.replace(false) {
-            self.process_new_plot(id, console);
-        } else {
-            self.process_update_plot(id, console);
-        }
     }
 
     fn process_new_plot(self: &Rc<Self>, id: &PlotId, console: &Console) {
@@ -1975,11 +1854,11 @@ unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
 /// Hook applied by `plot.new()` and `grid::grid.newpage()`
 ///
 /// The timing of this hook is particularly important. If we advance to the new page, then
-/// when we drop into our [DeviceContext::new_page] hook it will be too late for us to
+/// when we drop into our [DeviceContext::hook_new_page] hook it will be too late for us to
 /// record any changes because the display list we record gets cleared before our hook is
 /// called.
 ///
-/// It is also worth noting that we don't always drop into our [DeviceContext::new_page]
+/// It is also worth noting that we don't always drop into our [DeviceContext::hook_new_page]
 /// hook after a call to `plot.new()` (and, therefore, after this hook is called). With
 /// this:
 ///
@@ -1990,7 +1869,7 @@ unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
 /// ```
 ///
 /// When running `plot(2:20)` the internal `plot.new()` will trigger this hook, but will
-/// not trigger a [DeviceContext::new_page] hook. That's correct, as it gives us a chance
+/// not trigger a [DeviceContext::hook_new_page] hook. That's correct, as it gives us a chance
 /// to record the intermediate plot, and then after `plot(2:20)` finishes it overwrites
 /// that intermediate plot since we are still on the same plot page with the same plot
 /// `id`.
@@ -2195,12 +2074,9 @@ mod tests {
 
         // Mode 2 is graphical input (`locator()`), not drawing
         dc.hook_mode(2);
-        assert!(!dc.has_changes.get());
-        assert!(!dc.is_drawing.get());
-        assert!(!dc.has_unrecorded_changes.get());
+        assert_eq!(dc.state.borrow().changed_page(), None);
 
         dc.hook_mode(1);
-        assert!(dc.has_changes.get());
-        assert!(dc.is_drawing.get());
+        assert_eq!(dc.state.borrow().changed_page(), Some(&dc.id()));
     }
 }
