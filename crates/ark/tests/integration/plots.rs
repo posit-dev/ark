@@ -888,10 +888,11 @@ fn test_render_intrinsic_size_uses_high_dpi() {
     assert_eq!((width, height), (768, 384));
 }
 
-/// Test that plots rendered with output_width_px (but no fig dimensions)
-/// produce a PNG at the expected width with a 4:3 aspect ratio.
+/// Test that plots in inline output (output_width_px set, but no fig
+/// dimensions) render at the Quarto default figure size rather than growing
+/// with the output width (posit-dev/positron#15260).
 #[test]
-fn test_plot_with_output_width_metadata() {
+fn test_plot_with_output_width_uses_default_fig_size() {
     let frontend = DummyArkFrontend::lock();
 
     let code = "plot(1:10)";
@@ -911,9 +912,80 @@ fn test_plot_with_output_width_metadata() {
         .expect("display_data should contain image/png");
     let (width, height) = png_dimensions(png_data);
 
-    // 600px wide, 600 / (4/3) = 450px tall
-    assert_eq!(width, 600);
-    assert_eq!(height, 450);
+    // 7 inches * DPI, 5 inches * DPI
+    assert_eq!(width, (7.0 * DEFAULT_DPI).round() as u32);
+    assert_eq!(height, (5.0 * DEFAULT_DPI).round() as u32);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that the default figure size in inline output is rendered at the
+/// output pixel ratio and reports its logical size in the metadata.
+#[test]
+fn test_plot_with_output_width_and_pixel_ratio_uses_default_fig_size() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "plot(1:10)";
+    frontend.send_execute_request(code, ExecuteRequestOptions {
+        positron: Some(ExecuteRequestPositron {
+            output_width_px: Some(600.0),
+            output_pixel_ratio: Some(2.0),
+            ..Default::default()
+        }),
+        ..ExecuteRequestOptions::default()
+    });
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let display = frontend.recv_iopub_display_data_content();
+    let png_data = display.data["image/png"]
+        .as_str()
+        .expect("display_data should contain image/png");
+    let (width, height) = png_dimensions(png_data);
+
+    let logical_width = (7.0 * DEFAULT_DPI).round() as u32;
+    let logical_height = (5.0 * DEFAULT_DPI).round() as u32;
+
+    assert_eq!(width, logical_width * 2);
+    assert_eq!(height, logical_height * 2);
+
+    let image_metadata = &display.metadata["image/png"];
+    assert_eq!(image_metadata["width"], logical_width);
+    assert_eq!(image_metadata["height"], logical_height);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that the `ark.plot.width` option overrides the default figure size
+/// used in inline output.
+#[test]
+fn test_plot_option_overrides_output_width_default() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.execute_request_invisibly("options(ark.plot.width = 4)");
+
+    let code = "plot(1:10)";
+    frontend.send_execute_request(code, ExecuteRequestOptions {
+        positron: Some(ExecuteRequestPositron {
+            output_width_px: Some(600.0),
+            ..Default::default()
+        }),
+        ..ExecuteRequestOptions::default()
+    });
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let display = frontend.recv_iopub_display_data_content();
+    let png_data = display.data["image/png"]
+        .as_str()
+        .expect("display_data should contain image/png");
+    let (width, height) = png_dimensions(png_data);
+
+    // 4 inches (option) * DPI, 5 inches (default) * DPI
+    assert_eq!(width, (4.0 * DEFAULT_DPI).round() as u32);
+    assert_eq!(height, (5.0 * DEFAULT_DPI).round() as u32);
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
