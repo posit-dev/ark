@@ -5,6 +5,9 @@
  *
  */
 
+use std::error::Error;
+use std::fmt;
+
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
@@ -44,6 +47,33 @@ pub enum JsonRpcErrorCode {
     InternalError = -32603,
     ServerErrorStart = -32099,
     ServerErrorEnd = -32000,
+    /// A plot could not be rendered because the requested size is too small
+    /// for it, e.g. its margins don't fit.
+    PlotTooSmall = -32001,
+}
+
+/// An error that a comm request handler can return to reply with a specific
+/// JSON-RPC error code instead of `InternalError`.
+#[derive(Debug)]
+pub struct RpcError {
+    pub code: JsonRpcErrorCode,
+    pub message: String,
+}
+
+impl fmt::Display for RpcError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl Error for RpcError {}
+
+/// The JSON-RPC error code for a failed request: the code of an `RpcError`
+/// anywhere in the error chain, or `InternalError`.
+pub fn json_rpc_error_code(err: &anyhow::Error) -> JsonRpcErrorCode {
+    err.chain()
+        .find_map(|cause| cause.downcast_ref::<RpcError>())
+        .map_or(JsonRpcErrorCode::InternalError, |rpc_error| rpc_error.code)
 }
 
 /**
