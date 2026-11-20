@@ -150,6 +150,18 @@ current_plot_id <- function() {
     invisible(path)
 }
 
+#' Whether a render error means the plot doesn't fit the device
+#'
+#' During a replay, R's size checks (e.g. "figure margins too large") don't
+#' error. They mark the graphics state invalid, so the next drawing call fails
+#' with "invalid graphics state". The message may be translated.
+#'
+#' @export
+.ps.graphics.is_too_small_message <- function(message) {
+    target <- "invalid graphics state"
+    message %in% c(target, gettext(target, domain = "graphics"))
+}
+
 #' Run an expression with the specificed device activated.
 #'
 #' The device is guaranteed to close after the expression has run.

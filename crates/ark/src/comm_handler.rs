@@ -9,6 +9,7 @@ use std::cell::Cell;
 use std::fmt::Debug;
 
 use amalthea::comm::base_comm::json_rpc_error;
+use amalthea::comm::base_comm::json_rpc_error_code;
 use amalthea::comm::base_comm::JsonRpcErrorCode;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
@@ -212,7 +213,7 @@ where
             Err(err) => {
                 let message = format!("Failed to process {comm_name} request: {err}");
                 log::warn!("{message}");
-                json_rpc_error(JsonRpcErrorCode::InternalError, message)
+                json_rpc_error(json_rpc_error_code(&err), message)
             },
         },
         Err(err) => {
