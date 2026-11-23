@@ -3,8 +3,13 @@ use aether_syntax::AnyRSelector;
 use aether_syntax::AnyRStatement;
 use aether_syntax::RCall;
 use aether_syntax::RIdentifier;
+use aether_syntax::RSyntaxKind;
+use aether_syntax::RSyntaxNode;
+use aether_syntax::RSyntaxToken;
 use biome_rowan::AstNode;
 use biome_rowan::AstSeparatedList;
+use biome_rowan::TextSize;
+use biome_rowan::TokenAtOffset;
 
 // Candidates for upstreaming into `aether_syntax`.
 
@@ -81,6 +86,89 @@ impl RCallExt for RCall {
             .nth(position)?
             .ok()?
             .value()
+    }
+}
+
+/// The last token that starts before `offset`, ignoring trivia.
+///
+/// Recognition starts here rather than at the token covering the cursor.
+/// Air attaches whitespace, newlines and comments to tokens as trivia, so in
+/// `f(1, ` followed by a newline at EOF, the cursor token has only the root
+/// as an ancestor. The preceding `,` belongs to the unclosed call and keeps
+/// its enclosing syntax available for recognition.
+pub fn last_token_before(root: &RSyntaxNode, offset: TextSize) -> Option<RSyntaxToken> {
+    // The right token of a pair starts at `offset`, so it can't qualify, and
+    // later tokens start after it. `None` happens for an empty file.
+    let mut token = match root.token_at_offset(offset) {
+        TokenAtOffset::None => root.last_token()?,
+        TokenAtOffset::Single(token) => token,
+        TokenAtOffset::Between(left, _) => left,
+    };
+
+    loop {
+        let range = token.text_trimmed_range();
+        if !range.is_empty() && range.start() < offset {
+            return Some(token);
+        }
+        token = token.prev_token()?;
+    }
+}
+
+/// Includes identifiers, `...`, `..1`, keywords that can prefix longer names
+/// (`for` in `format`), and unclosed backquoted names lexed as `ERROR_TOKEN`.
+pub fn is_name_token(token: &RSyntaxToken) -> bool {
+    use RSyntaxKind::*;
+
+    match token.kind() {
+        IDENT | DOTS | DOTDOTI => true,
+        FUNCTION_KW | FOR_KW | IN_KW | WHILE_KW | REPEAT_KW | IF_KW | ELSE_KW | NEXT_KW |
+        BREAK_KW | TRUE_KW | FALSE_KW | NULL_KW | INF_KW | NAN_KW | NA_LOGICAL_KW |
+        NA_INTEGER_KW | NA_DOUBLE_KW | NA_COMPLEX_KW | NA_CHARACTER_KW => true,
+        ERROR_TOKEN => token.text_trimmed().starts_with('`'),
+        _ => false,
+    }
+}
+
+/// Whether `offset` is inside or at the end of `token`, the condition for a
+/// name token to supply typed text.
+pub fn touches(token: &RSyntaxToken, offset: TextSize) -> bool {
+    let range = token.text_trimmed_range();
+    range.start() < offset && offset <= range.end()
+}
+
+/// Whether `offset` lies between the opening and closing delimiters among
+/// `node`'s own tokens, as in `R_CALL_ARGUMENTS`, `R_BRACED_STATEMENTS` or
+/// the condition of `R_IF_STATEMENT`. A missing closing delimiter, as in
+/// `f(x` at the end of a file, leaves the construct open to the end.
+///
+/// In `f()|` the last token's ancestors include the call, but the cursor is
+/// after its closing delimiter and therefore outside the call.
+pub fn delimiters_contain(node: &RSyntaxNode, offset: TextSize) -> bool {
+    use RSyntaxKind::*;
+
+    let mut tokens = node
+        .children_with_tokens()
+        .filter_map(|child| child.into_token());
+
+    let Some(open) =
+        tokens.find(|token| matches!(token.kind(), L_PAREN | L_BRACK | L_BRACK2 | L_CURLY))
+    else {
+        return false;
+    };
+    let close_kind = match open.kind() {
+        L_PAREN => R_PAREN,
+        L_BRACK => R_BRACK,
+        L_BRACK2 => R_BRACK2,
+        _ => R_CURLY,
+    };
+
+    if offset < open.text_trimmed_range().end() {
+        return false;
+    }
+
+    match tokens.find(|token| token.kind() == close_kind) {
+        Some(close) => offset <= close.text_trimmed_range().start(),
+        None => true,
     }
 }
 

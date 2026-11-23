@@ -11,6 +11,9 @@ use oak_db::Package;
 use oak_db::PackageFiles;
 use oak_db::Root;
 use oak_db::RootKind;
+use oak_ide::call_site_at;
+use oak_ide::CallArgument;
+use oak_ide::CallSite;
 use oak_ide::FileRange;
 use oak_ide::RenameEdit;
 use oak_package_metadata::namespace::Namespace;
@@ -239,4 +242,23 @@ fn install_pkg(
         },
     };
     files
+}
+
+pub fn call_site_at_cursor(code: &str) -> Option<CallSite> {
+    const CURSOR: &str = "<|>";
+    let Some(cursor) = code.find(CURSOR) else {
+        panic!("no cursor in {code:?}");
+    };
+    let text = code.replacen(CURSOR, "", 1);
+    let mut db = OakDatabase::new();
+    let file = upsert(&mut db, "test.R", &text);
+    call_site_at(&file.syntax_tree(&db), offset(cursor as u32))
+}
+
+pub fn argument(name: Option<&str>, value: Option<&str>, start: u32, end: u32) -> CallArgument {
+    CallArgument {
+        name: name.map(str::to_string),
+        value: value.map(str::to_string),
+        range: range(start, end),
+    }
 }

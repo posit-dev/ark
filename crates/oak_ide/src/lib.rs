@@ -1,3 +1,4 @@
+mod call_site;
 mod callee_description;
 mod file_path_completions;
 mod find_references;
@@ -6,6 +7,12 @@ mod namespace_completions;
 mod rename;
 
 use biome_rowan::TextRange;
+pub use call_site::call_site;
+pub use call_site::call_site_at;
+pub use call_site::enclosing_call;
+pub use call_site::ArgumentPosition;
+pub use call_site::CallArgument;
+pub use call_site::CallSite;
 pub use callee_description::callee_description;
 pub use callee_description::CalleeDescription;
 pub use callee_description::CalleeLookup;
