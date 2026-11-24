@@ -881,8 +881,7 @@ fn test_render_too_large_replies_with_internal_error() {
     frontend.send_execute_request("plot(1:10)", ExecuteRequestOptions::default());
     let plot_comm_id = recv_plot_comm_open(&frontend);
 
-    // Over ragg's 50000px limit, so it fails at any larger size too and
-    // must not be reported as too small
+    // Over ragg's 50000px limit: an R error that isn't R's "doesn't fit" signal
     let reply = render_plot(
         &frontend,
         &plot_comm_id,
