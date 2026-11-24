@@ -874,6 +874,31 @@ fn test_render_too_small_replies_with_plot_too_small_code() {
 }
 
 #[test]
+fn test_render_too_small_in_german_session_replies_with_plot_too_small_code() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    frontend.send_execute_request(
+        "Sys.setenv(LANGUAGE = 'de'); plot(1:10)",
+        ExecuteRequestOptions::default(),
+    );
+    let plot_comm_id = recv_plot_comm_open(&frontend);
+
+    let reply = render_plot(
+        &frontend,
+        &plot_comm_id,
+        serde_json::json!({
+            "size": { "width": 20, "height": 20 }, "pixel_ratio": 1.0, "format": "png"
+        }),
+    );
+
+    assert_eq!(
+        reply["error"]["code"],
+        JsonRpcErrorCode::PlotTooSmall as i64
+    );
+}
+
+#[test]
 fn test_render_too_large_replies_with_internal_error() {
     let frontend = DummyArkFrontend::lock();
     frontend.open_ui_comm();
