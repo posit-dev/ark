@@ -13,6 +13,7 @@ use serde::Serialize;
 use stdext::result::ResultExt;
 
 use crate::comm::base_comm::json_rpc_error;
+use crate::comm::base_comm::json_rpc_error_code;
 use crate::comm::base_comm::JsonRpcErrorCode;
 use crate::comm::comm_channel::CommMsg;
 use crate::socket::iopub::IOPubMessage;
@@ -183,7 +184,7 @@ impl CommSocket {
                             self.comm_name
                         );
                         log::trace!("{message}");
-                        json_rpc_error(JsonRpcErrorCode::InternalError, message)
+                        json_rpc_error(json_rpc_error_code(&err), message)
                     },
                 }
             },
