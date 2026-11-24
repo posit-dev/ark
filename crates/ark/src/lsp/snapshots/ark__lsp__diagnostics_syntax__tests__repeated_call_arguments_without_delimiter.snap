@@ -1,5 +1,8 @@
 ---
 source: crates/ark/src/lsp/diagnostics_syntax.rs
-expression: diagnostic.message
+expression: "render(\"match(1, 2 3)\")"
 ---
-Syntax error
+```text
+match(1, 2 3)
+           ^ [1] Expected `,` but instead found `3`. (0:11-0:12)
+```

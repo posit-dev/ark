@@ -1,5 +1,8 @@
 ---
 source: crates/ark/src/lsp/diagnostics_syntax.rs
-expression: diagnostic.message
+expression: "render(\"if (a)\")"
 ---
-Invalid if statement. Missing a body.
+```text
+if (a)
+      ^ [1] Expected an if body but instead found the end of the file. (0:6-0:6)
+```

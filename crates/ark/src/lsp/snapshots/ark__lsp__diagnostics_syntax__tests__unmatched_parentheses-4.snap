@@ -1,5 +1,12 @@
 ---
 source: crates/ark/src/lsp/diagnostics_syntax.rs
-expression: diagnostic.message
+expression: "render(\"\\\n(1+2\n1+2)\")"
 ---
-Syntax error
+```text
+(1+2
+^ [1] This `(` is missing a closing `)`. (0:0-0:1)
+1+2)
+^ [1.1] Expected `)` but instead found `1`. (1:0-1:1)
+^^^ [2.1] The first expression ends here. (1:0-1:3)
+   ^ [2] Expected a newline or a `;` between two expressions. (1:3-1:4)
+```

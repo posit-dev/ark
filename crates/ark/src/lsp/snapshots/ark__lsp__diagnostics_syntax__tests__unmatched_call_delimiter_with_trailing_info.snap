@@ -1,5 +1,13 @@
 ---
 source: crates/ark/src/lsp/diagnostics_syntax.rs
-expression: diagnostic.message
+expression: "render(\"\\\nmatch(1, 2\n\nidentity(1)\n\")"
 ---
-Unmatched opening delimiter. Missing a closing ')'.
+```text
+match(1, 2
+     ^ [1] This `(` is missing a closing `)`. (0:5-0:6)
+
+identity(1)
+^^^^^^^^ [2] Expected `,` but instead found `identity`. (2:0-2:8)
+
+^ [1.1] Expected `)` but instead found the end of the file. (3:0-3:0)
+```

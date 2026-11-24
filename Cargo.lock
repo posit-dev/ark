@@ -238,7 +238,7 @@ dependencies = [
 [[package]]
 name = "air_r_factory"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=9b7627a0e05511a9052ea569e88cf8192474b85f#9b7627a0e05511a9052ea569e88cf8192474b85f"
+source = "git+https://github.com/posit-dev/air?rev=1fb34aa2eecc7ac187c2b661a9044c99e9551aaa#1fb34aa2eecc7ac187c2b661a9044c99e9551aaa"
 dependencies = [
  "air_r_syntax",
  "biome_rowan",
@@ -247,7 +247,7 @@ dependencies = [
 [[package]]
 name = "air_r_parser"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=9b7627a0e05511a9052ea569e88cf8192474b85f#9b7627a0e05511a9052ea569e88cf8192474b85f"
+source = "git+https://github.com/posit-dev/air?rev=1fb34aa2eecc7ac187c2b661a9044c99e9551aaa#1fb34aa2eecc7ac187c2b661a9044c99e9551aaa"
 dependencies = [
  "air_r_factory",
  "air_r_syntax",
@@ -259,7 +259,7 @@ dependencies = [
 [[package]]
 name = "air_r_syntax"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=9b7627a0e05511a9052ea569e88cf8192474b85f#9b7627a0e05511a9052ea569e88cf8192474b85f"
+source = "git+https://github.com/posit-dev/air?rev=1fb34aa2eecc7ac187c2b661a9044c99e9551aaa#1fb34aa2eecc7ac187c2b661a9044c99e9551aaa"
 dependencies = [
  "biome_rowan",
  "serde",
@@ -437,7 +437,9 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "base64 0.23.1",
+ "biome_diagnostics",
  "biome_line_index",
+ "biome_parser",
  "biome_rowan",
  "biome_text_size",
  "blake3",
@@ -2712,6 +2714,7 @@ dependencies = [
  "annotate-snippets",
  "anyhow",
  "biome_line_index",
+ "biome_parser",
  "biome_rowan",
  "camino",
  "compact_str",
