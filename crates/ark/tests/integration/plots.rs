@@ -1,3 +1,4 @@
+use amalthea::comm::base_comm::JsonRpcErrorCode;
 use amalthea::comm::plot_comm::PlotBackendReply;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::wire::execute_request::ExecuteRequestPositron;
@@ -5,6 +6,7 @@ use amalthea::wire::execute_request::JupyterPositronLocation;
 use amalthea::wire::execute_request::JupyterPositronPosition;
 use amalthea::wire::execute_request::JupyterPositronRange;
 use amalthea::wire::jupyter_message::Message;
+use amalthea::wire::status::ExecutionState;
 use ark_test::comm::RECV_TIMEOUT;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
@@ -823,8 +825,107 @@ fn test_render_intrinsic_size_uses_high_dpi() {
         ..ExecuteRequestOptions::default()
     });
 
-    // In dynamic mode the plot arrives as a `positron.plot` comm open. Drain
-    // IOPub until we've seen both the plot comm and the idle status.
+    let plot_comm_id = recv_plot_comm_open(&frontend);
+
+    // Render at intrinsic size (size = null), as the plot pane does when the
+    // intrinsic sizing policy is selected. Use pixel_ratio 1 (a non-HiDPI
+    // display) to expose the low-resolution bug.
+    let reply = render_plot(
+        &frontend,
+        &plot_comm_id,
+        serde_json::json!({
+            "size": null, "pixel_ratio": 1.0, "format": "png"
+        }),
+    );
+
+    let reply: PlotBackendReply = serde_json::from_value(reply).unwrap();
+    let PlotBackendReply::RenderReply(result) = reply else {
+        panic!("Expected RenderReply, got {reply:?}");
+    };
+    let (width, height) = png_dimensions(&result.data);
+
+    // 4x2 inches at the intrinsic render DPI (192), independent of the base
+    // screen DPI. Before the fix this rendered at 384x192 (4x2 in at 96 DPI).
+    assert_eq!((width, height), (768, 384));
+}
+
+/// A plot area too small for the plot's margins replies with the
+/// `PlotTooSmall` error code, so the frontend can say so. posit-dev/positron#17441
+#[test]
+fn test_render_too_small_replies_with_plot_too_small_code() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    frontend.send_execute_request("plot(1:10)", ExecuteRequestOptions::default());
+    let plot_comm_id = recv_plot_comm_open(&frontend);
+
+    let reply = render_plot(
+        &frontend,
+        &plot_comm_id,
+        serde_json::json!({
+            "size": { "width": 20, "height": 20 }, "pixel_ratio": 1.0, "format": "png"
+        }),
+    );
+
+    assert_eq!(
+        reply["error"]["code"],
+        JsonRpcErrorCode::PlotTooSmall as i64
+    );
+}
+
+/// R raises the too-small message in English in every language today. This
+/// guards other-language sessions in case R adds a translation.
+#[test]
+fn test_render_too_small_in_german_session_replies_with_plot_too_small_code() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    frontend.send_execute_request(
+        "Sys.setenv(LANGUAGE = 'de'); plot(1:10)",
+        ExecuteRequestOptions::default(),
+    );
+    let plot_comm_id = recv_plot_comm_open(&frontend);
+
+    let reply = render_plot(
+        &frontend,
+        &plot_comm_id,
+        serde_json::json!({
+            "size": { "width": 20, "height": 20 }, "pixel_ratio": 1.0, "format": "png"
+        }),
+    );
+
+    assert_eq!(
+        reply["error"]["code"],
+        JsonRpcErrorCode::PlotTooSmall as i64
+    );
+}
+
+#[test]
+fn test_render_too_large_replies_with_internal_error() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    frontend.send_execute_request("plot(1:10)", ExecuteRequestOptions::default());
+    let plot_comm_id = recv_plot_comm_open(&frontend);
+
+    // Over ragg's 50000px limit: an R error that isn't R's "doesn't fit" signal
+    let reply = render_plot(
+        &frontend,
+        &plot_comm_id,
+        serde_json::json!({
+            "size": { "width": 60000, "height": 60000 }, "pixel_ratio": 1.0, "format": "png"
+        }),
+    );
+
+    assert_eq!(
+        reply["error"]["code"],
+        JsonRpcErrorCode::InternalError as i64
+    );
+}
+
+/// Wait for the `positron.plot` comm that a plot opens in dynamic mode, and
+/// the end of the execute request that drew it. Returns the comm ID.
+fn recv_plot_comm_open(frontend: &DummyArkFrontend) -> String {
     let deadline = std::time::Instant::now() + RECV_TIMEOUT;
     let mut plot_comm_id = None;
     let mut got_idle = false;
@@ -836,56 +937,45 @@ fn test_render_intrinsic_size_uses_high_dpi() {
             );
         };
         match msg {
-            amalthea::wire::jupyter_message::Message::CommOpen(data)
-                if data.content.target_name == "positron.plot" =>
-            {
+            Message::CommOpen(data) if data.content.target_name == "positron.plot" => {
                 plot_comm_id = Some(data.content.comm_id);
             },
-            amalthea::wire::jupyter_message::Message::Status(data)
-                if data.content.execution_state == amalthea::wire::status::ExecutionState::Idle =>
-            {
+            Message::Status(data) if data.content.execution_state == ExecutionState::Idle => {
                 got_idle = true;
             },
             _ => {},
         }
     }
     frontend.recv_shell_execute_reply();
-    let plot_comm_id = plot_comm_id.unwrap();
+    let Some(plot_comm_id) = plot_comm_id else {
+        panic!("No plot comm");
+    };
+    plot_comm_id
+}
 
-    // Render at intrinsic size (size = null), as the plot pane does when the
-    // intrinsic sizing policy is selected. Use pixel_ratio 1 (a non-HiDPI
-    // display) to expose the low-resolution bug.
-    let data = serde_json::json!({
-        "method": "render",
-        "params": { "size": null, "pixel_ratio": 1.0, "format": "png" },
-        "id": "render-rpc",
-    });
-    frontend.send_shell_comm_msg(plot_comm_id.clone(), data);
+/// Send a `render` request to a plot comm and return the raw JSON-RPC reply.
+fn render_plot(
+    frontend: &DummyArkFrontend,
+    plot_comm_id: &str,
+    params: serde_json::Value,
+) -> serde_json::Value {
+    let data = serde_json::json!({ "method": "render", "params": params, "id": "render-rpc" });
+    frontend.send_shell_comm_msg(plot_comm_id.to_string(), data);
 
-    // Drain until the plot comm's render reply arrives.
     let deadline = std::time::Instant::now() + RECV_TIMEOUT;
     let reply = loop {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         let Some(msg) = frontend.recv_iopub_with_timeout(remaining) else {
             panic!("Timed out waiting for render reply");
         };
-        if let amalthea::wire::jupyter_message::Message::CommMsg(msg) = msg {
+        if let Message::CommMsg(msg) = msg {
             if msg.content.comm_id == plot_comm_id {
                 break msg.content.data;
             }
         }
     };
     frontend.recv_iopub_idle();
-
-    let reply: PlotBackendReply = serde_json::from_value(reply).unwrap();
-    let PlotBackendReply::RenderReply(result) = reply else {
-        panic!("Expected RenderReply, got {reply:?}");
-    };
-    let (width, height) = png_dimensions(&result.data);
-
-    // 4x2 inches at the intrinsic render DPI (192), independent of the base
-    // screen DPI. Before the fix this rendered at 384x192 (4x2 in at 96 DPI).
-    assert_eq!((width, height), (768, 384));
+    reply
 }
 
 /// Test that plots in inline output (output_width_px set, but no fig

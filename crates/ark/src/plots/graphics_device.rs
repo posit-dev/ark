@@ -18,6 +18,8 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
+use amalthea::comm::base_comm::JsonRpcErrorCode;
+use amalthea::comm::base_comm::RpcError;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::plot_comm::IntrinsicSize;
 use amalthea::comm::plot_comm::PlotBackendReply;
@@ -644,7 +646,17 @@ impl DeviceContext {
                     format: plot_meta.format,
                 };
 
-                let data = self.render_plot(id, &settings)?;
+                let data = match self.render_plot(id, &settings) {
+                    Ok(data) => data,
+                    Err(err) if Self::is_too_small_error(&err) => {
+                        return Err(RpcError {
+                            code: JsonRpcErrorCode::PlotTooSmall,
+                            message: format!("Plot {id} is too small to render: {err}"),
+                        }
+                        .into());
+                    },
+                    Err(err) => return Err(err),
+                };
                 let mime_type = Self::get_mime_type(&plot_meta.format);
 
                 Ok(PlotBackendReply::RenderReply(PlotResult {
@@ -1211,6 +1223,26 @@ impl DeviceContext {
         let data = BASE64_STANDARD_NO_PAD.encode(buffer);
 
         Ok(data)
+    }
+
+    /// Whether a render failed because the plot doesn't fit the requested size.
+    fn is_too_small_error(err: &anyhow::Error) -> bool {
+        let Some(harp::Error::TryCatchError(err)) = err.downcast_ref::<harp::Error>() else {
+            return false;
+        };
+
+        let is_too_small = RFunction::from(".ps.graphics.is_too_small_message")
+            .param("message", err.message.as_str())
+            .call()
+            .and_then(|result| result.to::<bool>());
+
+        match is_too_small {
+            Ok(is_too_small) => is_too_small,
+            Err(err) => {
+                log::warn!("Failed to classify plot render error: {err:?}");
+                false
+            },
+        }
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
