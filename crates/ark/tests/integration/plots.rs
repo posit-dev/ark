@@ -873,6 +873,8 @@ fn test_render_too_small_replies_with_plot_too_small_code() {
     );
 }
 
+/// R raises the too-small message in English in every language today. This
+/// guards other-language sessions in case R adds a translation.
 #[test]
 fn test_render_too_small_in_german_session_replies_with_plot_too_small_code() {
     let frontend = DummyArkFrontend::lock();
